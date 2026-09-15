@@ -147,14 +147,28 @@ export const useNostr = create<NostrState>((set, get) => ({
   notice: null,
 
   init: async () => {
-    // Only the key already in this browser is picked up silently. An extension
-    // may prompt and a bunker may take a round trip, so neither is tried until
-    // somebody asks for it.
-    if (loadPref() !== 'local') return
+    // An extension may prompt and a bunker may take a round trip, so neither is
+    // tried until somebody asks for it; whichever signed last is offered again
+    // through the menu instead.
+    const pref = loadPref()
+    if (pref === 'nip07' || pref === 'nip46') return
     const sk = loadLocal()
-    if (!sk) return
-    signer = localSigner(sk)
-    set({ pubkey: signer.pubkey, signer: 'local', signedIn: true })
+    if (sk) {
+      signer = localSigner(sk)
+      set({ pubkey: signer.pubkey, signer: 'local', signedIn: true })
+      return
+    }
+    // Nobody has been here before. Rather than meet a new arrival with a
+    // question they have no way to answer yet, make them a key: everything in
+    // the app works from that moment, and the first thing they build can be
+    // published without a detour through key management they did not ask for.
+    //
+    // It is kept, not thrown away at the end of the tab. A key that vanished on
+    // reload would take everything published under it with it, unreachable and
+    // unrepairable, which is a worse trade than a key somebody has to be told
+    // to export. The notice says exactly that, and the menu offers the export
+    // and a way to bring a real key instead.
+    get().useNewKey()
   },
 
   useNewKey: () => {

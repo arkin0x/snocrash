@@ -60,9 +60,23 @@ function quad(a: number, b: number, c: number, d: number): Tri[] {
 }
 
 /**
- * A box from (x0,y0,z0) to (x1,y1,z1). Corner order per side is fixed so a
- * neighbouring box's facing side yields the same two triangles, corner for
- * corner, which is what lets the cull find them.
+ * A box from (x0,y0,z0) to (x1,y1,z1).
+ *
+ * Two things are fixed about the corner order, and they are different things.
+ *
+ * Each side is listed so its two triangles wind counter-clockwise seen from
+ * OUTSIDE the box, which is the direction the renderer, the PLY export and
+ * anything else reading the object take as the front. Half of these sides used
+ * to be listed the other way round: the box was closed and the points were
+ * right, so it looked correct in a viewer that draws both sides, and looked
+ * torn in one that does not, which is what the bench does (ShardMesh draws
+ * fronts in colour and backs in grey).
+ *
+ * Each side is also split along the same diagonal its neighbour would choose,
+ * so that two boxes sharing a wall produce the same pair of triangles there
+ * and the cull in `stamp` can match and drop them. Reversing a side to face
+ * outward keeps that diagonal: `quad(a,b,c,d)` and `quad(a,d,c,b)` both split
+ * a to c.
  */
 function box(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): Shape {
   const points: P3[] = [
@@ -70,12 +84,12 @@ function box(x0: number, x1: number, y0: number, y1: number, z0: number, z1: num
     [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1],
   ]
   const faces = [
-    ...quad(0, 1, 2, 3), // bottom
-    ...quad(4, 5, 6, 7), // top
-    ...quad(0, 1, 5, 4), // z0 side
-    ...quad(3, 2, 6, 7), // z1 side
-    ...quad(0, 3, 7, 4), // x0 side
-    ...quad(1, 2, 6, 5), // x1 side
+    ...quad(0, 1, 2, 3), // bottom, facing −Y
+    ...quad(4, 7, 6, 5), // top, facing +Y
+    ...quad(0, 4, 5, 1), // z0 side, facing −Z
+    ...quad(3, 2, 6, 7), // z1 side, facing +Z
+    ...quad(0, 3, 7, 4), // x0 side, facing −X
+    ...quad(1, 5, 6, 2), // x1 side, facing +X
   ]
   return { points, faces }
 }
@@ -105,10 +119,15 @@ function circle(r: number, n: number): P3[] {
   return out
 }
 
-/** A flat polygon on the level: its triangles, then the first point again so LINES closes the loop. */
+/**
+ * A flat polygon on the level: its triangles, and, only when there are none,
+ * the first point again so LINES draws a shut loop. A shape with faces is
+ * never drawn as a loop, and the copy would be a second vertex sitting exactly
+ * on the first.
+ */
 function flat(points: P3[]): Shape {
   const faces = triangulate(points) ?? []
-  return { points: [...points, [...points[0]] as P3], faces }
+  return { points: faces.length ? points : [...points, [...points[0]] as P3], faces }
 }
 
 /** The shape in its own frame: tap at the origin, level at y = 0, facing +X. */
@@ -118,13 +137,13 @@ function local(kind: StampKind, s: number): Shape {
     case 'column': return box(0, 1, 0, 2 * s, 0, 1)
     case 'pyramid': return {
       points: [[-s, 0, -s], [s, 0, -s], [s, 0, s], [-s, 0, s], [0, 2 * s, 0]],
-      faces: [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4], ...quad(0, 1, 2, 3)],
+      faces: [[1, 0, 4], [2, 1, 4], [3, 2, 4], [0, 3, 4], ...quad(0, 1, 2, 3)],
     }
     case 'wedge': {
       const [x0, x1] = span(s); const [z0, z1] = span(s)
       return {
         points: [[x0, 0, z0], [x1, 0, z0], [x1, 0, z1], [x0, 0, z1], [x0, s, z0], [x0, s, z1]],
-        faces: [...quad(0, 1, 2, 3), ...quad(0, 3, 5, 4), ...quad(1, 2, 5, 4), [0, 1, 4], [3, 2, 5]],
+        faces: [...quad(0, 1, 2, 3), ...quad(0, 3, 5, 4), ...quad(1, 4, 5, 2), [1, 0, 4], [3, 2, 5]],
       }
     }
     case 'ring': { const pts = circle(s, 8 * s); return { points: [...pts, [...pts[0]] as P3], faces: [] } }

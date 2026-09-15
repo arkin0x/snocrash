@@ -441,20 +441,22 @@ export function Workshop(): JSX.Element | null {
 
   const facing = tool === 'face' && selection.length === 0 && (selectedFace !== null || facePick.length > 0)
   const ToolIcon = TOOL_ICON[tool]
+  const making = view === 'make'
 
   return (
     <div className="workshop" role="dialog" aria-label="Shard workshop">
       <div className="workshop__bench">
         {view === 'feed' ? <Feed onOpen={() => setView('make')} /> : <Bench />}
       </div>
-      <Intro />
+      {making && <Intro />}
       <Toast />
       {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} />}
       {menuOpen && <MenuOverlay view={view} setView={setView} onClose={() => setMenuOpen(false)} onLogin={() => setLoginOpen(true)} />}
 
-      {/* Top left: the three chips and the history in one row, wrapping on a phone,
-          and the open panel under whatever the row wrapped to. */}
-      <div className={`ws__top ${panel ? 'ws__top--open' : ''}`}>
+      {/* Top left: the chips and the history in one row, wrapping on a phone,
+          and the open panel under whatever the row wrapped to. On the feed only
+          the hamburger stays, because it is the way back out. */}
+      <div className={`ws__top ${panel && making ? 'ws__top--open' : ''}`}>
       <div className="ws__chips">
         {/* The app, as against the object: who you are, and the two places you
             can be. The chips beside it stay what they are, the tools for the
@@ -462,27 +464,31 @@ export function Workshop(): JSX.Element | null {
         <button className={`chip ws__icon ws__burger ${menuOpen ? 'is-on' : ''}`} aria-expanded={menuOpen} aria-label="Menu" title="Identity, feed and workshop" onClick={() => setMenuOpen(true)}>
           <span className="hamburger-icon" aria-hidden><span /><span /><span /></span>
         </button>
-        <button className={`chip ws__chip ${panel === 'menu' ? 'is-on' : ''}`} aria-pressed={panel === 'menu'} onClick={() => toggle('menu')}>
-          <Box size={12} strokeWidth={2.25} aria-hidden />MENU
-        </button>
-        <button className={`chip ws__chip ${panel === 'grid' ? 'is-on' : ''}`} aria-pressed={panel === 'grid'} onClick={() => toggle('grid')}>
-          <Grid3x3 size={12} strokeWidth={2.25} aria-hidden />GRID
-        </button>
-        {publishing && (
+        {making && (
+          <button className={`chip ws__chip ${panel === 'menu' ? 'is-on' : ''}`} aria-pressed={panel === 'menu'} onClick={() => toggle('menu')}>
+            <Box size={12} strokeWidth={2.25} aria-hidden />MENU
+          </button>
+        )}
+        {making && (
+          <button className={`chip ws__chip ${panel === 'grid' ? 'is-on' : ''}`} aria-pressed={panel === 'grid'} onClick={() => toggle('grid')}>
+            <Grid3x3 size={12} strokeWidth={2.25} aria-hidden />GRID
+          </button>
+        )}
+        {making && publishing && (
           <button className="chip ws__chip ws__chip--work" aria-live="polite">
             <Pickaxe size={12} strokeWidth={2.25} aria-hidden />PUBLISHING
           </button>
         )}
         {/* Out of the way while a panel is open: on a phone they wrapped the chip
             row onto a second line and pushed the panel down with it. */}
-        {!panel && (
+        {making && !panel && (
           <span className="ws__history">
             <button className="chip ws__icon" disabled={!canUndo} onClick={() => w().undo()} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 size={ICON_PX} strokeWidth={2.25} aria-hidden /></button>
             <button className="chip ws__icon" disabled={!canRedo} onClick={() => w().redo()} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><Redo2 size={ICON_PX} strokeWidth={2.25} aria-hidden /></button>
           </span>
         )}
       </div>
-      {panel === 'menu' && shard && (
+      {making && panel === 'menu' && shard && (
         <div className="ws__panel" role="region" aria-label="Menu">
           <input className="workshop__name" value={shard.name} onChange={(e) => w().rename(shard.id, e.target.value)} aria-label="Shard name" spellCheck={false} />
           <div className="ws__stats">
@@ -567,7 +573,7 @@ export function Workshop(): JSX.Element | null {
         </div>
       )}
 
-      {panel === 'grid' && shard && (
+      {making && panel === 'grid' && shard && (
         <div className="ws__panel" role="region" aria-label="Grid">
           <div className="workshop__row">
             <span className="workshop__label">LEVEL {'XYZ'[plane]}</span>
@@ -614,6 +620,7 @@ export function Workshop(): JSX.Element | null {
       </div>
 
       {/* Top right: the one thing you do with a finished object. */}
+      {making && (
       <div className="ws__exit">
         <button
           className="workshop__deploy"
@@ -622,17 +629,21 @@ export function Workshop(): JSX.Element | null {
           title={!signedIn ? 'Pick a key in MENU first' : 'Publish this object as a kind 33331 event'}
         >{publishing ? 'PUBLISHING' : 'PUBLISH ▸'}</button>
       </div>
+      )}
 
       {/* The very top right corner: the compass while VIEW is in hand, the grid
           pad under it when tapped. PUBLISH keeps a standing berth to its left
           (.ws__exit), so nothing moves when the tool changes. */}
-      <div className="ws__view">
-        <Compass3D pose={benchPose} onTap={() => setViewOpen((o) => !o)} />
-        {viewOpen && <BenchViewMenu />}
-      </div>
+      {making && (
+        <div className="ws__view">
+          <Compass3D pose={benchPose} onTap={() => setViewOpen((o) => !o)} />
+          {viewOpen && <BenchViewMenu />}
+        </div>
+      )}
 
       {/* Bottom left: TURN and the pad while points are selected, over TOOLS and
           its panel, which opens upward over the chip. */}
+      {making && (
       <div className="ws__tools">
         {selection.length > 0 && (
           <div className="benchturn" role="group" aria-label="Turn the selection">
@@ -700,9 +711,11 @@ export function Workshop(): JSX.Element | null {
           )}
         </div>
       </div>
+      )}
 
       {/* Bottom right: FILL for a set of points, face actions while a face is in
           hand, the color column under either. */}
+      {making && (
       <div className="ws__corner">
         {one && (
           <div className="benchops" role="status" aria-label="Selected point">
@@ -759,6 +772,7 @@ export function Workshop(): JSX.Element | null {
         ))}
         {colorBar && pickerOpen && (tool !== 'face' || selectedFace !== null) && <Mixer hex={hex} onChange={pick} onSettle={settled} />}
       </div>
+      )}
 
       {deleteColor !== null && (
         <ConfirmModal

@@ -1772,16 +1772,60 @@ button:disabled { opacity: 0.35; cursor: default; }
   gap: 10px;
   width: min(380px, 100vw);
   height: 100%;
-  padding: 14px 14px 28px;
+  /* Room at the foot for a thumb to keep dragging past the last panel, and
+     for a phone's gesture bar, which sits over the bottom of the card. */
+  padding: 14px 14px 72px;
   overflow-y: auto;
   overscroll-behavior: contain;
   background: rgba(5, 9, 16, 0.94);
   border-right: 1px solid var(--border);
 }
+/* Exactly the hamburger's seat: the chip row is at 12,12 inside the workshop
+   and the hamburger is its first 38px circle, so the two land on each other and
+   the control never moves under the finger that opened it. */
 .menu__close {
-  position: absolute;
+  position: fixed;
   top: 12px;
-  right: 12px;
+  left: 12px;
+  z-index: 2;
+}
+.hamburger-icon--open span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.hamburger-icon--open span:nth-child(2) { opacity: 0; }
+.hamburger-icon--open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* The card is one scroller and a drag anywhere in it should scroll. Buttons in
+   the workshop carry `touch-action: none` so a press-and-repeat on − or + does
+   not drag the page with it; nothing in here repeats, and inheriting that rule
+   meant a drag that began on a button did nothing at all, which is why the card
+   took several goes to reach the bottom. */
+.menu__card button,
+.menu__card a { touch-action: manipulation; }
+
+/* The mark and the line under it sit clear of the close button in its corner. */
+.brand { padding-top: 34px; }
+
+.menu__about { display: flex; flex-direction: column; gap: 8px; }
+.menu__links { display: flex; flex-wrap: wrap; gap: 6px; }
+.menu__link {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  padding: 5px 8px;
+  border-radius: 3px;
+  color: var(--accent);
+  text-decoration: none;
+  background: rgba(0, 229, 255, 0.06);
+  border: 1px solid rgba(0, 229, 255, 0.24);
+}
+.menu__link:hover { background: rgba(0, 229, 255, 0.16); }
+
+/* The build, last thing in the menu, the way ONOSENDAI ends its column. */
+.menu__version {
+  margin-top: auto;
+  padding-top: 4px;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+  text-align: center;
 }
 
 .brand { text-align: center; pointer-events: none; }

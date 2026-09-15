@@ -15,7 +15,7 @@
  * and then edited, or never sent anywhere at all.
  */
 
-import { Boxes, Wrench, X } from 'lucide-react'
+import { Boxes, Wrench } from 'lucide-react'
 import { useNostr } from '../store/useNostr'
 import { useWorkshop } from '../store/useWorkshop'
 import { Explanation } from './Explanation'
@@ -82,13 +82,35 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
     <div className="menu" role="dialog" aria-modal="true" aria-label="Menu">
       <button className="menu__scrim" aria-label="Close the menu" onClick={onClose} />
       <div className="menu__card">
-        <button className="chip ws__icon menu__close" onClick={onClose} aria-label="Close the menu"><X size={16} strokeWidth={2.25} /></button>
+        {/* Exactly where the hamburger is, wearing the same three bars turned
+            into a cross: one control in one place, opening and shutting. */}
+        <button className="chip ws__icon menu__close" onClick={onClose} aria-label="Close the menu">
+          <span className="hamburger-icon hamburger-icon--open" aria-hidden><span /><span /><span /></span>
+        </button>
 
         <header className="brand">
           <Logomark />
           <h1 className="brand__word">SNOCRASH</h1>
           <p>Simple Nostr Object (SNO) Explorer</p>
         </header>
+
+        <div className="menu__about">
+          <p className="menu__line">
+            A SNO is a small 3D object that fits in one nostr event: whole-unit points with a
+            color each, the triangles between them, and nothing else. No server holds it and no
+            account owns it. Publish one and it is addressable by your key and its own id, so
+            you can correct it in place, and anyone can read it, copy it or remix it.
+          </p>
+          <div className="menu__links">
+            {/* The decks directory rather than the file: DECK-0003 is the number
+                SNO now claims, and the rename is still an open pull request, so
+                a link to the file itself would be right tomorrow and broken
+                today. Point it at DECK-0003-sno.md once that merges. */}
+            <a className="menu__link" href="https://github.com/arkin0x/cyberspace/tree/master/decks" target="_blank" rel="noreferrer">THE SPECIFICATION</a>
+            <a className="menu__link" href="https://paulbourke.net/dataformats/ply/" target="_blank" rel="noreferrer">PLY, WHAT EXPORT WRITES</a>
+            <a className="menu__link" href="https://github.com/arkin0x/snocrash" target="_blank" rel="noreferrer">THE SOURCE</a>
+          </div>
+        </div>
 
         <div className="menu__go">
           <button className={`menu__big ${view === 'feed' ? 'is-on' : ''}`} onClick={() => go('feed')}>
@@ -175,6 +197,8 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
             publishing it now would write a second object rather than replace the first.
           </Explanation>
         </section>
+
+        <div className="menu__version" title="The day of the commit this build came from, and its short hash">{__SNOCRASH_VERSION__}</div>
       </div>
     </div>
   )
