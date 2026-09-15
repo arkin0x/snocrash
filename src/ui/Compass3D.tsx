@@ -35,8 +35,16 @@ const CONE_RADIUS = ARROW_THICKNESS * 2
 const CONE_HEIGHT = 0.3
 const LABEL_OFFSET = 0.2
 
-/** The bench's frame: X right, Y up, Z toward the viewer (glTF's, and three's). */
-export const BENCH_DIRS = { x: new Vector3(1, 0, 0), y: new Vector3(0, 1, 0), z: new Vector3(0, 0, -1) }
+/**
+ * The frame the compass names: X right, Y up, Z toward the viewer.
+ *
+ * This is glTF's frame and three.js's, and it is the frame an object is
+ * published in, so the arrows say what a reader of the file will find.
+ * ONOSENDAI's compass points its Z arrow the other way because its labels name
+ * cyberspace axes, where +Z is away from the viewer; this app has no cyberspace
+ * to name.
+ */
+export const BENCH_DIRS = { x: new Vector3(1, 0, 0), y: new Vector3(0, 1, 0), z: new Vector3(0, 0, 1) }
 
 const UP = new Vector3(0, 1, 0)
 

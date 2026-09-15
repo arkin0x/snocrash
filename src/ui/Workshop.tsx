@@ -47,13 +47,12 @@ function saveFile(text: string, name: string): void {
   a.click()
   URL.revokeObjectURL(url)
 }
-import { benchPose, nudgeFor, nudgeLabel, planeAfter, requestView, useBenchView, type NudgeName } from './benchAxes'
+import { benchPose, nudgeFor, nudgeLabel, planeAfter, publishedFrame, requestView, useBenchView, type NudgeName } from './benchAxes'
 
 const TOOLS: Tool[] = ['view', 'stamp', 'add', 'select', 'face']
 const TOOL_ICON: Record<Tool, LucideIcon> = { view: Eye, stamp: Stamp, add: Plus, select: MousePointer2, face: Triangle }
 
 const LONG_PRESS_MS = 550
-const SETTLE_MS = 500
 const TOAST_MS = 4000
 
 /** One line under the tool row. SELECT needs none: the pad appears when something is selected. */
@@ -211,7 +210,7 @@ function opening(hex: string): Hsv {
   const [h, s, v] = rgbToHsv(hexToRgb(hex))
   return [Math.round(h), s === 0 ? MID : Math.round(s), v === 0 ? MID : Math.round(v)]
 }
-function Mixer({ hex, onChange, onSettle }: { hex: string; onChange: (hex: string) => void; onSettle: (hex: string) => void }): JSX.Element {
+function Mixer({ hex, onChange }: { hex: string; onChange: (hex: string) => void }): JSX.Element {
   const [hsv, setHsv] = useState<Hsv>(() => opening(hex))
   const [text, setText] = useState(hex)
   const made = rgbToHex(hsvToRgb(hsv))
@@ -241,12 +240,12 @@ function Mixer({ hex, onChange, onSettle }: { hex: string; onChange: (hex: strin
     <div className="ws__mixer" role="group" aria-label="Mix a color">
       <div className="ws__mixer-head">
         <span className="workshop__swatch workshop__swatch--sample" style={{ background: made }} aria-hidden />
-        <input className="ws__mixer-hex" value={text} onChange={(e) => typed(e.target.value)} onBlur={() => onSettle(made)} spellCheck={false} aria-label="Hex color" />
+        <input className="ws__mixer-hex" value={text} onChange={(e) => typed(e.target.value)} spellCheck={false} aria-label="Hex color" />
       </div>
       {rows.map(([label, max, value], i) => (
         <label key={label} className="ws__mixer-row">
           <span className="workshop__label">{label}</span>
-          <input type="range" min={0} max={max} step={1} value={value} style={{ background: tracks[i] }} onChange={slide(i as 0 | 1 | 2)} onPointerUp={() => onSettle(made)} onKeyUp={() => onSettle(made)} aria-label={label} />
+          <input type="range" min={0} max={max} step={1} value={value} style={{ background: tracks[i] }} onChange={slide(i as 0 | 1 | 2)} aria-label={label} />
         </label>
       ))}
     </div>
@@ -350,9 +349,8 @@ export function Workshop(): JSX.Element | null {
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [deleteColor, setDeleteColor] = useState<string | null>(null)
-  const settle = useRef<number>()
-  const picked = useRef(false)
-  useEffect(() => () => window.clearTimeout(settle.current), [])
+  // The mixed colour that has not been written to the palette yet.
+  const pending = useRef<string | null>(null)
   // A tap anywhere outside the colour bar shuts it, except while SELECT is
   // the tool, when colouring the selection is the work and the bar stays.
   useEffect(() => {
@@ -383,6 +381,15 @@ export function Workshop(): JSX.Element | null {
   }, [viewOpen])
   // The mixer shuts with the column, and on a tap anywhere else.
   useEffect(() => { if (!colorBar) setPickerOpen(false) }, [colorBar])
+  // Self-contained on purpose: the component returns early before it is open,
+  // and an effect registered up here that reached for a `const` declared after
+  // that return would find it uninitialized on exactly those renders.
+  useEffect(() => {
+    if (pickerOpen) return
+    const value = pending.current
+    pending.current = null
+    if (value) useWorkshop.getState().rememberColor(value)
+  }, [pickerOpen])
   useEffect(() => {
     if (!pickerOpen) return
     const shut = (e: PointerEvent): void => {
@@ -408,17 +415,19 @@ export function Workshop(): JSX.Element | null {
   // The picker paints live and, once the wheel has settled, puts the color at
   // the front of the palette; leaving the picker settles it at once.
   const hex = rgbToHex(color)
+  // Dragging a slider paints the selection as it goes, but the palette is a
+  // list of colours somebody chose, not every colour a thumb passed over on
+  // the way. So a mixed colour waits here and is written to the palette at the
+  // two moments it has actually been settled on: the picker being put away,
+  // and another colour being chosen instead.
   const pick = (value: string): void => {
     w().colorSelected(hexToRgb(value))
-    picked.current = true
-    window.clearTimeout(settle.current)
-    settle.current = window.setTimeout(() => { picked.current = false; w().rememberColor(value) }, SETTLE_MS)
+    pending.current = value
   }
-  const settled = (value: string): void => {
-    if (!picked.current) return
-    window.clearTimeout(settle.current)
-    picked.current = false
-    w().rememberColor(value)
+  const keepPending = (): void => {
+    const value = pending.current
+    pending.current = null
+    if (value) w().rememberColor(value)
   }
 
   const copy = (id: string): void => {
@@ -619,23 +628,18 @@ export function Workshop(): JSX.Element | null {
 
       </div>
 
-      {/* Top right: the one thing you do with a finished object. */}
-      {making && (
-      <div className="ws__exit">
-        <button
-          className="workshop__deploy"
-          disabled={!buildable || publishing || !signedIn}
-          onClick={() => { if (shard) void useNostr.getState().publish(shard) }}
-          title={!signedIn ? 'Pick a key in MENU first' : 'Publish this object as a kind 33331 event'}
-        >{publishing ? 'PUBLISHING' : 'PUBLISH ▸'}</button>
-      </div>
-      )}
-
-      {/* The very top right corner: the compass while VIEW is in hand, the grid
-          pad under it when tapped. PUBLISH keeps a standing berth to its left
-          (.ws__exit), so nothing moves when the tool changes. */}
+      {/* The top right corner, one column: the one thing you do with a finished
+          object, the compass under it, and the grid pad under that when the
+          compass is tapped. One width for all three, so the corner is a column
+          and not a scatter, and the chip row reserves exactly that width. */}
       {making && (
         <div className="ws__view">
+          <button
+            className="workshop__deploy ws__publish"
+            disabled={!buildable || publishing || !signedIn}
+            onClick={() => { if (shard) void useNostr.getState().publish(shard) }}
+            title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}
+          >{publishing ? 'SENDING' : 'PUBLISH'}</button>
           <Compass3D pose={benchPose} onTap={() => setViewOpen((o) => !o)} />
           {viewOpen && <BenchViewMenu />}
         </div>
@@ -717,9 +721,16 @@ export function Workshop(): JSX.Element | null {
           hand, the color column under either. */}
       {making && (
       <div className="ws__corner">
+        {selectedPoints >= 3 && (
+          <div className="benchops" role="group" aria-label="Fill the selection">
+            <button className="workshop__btn" onClick={() => w().fillSelection()} title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)">
+              <Triangle size={12} strokeWidth={2.25} aria-hidden /> FILL
+            </button>
+          </div>
+        )}
         {one && (
           <div className="benchops" role="status" aria-label="Selected point">
-            <span className="workshop__value workshop__value--wide">at ({ticksOf(one).map(unitsLabel).join(', ')})</span>
+            <span className="workshop__value workshop__value--wide">at ({publishedFrame(ticksOf(one)).map(unitsLabel).join(', ')})</span>
           </div>
         )}
         {facing && selectedFace !== null && (
@@ -744,7 +755,7 @@ export function Workshop(): JSX.Element | null {
             </button>
             <div className="workshop__swatches">
               {palette.map((h) => (
-                <Swatch key={h} hex={h} on={h === hex} onUse={() => w().colorSelected(hexToRgb(h))} onHold={() => setDeleteColor(h)} />
+                <Swatch key={h} hex={h} on={h === hex} onUse={() => { keepPending(); w().colorSelected(hexToRgb(h)) }} onHold={() => setDeleteColor(h)} />
               ))}
             </div>
             {/* What an action reaches, left to right: the points in hand, the
@@ -753,7 +764,7 @@ export function Workshop(): JSX.Element | null {
                 colour you are about to use is the colour the new faces take. */}
             <div className="ws__acts" role="group" aria-label="Apply">
               {selection.length > 0 && (
-                <button className="workshop__color ws__act" disabled={selectedPoints < 3} onClick={() => w().fillSelection()} title={selectedPoints < 3 ? 'Three points or more make a face' : 'Faces across these points: a flat set becomes one face, a solid set its hull (Enter)'} aria-label="Fill the selection with faces" {...noCallout}>
+                <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" {...noCallout}>
                   <PaintBucket size={14} strokeWidth={2.25} aria-hidden />
                 </button>
               )}
@@ -770,7 +781,7 @@ export function Workshop(): JSX.Element | null {
         ) : (
           <button className="chip ws__colorchip" style={{ background: hex }} onClick={() => { setColorOpen(true); if (narrow && panel === 'tools') setPanel(null) }} title={`Color ${hex}. Tap for the palette.`} aria-label={`Color ${hex}, tap for the palette`} />
         ))}
-        {colorBar && pickerOpen && (tool !== 'face' || selectedFace !== null) && <Mixer hex={hex} onChange={pick} onSettle={settled} />}
+        {colorBar && pickerOpen && (tool !== 'face' || selectedFace !== null) && <Mixer hex={hex} onChange={pick} />}
       </div>
       )}
 

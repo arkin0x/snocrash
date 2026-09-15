@@ -15,7 +15,27 @@
 
 * { box-sizing: border-box; }
 
-html, body, #root { height: 100%; margin: 0; }
+/*
+ * The app is exactly the visible viewport and the document never scrolls.
+ *
+ * `height: 100%` on html resolves against the initial containing block, which
+ * on a phone is the LARGE viewport, the one with the browser's own bars hidden.
+ * With the bars showing, the document was therefore taller than the window by
+ * the height of those bars, so it could scroll, so the first drag anywhere in
+ * the app was eaten by the browser collapsing its toolbar. That is both the
+ * "odd headspace" when the bars go, and the reason a drag inside a panel had to
+ * be repeated: the first one never reached the panel at all.
+ *
+ * `dvh` is the viewport as it stands right now, bars or no bars, and
+ * `overflow: hidden` says there is nothing to scroll out here. Everything that
+ * scrolls in this app is its own box: the menu card, the feed, a panel.
+ */
+html, body, #root {
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 
 body {
   background: var(--bg);
@@ -318,6 +338,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 .workshop {
   position: fixed;
   inset: 0;
+  height: 100dvh;
   z-index: 200;
   background: var(--bg);
   color: var(--fg);
@@ -567,6 +588,16 @@ button:disabled { opacity: 0.35; cursor: default; }
   -webkit-tap-highlight-color: transparent;
 }
 
+/* A held swatch opens the delete question, and a long press in a column with
+   text in it is also how a browser starts selecting that text. The swatch
+   itself already refuses; the column has to as well, or the press selects the
+   label beside it. */
+.ws__color, .ws__color * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* The swatch in use. */
 .workshop__swatch.is-on {
   outline: 2px solid var(--fg);
@@ -738,7 +769,7 @@ button:disabled { opacity: 0.35; cursor: default; }
   top: 12px;
   left: 12px;
   right: 12px;
-  z-index: 3;
+  z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -754,7 +785,7 @@ button:disabled { opacity: 0.35; cursor: default; }
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding-right: 124px;
+  padding-right: 88px;
 }
 
 .ws__chip {
@@ -819,8 +850,9 @@ button:disabled { opacity: 0.35; cursor: default; }
 .ws__panel {
   width: min(380px, 100%);
   box-sizing: border-box;
-  max-height: calc(100vh - 210px);
+  max-height: calc(100dvh - 210px);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 10px;
   border-radius: 10px;
   background: rgba(6, 14, 22, 0.92);
@@ -883,7 +915,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 }
 
 .ws__panel--up {
-  max-height: calc(100vh - 140px);
+  max-height: calc(100dvh - 140px);
 }
 
 /* TOOLS with a tool in hand: the chip and, joined to its right, the X that
@@ -1020,7 +1052,7 @@ button:disabled { opacity: 0.35; cursor: default; }
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  max-height: calc(100vh - 140px);
+  max-height: calc(100dvh - 140px);
   overflow: auto;
   padding: 8px 6px;
   border-radius: 10px;
@@ -1108,10 +1140,10 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 @media (max-width: 640px) {
   .ws__panel--up {
-    max-height: calc(100vh - 220px);
+    max-height: calc(100dvh - 220px);
   }
   .ws__panel {
-    max-height: calc(100vh - 260px);
+    max-height: calc(100dvh - 260px);
   }
 }
 
@@ -1137,7 +1169,6 @@ button:disabled { opacity: 0.35; cursor: default; }
   }
 
   .workshop__list-btn { flex: 0 0 auto; }
-  .workshop__deploy { flex: 1; }
   .workshop__close { flex: 0 0 auto; margin-left: 0; }
 
   /* The tray's contextual row only shows the current tool's controls, so the
@@ -1752,6 +1783,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 .menu {
   position: fixed;
   inset: 0;
+  height: 100dvh;
   z-index: 60;
   display: flex;
   justify-content: flex-start;
@@ -1793,13 +1825,18 @@ button:disabled { opacity: 0.35; cursor: default; }
 .hamburger-icon--open span:nth-child(2) { opacity: 0; }
 .hamburger-icon--open span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 
-/* The card is one scroller and a drag anywhere in it should scroll. Buttons in
-   the workshop carry `touch-action: none` so a press-and-repeat on − or + does
-   not drag the page with it; nothing in here repeats, and inheriting that rule
-   meant a drag that began on a button did nothing at all, which is why the card
-   took several goes to reach the bottom. */
+/* A scrolling box has to scroll from anywhere inside it, buttons included.
+   Workshop buttons carry `touch-action: none`, which was right when they only
+   ever sat on the scene: a press-and-repeat on − or + must not drag the world
+   underneath. In a box that scrolls it means a drag starting on a button does
+   nothing at all, and these boxes are mostly buttons, so scrolling them was a
+   matter of finding a gap. `manipulation` keeps the press and allows the pan,
+   and still refuses the double-tap zoom. */
 .menu__card button,
-.menu__card a { touch-action: manipulation; }
+.menu__card a,
+.ws__panel button,
+.ws__panel input,
+.ws__panel a { touch-action: manipulation; }
 
 /* The mark and the line under it sit clear of the close button in its corner. */
 .brand { padding-top: 34px; }
@@ -2046,8 +2083,15 @@ button:disabled { opacity: 0.35; cursor: default; }
 .compass-label--z { color: #4488ff; text-shadow: 0 0 3px rgba(0, 0, 0, 0.8); }
 
 .ws__view { top: 12px; }
-/* The berth: always wide enough for the compass, whether or not it is there. */
-.ws__exit { right: 86px; }
+/* PUBLISH, the compass and the pad in one column, all 64 wide. */
+.ws__publish {
+  width: 64px;
+  height: 30px;
+  padding: 0;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  border-radius: 9px;
+}
 
 .viewmenu {
   display: flex;

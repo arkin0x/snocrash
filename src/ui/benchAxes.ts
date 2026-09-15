@@ -72,9 +72,30 @@ export function nudgeFor(axes: BenchAxes, name: NudgeName): Nudge {
   }
 }
 
-/** "+Y", "−Z": what the pad prints under each arrow. */
+/**
+ * "+Y", "−Z": what the pad prints under each arrow, in the frame the object is
+ * published in.
+ *
+ * A nudge is a move in model coordinates, and the model's axes are ONOSENDAI's:
+ * +Z away from the viewer, the direction of the black sun. This app has no
+ * black sun. It publishes into the glTF frame, where +Z comes toward the
+ * viewer, and every tool that will ever open one of these objects reads it that
+ * way. So the printed name of the Z axis is the model's turned around, which is
+ * exactly the turn `toPayload` makes on the wire (shards.ts) and `toRender`
+ * makes for the scene. Only the name changes here; nothing moves.
+ */
 export function nudgeLabel(n: Nudge): string {
-  return `${n.delta > 0 ? '+' : '−'}${'XYZ'[n.axis]}`
+  const sign = n.axis === 2 ? -n.delta : n.delta
+  return `${sign > 0 ? '+' : '−'}${'XYZ'[n.axis]}`
+}
+
+/**
+ * A model position as the published file gives it: the same turn on Z, so a
+ * point read off the bench is the point a reader of the object will find.
+ */
+export function publishedFrame(p: [number, number, number]): [number, number, number] {
+  // 0 - z rather than -z: negating a zero gives -0.
+  return [p[0], p[1], 0 - p[2]]
 }
 
 export const sameAxes = (a: BenchAxes, b: BenchAxes): boolean =>
