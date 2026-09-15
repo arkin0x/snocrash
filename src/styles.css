@@ -25,9 +25,7 @@ body {
 
 .app { display: flex; flex-direction: column; height: 100%; }
 
-/* One wrapping row. The wordmark holds its place, the views and the identity
-   share what is left, and on a narrow screen they wrap under it rather than
-   each taking a full row of their own. */
+/* The old top bar is gone: the workshop's own chips are the navigation. */
 .top {
   display: flex;
   align-items: center;
@@ -85,66 +83,1453 @@ button:disabled { opacity: 0.35; cursor: default; }
   cursor: pointer;
 }
 
-/* ---- make ---- */
-.make { flex: 1 1 auto; display: flex; min-height: 0; }
-/* The canvas is taken out of the flow and pinned to the box. A Canvas sizes
-   itself to its parent, and a flex item whose height comes from `flex: 1`
-   is not a definite height for that purpose, so the canvas sat at its default
-   150px inside a 529px box on a phone. Absolute inside a relative box gives it
-   something definite to fill. */
-.make__bench { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; }
-.make__fill { position: absolute; inset: 0; }
-.make__side {
-  flex: none;
-  width: 300px;
+
+/* ---------------------------------------------------------------------------
+   The workshop, lifted from ONOSENDAI with its stylesheet.
+
+   Overlay chips over a full-bleed bench, panels that open across it rather
+   than taking space from it, and the tools where a thumb already is. It is a
+   good UI and it is the same editor, so it keeps the same rules; what the
+   chips do is what changed.
+   --------------------------------------------------------------------------- */
+
+.workshop { position: fixed; inset: 0; background: var(--bg); }
+.workshop__bench { position: absolute; inset: 0; }
+
+/* An explanation in paragraphs. */
+.explain__well p {
+  margin: 0;
+}
+
+.explain__well p + p {
+  margin-top: 6px;
+}
+
+.chainrows__row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  border-bottom: 1px solid rgba(0, 229, 255, 0.1);
+}
+
+.chainrows__row:last-child {
+  border-bottom: none;
+}
+
+.chainrows__n {
+  font-size: 9px;
+  color: var(--dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.chainrows__type {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+.chainrows__type--spawn { color: var(--ok); }
+
+.chainrows__type--sidestep { color: var(--sidestep); }
+
+.chainrows__id {
+  font-size: 9px;
+  color: var(--dim);
+  opacity: 0.7;
+}
+
+.notice {
+  margin: 10px 0 0;
+  padding: 7px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--danger);
+  background: rgba(255, 59, 107, 0.08);
+  border-left: 2px solid var(--danger);
+}
+
+/* Variants after the base rule, which otherwise wins the tie. */
+.notice--sidestep {
+  color: var(--sidestep);
+  background: rgba(192, 125, 255, 0.08);
+  border-left-color: var(--sidestep);
+}
+
+/* An offer, not an alarm: HOSAKA can take the move. Light blue. */
+.notice--offload {
+  color: #8fd3ff;
+  background: rgba(47, 129, 247, 0.1);
+  border-left-color: #2f81f7;
+}
+
+/* A notice with a headline: the icon and a few words say what kind of news
+ * it is before the sentence does. */
+.notice__head {
+  margin: 0 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notice__body {
+  margin: 0;
+}
+
+/* The overlay with every avatar: a calm border (the card's own rule, later in
+ * this file, would otherwise keep the confirm red), and the list is what scrolls. */
+.modal__card.modal__card--list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border-left: 1px solid var(--border);
-  background: var(--panel);
+  max-height: min(80vh, 640px);
+  border-color: var(--border);
+}
+
+.modal__card--list .modal__cancel {
+  width: 100%;
+}
+
+/* ---------- Modal (destructive confirms) ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(5, 7, 13, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.modal__card {
+  width: min(420px, 100%);
+  padding: 18px 18px 16px;
+  border-radius: 10px;
+  background: rgba(6, 14, 22, 0.98);
+  border: 1px solid rgba(255, 59, 107, 0.5);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.6);
+}
+
+.modal__title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--fg);
+}
+
+.modal__body {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+/* A body kept exactly as it was written: line breaks and the leading space on
+ * a bullet survive, and long lines still wrap to the card. */
+.modal__pre {
+  white-space: pre-wrap;
+}
+
+.modal__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.modal__cancel,
+.modal__confirm {
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  height: 36px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.modal__cancel {
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid rgba(200, 245, 255, 0.3);
+}
+
+.modal__confirm {
+  color: #05070d;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  font-weight: 700;
+}
+
+.modal__confirm--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ---------- Secret modal (a hidden thing, tapped in the world) ---------- */
+/* Aligned to the top of the screen, not centred: the card's height varies
+   wildly with the message, and a fixed anchor keeps the close control where
+   the hand last found it. */
+.modal--top {
+  align-items: flex-start;
+}
+
+.modal__card.secret {
+  border-color: rgba(0, 229, 255, 0.5);
+  max-width: 440px;
+  /* Never taller than the screen; anything longer scrolls inside. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
 }
 
-.row { display: flex; gap: 6px; align-items: center; }
-.row--wrap { flex-wrap: wrap; }
-
-.name {
-  flex: 1 1 auto;
-  min-width: 0;
+.workshop__deploy {
   font-family: inherit;
-  font-size: 12px;
-  color: var(--fg);
-  background: rgba(0, 229, 255, 0.06);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 10px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 5px;
+  color: #05070d;
+  background: var(--ok);
+  border: 1px solid var(--ok);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.name:focus { outline: none; border-color: var(--accent); }
 
-.stat { margin: 0; font-size: 10px; color: var(--dim); letter-spacing: 0.06em; }
+.workshop__deploy:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 
-/* As many across as fit: five tools sit two-and-three on a phone and five in
-   a row on a wide panel, rather than leaving a stranded half-width button. */
-.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
+/* ---------- Workshop ----------
+ *
+ * A full-screen bench. The bench fills what the head and the tools leave,
+ * and on a phone the tools wrap rather than scroll: every control has to be
+ * reachable with the model still in view.
+ */
+.workshop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+}
 
-.publish {
-  padding: 12px;
-  font-size: 11px;
-  color: #04121a;
+.workshop__list-btn,
+.workshop__close,
+.workshop__mode,
+.workshop__tool,
+.workshop__btn,
+.workshop__new,
+.workshop__mini {
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 5px;
+  color: var(--fg);
+  background: rgba(6, 14, 22, 0.8);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  cursor: pointer;
+  touch-action: none;
+  white-space: nowrap;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.workshop__btn:active:not(:disabled),
+.workshop__tool:active,
+.workshop__mode:active {
+  background: rgba(0, 229, 255, 0.28);
+}
+
+.workshop__btn:disabled,
+.workshop__tool:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* A tool is an icon and a word. */
+.workshop__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.workshop__mode.is-on,
+.workshop__tool.is-on {
+  color: #05070d;
   background: var(--accent);
   border-color: var(--accent);
+  font-weight: 700;
 }
-.publish:hover { background: #7df3ff; }
 
-/* ---- feed ---- */
-.feed { flex: 1 1 auto; overflow-y: auto; padding: 14px; }
+.workshop__name {
+  flex: 1 1 120px;
+  min-width: 80px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  color: var(--fg);
+  background: rgba(0, 229, 255, 0.05);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+}
+
+.workshop__name:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.workshop__modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+/* The eight divisions do not fit one line beside their label, and a flex row
+   that could not wrap ran off the panel. Five to a line, on one column
+   rhythm, so 1/6 begins the second line under 1 and the two lines read as
+   one block. */
+.workshop__modes--divisions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  flex: 1 1 200px;
+  max-width: 260px;
+}
+
+.workshop__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.workshop__list ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.workshop__list li {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  border-top: 1px solid rgba(0, 229, 255, 0.08);
+}
+
+.workshop__list li.is-current .workshop__pick {
+  color: var(--accent);
+}
+
+.workshop__new {
+  width: 100%;
+  color: var(--accent);
+}
+
+.workshop__pick {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workshop__pick-meta {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+
+.workshop__mini {
+  width: 30px;
+  padding: 0;
+  color: var(--dim);
+}
+
+.workshop__mini--danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.workshop__bench {
+  position: absolute;
+  inset: 0;
+}
+
+.workshop__bench canvas {
+  display: block;
+}
+
+.workshop__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.workshop__label {
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: var(--dim);
+  min-width: 54px;
+}
+
+.workshop__label--gap {
+  margin-left: 10px;
+}
+
+.workshop__value {
+  font-size: 11px;
+  min-width: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.workshop__help {
+  flex: 1 1 200px;
+  font-size: 9px;
+  color: var(--dim);
+}
+
+.workshop__btn--x { color: #ff4444; }
+
+.workshop__btn--y { color: #44ff44; }
+
+.workshop__btn--z { color: #4488ff; }
+
+.workshop__btn--danger {
+  color: var(--danger);
+  border-color: rgba(255, 59, 107, 0.4);
+}
+
+/* The picker: a dashed swatch with a pipette on it, so it reads as "any
+ * color" beside the fixed ones. */
+/* The mixer's handle: a dashed pipette, solid while the mixer is up. */
+.workshop__color {
+  width: 38px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  border: 1px dashed rgba(255, 255, 255, 0.6);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.workshop__color.is-on {
+  border-style: solid;
+  background: rgba(0, 229, 255, 0.15);
+}
+
+.workshop__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* A swatch is tapped to use and held to delete, so the long press must not
+ * select text, raise a callout or scroll. */
+.workshop__swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The swatch in use. */
+.workshop__swatch.is-on {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+
+.workshop__swatch--sample {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+/* Between LEVEL and UNIT, which read as one control without it. */
+.workshop__sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 8px;
+  background: rgba(0, 229, 255, 0.25);
+}
+
+/* What the unit exponent means, so changing it visibly changes something. */
+.workshop__unit-size {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.workshop__gap {
+  flex: 1 0 4px;
+}
+
+.workshop__shapes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.workshop__value--wide {
+  min-width: 70px;
+  text-align: left;
+}
+
+.workshop__mini--wide {
+  width: auto;
+  padding: 0 8px;
+}
+
+/* The avatar controls: the name on its own line, the buttons on theirs,
+   sharing the width evenly the way NEW SHARD and PASTE do. They used to sit
+   on the name's line, where a long shard name pushed them off the edge. */
+.workshop__avatar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workshop__avatar .workshop__list-row .workshop__btn { flex: 1 1 0; }
+
+.workshop__avatar .workshop__value--wide { min-width: 0; overflow-wrap: anywhere; }
+
+/* The avatar's row in the shard list: what you are wearing, which is not one
+   of these shards and cannot be edited or deleted from here. */
+.workshop__list-avatar .workshop__pick--static {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.workshop__tag {
+  flex: none;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.workshop__list-row {
+  display: flex;
+  gap: 4px;
+}
+
+.workshop__list-row .workshop__new {
+  flex: 1;
+  width: auto;
+}
+
+.workshop__paste {
+  margin-top: 8px;
+}
+
+.workshop__paste-box {
+  display: block;
+  width: 100%;
+  min-height: 84px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg);
+  background: rgba(0, 229, 255, 0.05);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  border-radius: 5px;
+  resize: vertical;
+}
+
+.workshop__paste-box:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.workshop__notice {
+  margin-top: 3px;
+  color: var(--accent);
+}
+
+/* The first-visit card: three steps, then never again. */
+.workshop__intro {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  width: min(300px, calc(100vw - 24px));
+  padding: 12px 14px 10px;
+  border-radius: 8px;
+  background: rgba(6, 14, 22, 0.94);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.workshop__intro-title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+}
+
+.workshop__intro-steps {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  color: var(--fg);
+}
+
+.workshop__intro-steps li {
+  margin-bottom: 4px;
+}
+
+.workshop__intro-steps b {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.workshop__intro-ok {
+  color: var(--accent);
+}
+
+/* ---------- Workshop overlays: chips, panels, corner pad, color bar ----------
+ *
+ * The bench fills the screen; everything else floats on it the way the
+ * instruments float on the world. Top left, the chip row and the history;
+ * top right, DEPLOY and the way out; bottom right, the CONTROLS pad and the
+ * COLOR bar. One panel at a time opens under the chip row. */
+.ws__top {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.ws__top > * { pointer-events: auto; }
+
+/* Room on the right for DEPLOY and the way out, which share the top edge. */
+.ws__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-right: 124px;
+}
+
+.ws__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+}
+
+.ws__chip.is-on {
+  color: #05070d;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+.ws__history {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* .chip.ws__icon, not .ws__icon: .chip sets `padding: 9px 12px` and comes
+   later in the sheet at equal specificity, so it won, and a 34px box with 12px
+   of side padding left the icon about 10px of room. The button looked the
+   right size and its mark was half of one (arkinox, 2026-09-15).
+
+   38px square with a 16px mark, which is the touchpad key, so every round icon
+   button in the app is one size. */
+.chip.ws__icon {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.chip.ws__icon svg { flex: none; }
+
+.ws__icon:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ws__exit {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ws__exit .workshop__deploy {
+  height: 34px;
+  border-radius: 9px;
+}
+
+.ws__panel {
+  width: min(380px, 100%);
+  box-sizing: border-box;
+  max-height: calc(100vh - 210px);
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(6, 14, 22, 0.92);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Rules written for the old toolbar rows gave these a flex basis; in a column panel that becomes height. */
+.ws__panel .workshop__help,
+.ws__panel .workshop__name {
+  flex: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ws__panel-title {
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+.ws__stats {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+
+.ws__toast {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 7px 10px;
+  border-radius: 9px;
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  background: rgba(6, 14, 22, 0.88);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+}
+
+/* Bottom left: TOOLS, its panel above the chip. */
+.ws__tools {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ws__panel--up {
+  max-height: calc(100vh - 140px);
+}
+
+/* TOOLS with a tool in hand: the chip and, joined to its right, the X that
+ * puts the tool down. */
+.ws__toolchips { display: inline-flex; }
+
+.ws__toolchips .ws__chip:first-child:not(:only-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Two classes, to outrank .chip's own radius, which comes later in the sheet. */
+.ws__toolchips .ws__chip--x {
+  padding: 0 9px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 0;
+}
+
+/* Top right, under DEPLOY and the way out: the compass, the grid pad under it. */
+.ws__view {
+  position: absolute;
+  top: 54px;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* COLOR folded: a swatch of the current colour, the picker's dashed edge. */
+.ws__colorchip {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 2px dashed rgba(255, 255, 255, 0.7);
+}
+
+.ws__corner {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* The main pad's nine cells, for the selection: CONNECT and DELETE take the
+ * corners the scale keys have out there. */
+/* Two cells on the end of the row DELETE sits in: CUT then DUPLICATE, or,
+   with nothing selected, PASTE in the cell CUT had. The container lets taps
+   through, since with nothing selected every cell but that one is empty and
+   the bench is underneath. */
+.benchpad {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, 48px);
+  grid-template-rows: repeat(3, 48px);
+  gap: 4px;
+  pointer-events: none;
+  grid-template-areas:
+    "away    up   toward .   ."
+    "left    hub  right  .   ."
+    "connect down delete cut dup";
+}
+
+.benchpad > * { pointer-events: auto; }
+
+.benchpad .touchpad__key--cut { grid-area: cut; }
+
+.benchpad .touchpad__key--dup { grid-area: dup; }
+
+/* Where to put the held points. It stands over the two keys, and anything
+   outside it is a tap that pastes nothing. */
+.benchpaste {
+  position: absolute;
+  right: 0;
+  bottom: 52px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(6, 14, 22, 0.96);
+}
+
+/* The line under an offload estimate that says how much of the work HOSAKA
+   already had. Green, because it is money and time you are not spending. */
+.modal__reuse {
+  display: inline-block;
+  margin-top: 6px;
+  color: #52e39f;
+}
+
+.benchpaste__away {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+}
+
+.benchpad .touchpad__key--connect { grid-area: connect; color: var(--accent); }
+
+.benchpad .touchpad__key--delete { grid-area: delete; color: var(--danger); }
+
+.benchpad .touchpad__key--connect .touchpad__sub,
+.benchpad .touchpad__key--delete .touchpad__sub { font-size: 7px; }
+
+/* Glyph over word in every cell: the cells are big enough here for both. */
+.benchpad .touchpad__key,
+.benchturn .touchpad__key {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 17px;
+}
+
+.benchpad .touchpad__sub,
+.benchturn .touchpad__sub { font-size: 8px; }
+
+.benchclip .workshop__btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 4px;
+}
+
+/* COLOR open: a column rising from the corner, two swatches wide, so it never
+ * runs along the bottom into TOOLS. */
+.ws__color {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+  padding: 8px 6px;
+  border-radius: 10px;
+  background: rgba(6, 14, 22, 0.85);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+.ws__color .workshop__label { min-width: 0; }
+
+.ws__color .workshop__swatches {
+  display: grid;
+  grid-template-columns: repeat(2, 22px);
+}
+
+/* The mixer rises above the corner stack, clear of the pad on the left. */
+.ws__mixer {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 220px;
+  padding: 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 10px;
+  background: rgba(6, 14, 22, 0.92);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+.ws__mixer-head { display: flex; align-items: center; gap: 8px; }
+
+.ws__mixer-head .workshop__swatch--sample { width: 30px; height: 30px; margin: 0; }
+
+.ws__mixer-hex {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--fg);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ws__mixer-row { display: flex; flex-direction: column; gap: 4px; }
+
+.ws__mixer-row .workshop__label { min-width: 0; }
+
+.ws__mixer input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.ws__mixer input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #000;
+  box-shadow: 0 0 0 1px #fff;
+}
+
+.ws__mixer input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #000;
+  box-shadow: 0 0 0 1px #fff;
+}
+
+@media (max-width: 640px) {
+  .ws__panel--up {
+    max-height: calc(100vh - 220px);
+  }
+  .ws__panel {
+    max-height: calc(100vh - 260px);
+  }
+}
+
+@media (max-width: 600px) {
+  .workshop__help { display: none; }
+  .workshop__label { min-width: 0; }
+
+  /* Portrait: the header buttons overran the right edge and CLOSE fell off the
+   * screen. The name takes its own top row, and SHARDS, the modes, DEPLOY and
+   * CLOSE wrap onto rows below it, all within reach of a thumb. */
+  .workshop__name {
+    flex: 1 1 100%;
+    order: -1;
+  }
+
+  .workshop__modes {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  .workshop__modes .workshop__mode {
+    flex: 1;
+  }
+
+  .workshop__list-btn { flex: 0 0 auto; }
+  .workshop__deploy { flex: 1; }
+  .workshop__close { flex: 0 0 auto; margin-left: 0; }
+
+  /* The tray's contextual row only shows the current tool's controls, so the
+   * bench keeps most of the screen; the explanation opens over a full row. */
+  .workshop__tools { gap: 5px; padding: 6px 8px 8px; }
+  .workshop__intro { width: calc(100vw - 16px); }
+}
+
+/* The purple cube: the whole ladder in one press, and a thing you want to
+   press on purpose. It sat at the bottom left of the pad, beside the coarser
+   key, where a thumb reaching for the pad's edge kept landing on it. It sits
+   above NEAR now, in its own row at the top right corner: out of the path to
+   every other key, and clear of the chat that lives to the pad's left. */
+/* Colour deliberately absent. A purple treatment lived here and never once
+   reached the screen: `.touchpad__key` below sets colour, background and
+   border at the same specificity and later in the file, so it won every time.
+   The key has always rendered as a plain key, and the rule was left claiming
+   otherwise, which is how the EARTH key came to be styled to match something
+   that did not exist (arkinox, 2026-09-14). */
+.touchpad__key--cube { grid-area: cube; }
+
+.touchpad__key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--fg, #c8f5ff);
+  background: rgba(6, 14, 22, 0.72);
+  border: 1px solid var(--border, #1d3547);
+  border-radius: 9px;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  touch-action: none;
+  padding: 0;
+}
+
+.touchpad__key:active {
+  background: rgba(0, 229, 255, 0.3);
+  border-color: var(--accent, #00e5ff);
+}
+
+.touchpad__key--up { grid-area: up; }
+
+.touchpad__key--down { grid-area: down; }
+
+.touchpad__key--left { grid-area: left; }
+
+.touchpad__key--right { grid-area: right; }
+
+/* The out axis has no analogue on a flat pad, so it takes the top corners.
+ * Glyph over word, because at this size the ring-and-cross and the ring-and-dot
+ * are nearly the same shape. */
+.touchpad__key--away,
+.touchpad__key--toward {
+  grid-area: away;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--accent, #00e5ff);
+}
+
+.touchpad__key--toward { grid-area: toward; }
+
+/* Scale changes the UNIT, not the camera. Bottom corners, away from the
+ * directions, and harmless to hit by mistake since it costs nothing. Left is
+ * out and right is in, so the pad reads the way Q and E sit on a keyboard. */
+.touchpad__key--zoomout,
+.touchpad__key--zoomin {
+  grid-area: zoomout;
+  font-size: 17px;
+  color: var(--dim, #7fa6bd);
+}
+
+.touchpad__key--zoomin { grid-area: zoomin; }
+
+/* ---------- Zoom-out hint ----------
+ *
+ * The scene's covering box is clipped: the true region extends past the
+ * drawable window and its walls are breathing outward to say so. This key is
+ * the remedy (coarser scale IS zoom out), so it echoes the message in the same
+ * accent blue as the walls, at low alpha and a slow ease. A hint about where
+ * relief lives, not an alarm about a fault. */
+/* Stood down off your own head. Hidden rather than removed or disabled: the
+ * cell has to keep its place so the scale keys do not move, and a greyed key
+ * would promise something the viewing modes cannot deliver. */
+.touchpad__key.is-standdown {
+  visibility: hidden;
+}
+
+.touchpad__key.is-zoomhint {
+  animation: zoomhint-pulse 2s ease-in-out infinite;
+}
+
+/* ---------- Chips ----------
+ *
+ * The floating buttons that sit on the scene: CONTROLS, which brings the pad
+ * back, and XOR BITS, which folds the readout. One rule, so they are one kind
+ * of thing wherever they sit. Position is the only thing each adds.
+ */
+.chip {
+  z-index: 100;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  padding: 9px 12px;
+  border-radius: 9px;
+  color: var(--accent, #00e5ff);
+  background: rgba(6, 14, 22, 0.72);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  touch-action: none;
+  white-space: nowrap;
+}
+
+.chip:active {
+  background: rgba(0, 229, 255, 0.28);
+}
+
+/* Folded away, a chip should read as a thing you could open, not as a live
+ * control that has gone quiet. */
+.chip[aria-pressed='false'] {
+  color: var(--dim);
+  border-color: rgba(200, 245, 255, 0.18);
+}
+
+/* ---------- Long-press must not raise a callout ----------
+ *
+ * Holding a direction is a first-class gesture on the pad, it is how you cross
+ * more than a few gibsons, and on a touch device a long press is also how you
+ * ask for a context menu. Without this the very thing the pad is designed for
+ * pops a share sheet over it on Android and a selection magnifier on iOS.
+ *
+ * `-webkit-touch-callout` is the iOS half and it has no standard equivalent;
+ * `user-select` stops the text inside a button being grabbed on Android, which
+ * is the other way a held press turns into a selection. The JS half is an
+ * onContextMenu that prevents default, since neither property stops the event a
+ * right-click raises on the same element.
+ */
+.touchpad__key,
+.touchpad__sub,
+.touchpad__hub,
+.touchops__commit,
+.touchops__cancel,
+.touchmode__opt,
+.touchhint,
+.hamburger-menu,
+.compass-3d--tappable,
+.viewmenu,
+.viewmenu__key,
+.viewmenu__op,
+.viewmenu__close {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- Login modal (choosing who signs) ---------- */
+.modal__card.login {
+  border-color: rgba(0, 229, 255, 0.5);
+  max-width: 440px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.login__head .modal__title {
+  margin: 0;
+}
+
+/* Loot detail: a bag's record, on the secret modal's frame */
+.lootd__facts {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+/* Explanation: a panel's prose behind a pill, opened into a well */
+.explain {
+  margin-top: 8px;
+}
+
+.explain__pill {
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid rgba(200, 245, 255, 0.25);
+  cursor: pointer;
+}
+
+.explain__pill:hover {
+  color: var(--fg);
+  border-color: rgba(200, 245, 255, 0.5);
+}
+
+.explain__pill.is-on {
+  color: var(--accent);
+  border-color: rgba(0, 229, 255, 0.5);
+  background: rgba(0, 229, 255, 0.06);
+}
+
+.explain__well {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(0, 229, 255, 0.05);
+  border: 1px solid rgba(0, 229, 255, 0.14);
+}
+
+/* Invisible scrollbars on every HUD scroll container. The areas still scroll by
+   wheel, trackpad and touch; on Windows the classic bar no longer takes width.
+   Plain CSS, since this project does not use Tailwind: scrollbar-width covers
+   Firefox and current Chromium, the WebKit pseudo-element covers the rest. */
+.hud, .hud *, .modal, .modal *, .detail, .detail *, .workshop, .workshop *, .instruments, .instruments * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hud::-webkit-scrollbar, .hud *::-webkit-scrollbar,
+.modal::-webkit-scrollbar, .modal *::-webkit-scrollbar,
+.detail::-webkit-scrollbar, .detail *::-webkit-scrollbar,
+.workshop::-webkit-scrollbar, .workshop *::-webkit-scrollbar,
+.instruments::-webkit-scrollbar, .instruments *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+@keyframes found-breathe {
+  0%, 100% { box-shadow: 0 0 10px rgba(0, 229, 255, 0.12); }
+  50% { box-shadow: 0 0 22px rgba(0, 229, 255, 0.34); }
+}
+
+/* ---------- Cloud compute (HOSAKA) ----------
+ *
+ * Paid movement has its own color, a warm gold, so a cloud state never reads
+ * as the amber of local computing or the violet of a local sidestep. The
+ * invoice card carries it too, over the modal's default destructive red. */
+:root {
+  --cloud: #ffd27d;
+}
+
+.notice--cloud {
+  color: var(--cloud);
+  background: rgba(255, 210, 125, 0.08);
+  border-left-color: var(--cloud);
+}
+
+.modal__card.cloud {
+  border-color: rgba(255, 210, 125, 0.5);
+}
+
+/* Going Live: not a destruction, so not the red card. Green, the same green
+   the LIVE half of the switch lights up in and the same green a published
+   action wears in the chain panel. */
+.modal__card.golive {
+  border-color: rgba(82, 227, 159, 0.5);
+}
+
+.modal__card.golive .modal__confirm {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.modal__card.invoice {
+  max-width: 360px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.invoice .modal__row {
+  margin-top: 10px;
+}
+
+.modal__card .hosaka-banner { margin: -16px -16px 12px; width: calc(100% + 32px); border-radius: 3px 3px 0 0; }
+
+.modal__figure { margin: 4px 0 10px; text-align: left; }
+
+.modal__price {
+  font-family: 'Monaspace Krypton', var(--mono);
+  font-weight: 700;
+  font-size: 2rem;
+  letter-spacing: 0.04em;
+  color: var(--cloud, #ffd27d);
+}
+
+/* The avatar's price and, while it is mined, the progress: one dim line under the row. */
+.workshop__work {
+  flex-basis: 100%;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+/* The avatar adopt in progress, visible from the top row while MENU is closed. */
+.ws__chip.ws__chip--work {
+  color: var(--warn, #ffb347);
+  border-color: color-mix(in srgb, var(--warn, #ffb347) 50%, transparent);
+}
+
+/* An avatar adopted while LOCAL, waiting to be sent. */
+.workshop__btn.workshop__btn--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+/* The workshop's panels hover over the compass and its pad, which share the
+   top-right corner: the panel is what you are reading, so it wins. The compass
+   drops a layer rather than the panels rising one, because DEPLOY and the way
+   out share the top edge with the chips and must stay pressable above all of it.
+   The chip row also reserves 124px on its right for those two buttons, and that
+   strip must let a press through rather than swallow it. */
+.ws__view { z-index: 2; }
+
+.ws__chips { pointer-events: none; }
+
+.ws__chips > * { pointer-events: auto; }
+
+/* A rule between the controls in MENU and GRID, so a row reads as one control. */
+.ws__panel .workshop__row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  padding-top: 8px;
+}
+
+.ws__panel .workshop__row:first-child { border-top: none; padding-top: 0; }
+
+/* With undo and redo out of the way, the open panel sits right under its chip. */
+.ws__top--open { gap: 5px; }
+
+/* The delete X, big enough to hit and to read. */
+.workshop__mini--x {
+  font-size: 20px;
+  line-height: 1;
+  padding-bottom: 2px;
+}
+
+/* The Secrets modal's head: title, count, and the way out on the right. */
+.secrets__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* An arrival lights the sector chip for a few seconds. */
+@keyframes presence-arrival {
+  0% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.55); }
+  100% { box-shadow: 0 0 0 10px rgba(0, 229, 255, 0); }
+}
+
+/* SCANNING, opened: what it is doing, in a few lines, and a mark that says
+ * tapping the head closes it. */
+.presence__explain {
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  max-width: 34ch;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--fg);
+}
+
+/* No colour of its own, which is what the cube key has always looked like in
+   practice (see the note on --cube): these are the same kind of control, one
+   frames the whole space and the other the planet, and the glyph tells them
+   apart. */
+.touchpad__key--earth { grid-area: earth; }
+
+/* Amber, the pin's own colour in the scene (palette WARN), so the key and the
+   marker it removes are plainly the same thing. */
+.touchpad__key--pin {
+  grid-area: pin;
+  color: #ffe3b0;
+  background: rgba(255, 176, 32, 0.42);
+  border-color: rgba(255, 200, 110, 0.9);
+}
+
+.touchpad__key--pin:active { background: rgba(255, 190, 70, 0.8); border-color: #fff4e0; }
+
+
+/* The feed, drawn where the bench would be. */
+.feed { position: absolute; inset: 0; overflow-y: auto; padding: 60px 14px 14px; }
 .feed__head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .feed__head h2 { margin: 0; font-size: 11px; letter-spacing: 0.16em; color: var(--dim); font-weight: 400; }
 .empty { color: var(--dim); font-size: 12px; max-width: 46ch; line-height: 1.6; }
-
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .tile { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel); }
 .tile:hover { border-color: rgba(0, 229, 255, 0.5); }
 .preview { width: 100%; }
@@ -153,44 +1538,8 @@ button:disabled { opacity: 0.35; cursor: default; }
 .tile__name { font-size: 11px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile__meta { font-size: 9px; color: var(--dim); letter-spacing: 0.06em; }
 .tile__acts { display: flex; gap: 4px; flex: none; }
-.tile__acts .icon { width: 30px; height: 30px; }
-
-/* ---- foot ---- */
-.foot {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--dim);
-}
-.foot a { color: var(--dim); }
-.foot a:hover { color: var(--accent); }
-.foot code { color: var(--warn); }
-
-@media (max-width: 760px) {
-  /* The page scrolls as a document here rather than being pinned to the
-     viewport. Pinned, the editor's panel had nowhere to go: it overflowed the
-     app and the footer drew straight through the tool buttons. */
-  html, body, #root { height: auto; }
-  /* Viewport units, not a percentage: a percentage minimum resolves against an
-     auto-height parent and comes out as nothing, so the app stopped at its
-     content and left a band of dead space under the footer. dvh follows the
-     phone's shrinking address bar; vh is the fallback for anything older. */
-  .app { height: auto; min-height: 100vh; min-height: 100dvh; }
-  .make { flex-direction: column; }
-  /* The bench takes whatever the panel does not, so a tall phone gives the
-     model more room rather than leaving a band of nothing under the footer. */
-  .make__bench { flex: 1 1 auto; min-height: 42vh; }
-  .make__side { width: auto; border-left: 0; border-top: 1px solid var(--border); overflow: visible; }
-  .feed { overflow: visible; }
-
-  /* Compact controls: a phone header should not spend a whole row on two
-     buttons that say four words between them. */
-  .view, .btn, .tool, .chip { padding: 8px 9px; letter-spacing: 0.1em; }
-  .icon { width: 34px; height: 34px; }
-  .top { gap: 6px; }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-}
+.tile__acts .icon { width: 30px; height: 30px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--fg); background: rgba(6, 14, 22, 0.72); border: 1px solid var(--border); cursor: pointer; }
+.tile__acts .icon:hover { border-color: var(--accent); }
+.btn { display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 9px; letter-spacing: 0.14em; color: var(--fg); background: rgba(6, 14, 22, 0.72); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.35; cursor: default; }
