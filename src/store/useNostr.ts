@@ -24,6 +24,7 @@ import {
   randomSigner, savePref, saveLocal, signerFromNcryptsec, signerFromNsec, type Signer, type SignerKind,
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
+import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
 import { fromPayload, toPayload, type ShardModel } from '../lib/shards'
 
 /** DECK-0004 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
@@ -62,6 +63,8 @@ interface NostrState {
   notice: string | null
   /** Whether an identity has been chosen at all. */
   signedIn: boolean
+  /** What this browser knows about which objects have been published. */
+  published: Ledger
   /** The last thing that went wrong while choosing one. */
   loginError: string | null
   /** Pick up a key this browser already holds, without prompting for anything. */
@@ -135,6 +138,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   pubkey: null,
   signer: 'local',
   signedIn: false,
+  published: loadLedger(),
   loginError: null,
   relays: DEFAULT_RELAYS,
   feed: [],
@@ -192,6 +196,14 @@ export const useNostr = create<NostrState>((set, get) => ({
       const signed = await signer.signEvent(template)
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = results.filter((r) => r.status === 'fulfilled').length
+      if (took > 0) {
+        // Written down here rather than asked of a relay later: an addressable
+        // event keeps no memory of what it replaced, so this is the only record
+        // that this object went out and what it looked like when it did.
+        const ledger = noteSent(get().published, shard.id, fingerprint(template.content), signed.pubkey, signed.created_at)
+        saveLedger(ledger)
+        set({ published: ledger })
+      }
       set({
         publishing: false,
         notice: took > 0 ? `"${shard.name}" is published to ${took} of ${relays.length} relays.` : 'No relay took it.',
@@ -221,6 +233,16 @@ export const useNostr = create<NostrState>((set, get) => ({
         .map(objectFromEvent)
         .filter((o): o is FeedObject => o !== null)
         .sort((a, b) => b.createdAt - a.createdAt)
+      // An object of mine that came back from a relay was published, even if it
+      // was published from another browser. It is noted without a fingerprint,
+      // because what a relay returns has been through the reader and the writer
+      // again and need only match in meaning, not byte for byte.
+      const mine = get().pubkey
+      if (mine) {
+        let ledger = get().published
+        for (const o of feed) if (o.pubkey === mine) ledger = noteSeen(ledger, o.d, mine, o.createdAt)
+        if (ledger !== get().published) { saveLedger(ledger); set({ published: ledger }) }
+      }
       set({ feed, loading: false })
     } catch {
       set({ loading: false, notice: 'Could not reach the relays.' })

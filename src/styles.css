@@ -7,6 +7,8 @@
   --dim: #6f8ea0;
   --accent: #00e5ff;
   --warn: #f7931a;
+  --ok: #52e39f;
+  --danger: #ff3b6b;
   --border: #1d3547;
   --mono: 'Monaspace Krypton', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -1721,4 +1723,200 @@ button:disabled { opacity: 0.35; cursor: default; }
   padding: 8px;
   resize: vertical;
   word-break: break-all;
+}
+
+/* ---------- The menu overlay ----------
+
+   ONOSENDAI's panels, brought over whole (.panel, .tag, .identity__*, .brand),
+   plus the overlay that holds them. The hamburger sits in the workshop's chip
+   row rather than floating in a corner: there is one row of controls here and
+   the app belongs at the head of it. */
+
+.hamburger-icon {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 16px;
+  height: 14px;
+}
+.hamburger-icon span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.ws__burger.is-on .hamburger-icon span { background: var(--bg); }
+
+.menu {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: flex-start;
+}
+.menu__scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(3, 6, 12, 0.72);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+.menu__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(380px, 100vw);
+  height: 100%;
+  padding: 14px 14px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(5, 9, 16, 0.94);
+  border-right: 1px solid var(--border);
+}
+.menu__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.brand { text-align: center; pointer-events: none; }
+.brand__mark { display: block; width: 56px; height: 56px; margin: 6px auto 0; }
+.brand__word {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  color: var(--accent);
+  text-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
+}
+.brand p {
+  margin: 6px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* The two places you can be, as two targets rather than two more chips. */
+.menu__go { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.menu__big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 8px;
+  font-family: inherit;
+  color: var(--fg);
+  background: rgba(0, 229, 255, 0.05);
+  border: 1px solid rgba(0, 229, 255, 0.24);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.menu__big:hover { background: rgba(0, 229, 255, 0.13); }
+.menu__big.is-on { border-color: var(--accent); background: rgba(0, 229, 255, 0.16); }
+.menu__big svg { color: var(--accent); }
+.menu__big-name { font-size: 11px; letter-spacing: 0.2em; color: var(--accent); }
+.menu__big-note { font-size: 9px; line-height: 1.35; letter-spacing: 0.04em; color: var(--dim); text-align: center; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px 12px;
+}
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+  border-bottom: 1px solid rgba(0, 229, 255, 0.14);
+  padding-bottom: 6px;
+}
+.panel__head h2 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.tag {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.tag--live { color: var(--ok); }
+.tag--local { color: var(--dim); }
+.tag--sending { color: var(--warn); }
+.tag--danger { color: var(--danger); }
+.tag--scan { color: var(--warn); }
+
+.identity__who { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* A swatch, not a portrait: the hue is the pubkey's first byte, so the same
+   key is the same colour every time without asking a relay for a picture. */
+.identity__swatch {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.identity__who-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.identity__name { font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.identity__signer { font-size: 9px; line-height: 1.35; letter-spacing: 0.04em; color: var(--dim); }
+.identity__change {
+  font-family: inherit;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  padding: 0 10px;
+  height: 26px;
+  border-radius: 3px;
+  color: var(--accent);
+  background: rgba(0, 229, 255, 0.06);
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.identity__change:hover { background: rgba(0, 229, 255, 0.16); }
+
+.menu__line { margin: 0 0 8px; font-size: 11px; line-height: 1.45; color: var(--dim); }
+.menu__wide { width: 100%; justify-content: center; }
+.menu__list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.menu__list li { display: flex; align-items: center; gap: 6px; }
+.menu__list li.is-current .menu__pick-name { color: var(--accent); }
+.menu__pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: rgba(6, 14, 22, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.menu__pick:hover { border-color: rgba(0, 229, 255, 0.4); }
+.menu__pick-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu__pick-meta { font-size: 9px; letter-spacing: 0.06em; color: var(--dim); }
+.menu__state { flex-shrink: 0; min-width: 78px; text-align: center; }
+
+/* On a phone the card is the screen: a 380px drawer beside a scrim wastes the
+   half it does not use, and the panels are what you came for. */
+@media (max-width: 520px) {
+  .menu__card { width: 100vw; border-right: 0; }
 }

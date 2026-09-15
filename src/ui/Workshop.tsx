@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Boxes, ClipboardPaste, Copy, Eye, Grid3x3, Link, Menu, MousePointer2, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Wrench, X } from 'lucide-react'
+import { Box, Boxes, ClipboardPaste, Copy, Eye, Grid3x3, Link, MousePointer2, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { ConfirmModal } from './ConfirmModal'
 import { Explanation } from './Explanation'
@@ -31,6 +31,8 @@ import { useWorkshop, type Tool } from '../store/useWorkshop'
 import { Bench } from './Bench'
 import { Feed } from './Feed'
 import { LoginModal } from './LoginModal'
+import { MenuOverlay } from './MenuOverlay'
+import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
 import { useNostr } from '../store/useNostr'
 import { fileNameFor, toPly } from '../lib/ply'
 
@@ -69,12 +71,12 @@ function Intro(): JSX.Element | null {
   if (!show) return null
   const done = (): void => { try { localStorage.setItem(INTRO_KEY, '1') } catch { /* private mode */ } setShow(false) }
   return (
-    <div className="workshop__intro" role="note" aria-label="How to make a shard">
-      <h3 className="workshop__intro-title">MAKE A SHARD</h3>
+    <div className="workshop__intro" role="note" aria-label="How to make an object">
+      <h3 className="workshop__intro-title">MAKE AN OBJECT</h3>
       <ol className="workshop__intro-steps">
         <li><b>STAMP</b> a shape: pick one under TOOLS, tap the grid where the ghost shows.</li>
         <li>One finger <b>orbits</b>, two fingers <b>pan</b>. GRID raises the level to stack things.</li>
-        <li><b>DEPLOY</b> hides it in the world at a place you choose.</li>
+        <li><b>PUBLISH</b> sends it to the relays as one event, for anyone to find.</li>
       </ol>
       <button className="workshop__btn workshop__intro-ok" onClick={done}>GOT IT</button>
     </div>
@@ -302,12 +304,13 @@ export function Workshop(): JSX.Element | null {
   const division = useWorkshop((s) => s.division)
   const showAvatar = useWorkshop((s) => s.showAvatar)
   const signedIn = useNostr((s) => s.signedIn)
-  const npub = useNostr((s) => s.npub())
-  const signerKind = useNostr((s) => s.signer)
   const publishing = useNostr((s) => s.publishing)
   const nostrNotice = useNostr((s) => s.notice)
   const [view, setView] = useState<'make' | 'feed'>('make')
   const [loginOpen, setLoginOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const ledger = useNostr((s) => s.published)
+  const pubkey = useNostr((s) => s.pubkey)
   // One place things are said: publishing speaks through the workshop's toast
   // rather than opening a second channel beside it.
   useEffect(() => {
@@ -315,6 +318,12 @@ export function Workshop(): JSX.Element | null {
   }, [nostrNotice])
   const buildable = shard !== null && shard.vertices.length > 0
   const bytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(toPayload(shard))).length : 0), [shard])
+  // Where this object stands with the relays. The bench cannot show it: a
+  // published object and one that has never left the browser look the same.
+  const state = useMemo(
+    () => publishState(shard ? ledger[shard.id] : undefined, shard ? shardFingerprint(shard) : '', pubkey),
+    [shard, ledger, pubkey],
+  )
   const color = useWorkshop((s) => s.color)
   const stampKind = useWorkshop((s) => s.stampKind)
   const stampSize = useWorkshop((s) => s.stampSize)
@@ -439,13 +448,20 @@ export function Workshop(): JSX.Element | null {
       <Intro />
       <Toast />
       {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} />}
+      {menuOpen && <MenuOverlay view={view} setView={setView} onClose={() => setMenuOpen(false)} onLogin={() => setLoginOpen(true)} />}
 
       {/* Top left: the three chips and the history in one row, wrapping on a phone,
           and the open panel under whatever the row wrapped to. */}
       <div className={`ws__top ${panel ? 'ws__top--open' : ''}`}>
       <div className="ws__chips">
+        {/* The app, as against the object: who you are, and the two places you
+            can be. The chips beside it stay what they are, the tools for the
+            thing on the bench. */}
+        <button className={`chip ws__icon ws__burger ${menuOpen ? 'is-on' : ''}`} aria-expanded={menuOpen} aria-label="Menu" title="Identity, feed and workshop" onClick={() => setMenuOpen(true)}>
+          <span className="hamburger-icon" aria-hidden><span /><span /><span /></span>
+        </button>
         <button className={`chip ws__chip ${panel === 'menu' ? 'is-on' : ''}`} aria-pressed={panel === 'menu'} onClick={() => toggle('menu')}>
-          <Menu size={12} strokeWidth={2.25} aria-hidden />MENU
+          <Box size={12} strokeWidth={2.25} aria-hidden />MENU
         </button>
         <button className={`chip ws__chip ${panel === 'grid' ? 'is-on' : ''}`} aria-pressed={panel === 'grid'} onClick={() => toggle('grid')}>
           <Grid3x3 size={12} strokeWidth={2.25} aria-hidden />GRID
@@ -492,27 +508,21 @@ export function Workshop(): JSX.Element | null {
           {/* Publishing: what this app does with an object instead of hiding it
               at a place. No work to mine and no coordinate to compute, so the
               whole of it is a key and a button. */}
+          {/* Publishing: what this app does with an object instead of hiding it
+              at a place. The key itself lives in the menu, so this stays about
+              the object: where it stands with the relays, and the two ways out
+              of here. */}
           <div className="workshop__avatar" role="group" aria-label="Publishing">
             <div className="workshop__row">
-              <span className="workshop__label">KEY</span>
-              <span className="workshop__value workshop__value--wide">{!signedIn ? 'none yet' : npub ? `${npub.slice(0, 14)}…${npub.slice(-4)}` : 'signed in'}</span>
+              <span className="workshop__label">RELAYS</span>
+              <span className={`tag ${STATE_TAG[state]}`} title={STATE_HELP[state]}>{STATE_LABEL[state]}</span>
+              <span className="workshop__gap" />
             </div>
-            {!signedIn ? (
-              <div className="workshop__list-row">
-                <button className="workshop__btn workshop__btn--warn" onClick={() => setLoginOpen(true)} title="Choose how you sign">CHOOSE A KEY</button>
-              </div>
-            ) : (
-              <span className="workshop__work">{signerKind === 'nip07' ? 'YOUR EXTENSION SIGNS' : signerKind === 'nip46' ? 'A BUNKER SIGNS, AND HOLDS THE KEY' : 'A KEY IN THIS BROWSER, AND NOWHERE ELSE'}</span>
-            )}
+            {!signedIn && <span className="workshop__work">NO KEY YET · CHOOSE ONE IN THE MENU</span>}
             <div className="workshop__list-row">
-              <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { if (shard) void useNostr.getState().publish(shard) }} title={!signedIn ? 'Pick a key first' : 'Publish this object as a kind 33331 event'}>{publishing ? 'PUBLISHING' : 'PUBLISH'}</button>
+              <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { if (shard) void useNostr.getState().publish(shard) }} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}>{publishing ? 'PUBLISHING' : state === 'published' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
               <button className="workshop__btn" disabled={!buildable} onClick={() => { if (shard) saveFile(toPly(shard), fileNameFor(shard, 'ply')) }} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
             </div>
-            {signedIn && (
-              <div className="workshop__list-row">
-                <button className="workshop__btn" onClick={() => setLoginOpen(true)} title="Change how you sign, or export this key">CHANGE KEY</button>
-              </div>
-            )}
             <span className="workshop__work">{bytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES</span>
           </div>
           <div className="ws__panel-title">OBJECTS ({shards.length})</div>
