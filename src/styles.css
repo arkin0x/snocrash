@@ -1543,3 +1543,182 @@ button:disabled { opacity: 0.35; cursor: default; }
 .btn { display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 9px; letter-spacing: 0.14em; color: var(--fg); background: rgba(6, 14, 22, 0.72); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
 .btn:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.35; cursor: default; }
+
+
+/* The login modal, with ONOSENDAI's own rules. */
+.avatars__input {
+  min-width: 0;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  color: var(--fg);
+  background: rgba(0, 229, 255, 0.05);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+}
+
+.avatars__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.secret__name { font-size: 13px; color: var(--fg); }
+
+.secret__npub { font-size: 9px; color: var(--dim); }
+
+.secret__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.secret__act {
+  flex: 1;
+  min-width: 100px;
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  height: 34px;
+  border-radius: 6px;
+  color: var(--accent);
+  background: rgba(0, 229, 255, 0.06);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  cursor: pointer;
+}
+
+.secret__act:hover { background: rgba(0, 229, 255, 0.16); }
+
+.secret__act.is-on {
+  color: #05070d;
+  background: var(--accent);
+  font-weight: 700;
+}
+
+.secret__act--danger {
+  color: var(--danger);
+  border-color: rgba(255, 59, 107, 0.5);
+  background: rgba(255, 59, 107, 0.08);
+}
+
+/* ---------- Login modal (choosing who signs) ---------- */
+.modal__card.login {
+  border-color: rgba(0, 229, 255, 0.5);
+  max-width: 440px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.login__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.login__head .modal__title {
+  margin: 0;
+}
+
+.login__current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 6px;
+  background: rgba(0, 229, 255, 0.05);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+}
+
+.login__current-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.login__kind {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+
+.login__note {
+  margin: 12px 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--dim);
+}
+
+.login__error {
+  margin: 0 0 12px;
+  word-break: break-word;
+}
+
+.login__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid rgba(200, 245, 255, 0.08);
+}
+
+.login__section--row {
+  flex-direction: row;
+  gap: 8px;
+}
+
+.login__section--row .login__act {
+  flex: 1;
+}
+
+.login__label {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.login__input {
+  width: 100%;
+  font-size: 11px;
+  padding: 8px 9px;
+}
+
+.login__act {
+  margin-top: 2px;
+}
+
+.login__act:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cloud__budget .login__input {
+  padding: 6px 8px;
+}
+
+.cloud__job .secret__actions {
+  margin-top: 8px;
+}
+
+.secrets__sort .login__label { margin-right: 2px; }
+
+/* ---------------------------------------------------------------------------
+   Taking a local key with you (LoginModal, lib/keyExport).
+   --------------------------------------------------------------------------- */
+.login__row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.login__backup {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--warn);
+  background: rgba(247, 147, 26, 0.06);
+  border: 1px solid rgba(247, 147, 26, 0.4);
+  border-radius: 6px;
+  padding: 8px;
+  resize: vertical;
+  word-break: break-all;
+}

@@ -9,15 +9,21 @@
  * what the workshop already writes, and it goes out as `v: 2`, the published
  * frame, which any glTF-minded tool can read without a special case.
  *
- * Keys: a browser extension when there is one (NIP-07), and otherwise a key
- * this app generates and keeps in localStorage. The second is a real key with
- * real consequences, so it says so in the UI rather than pretending to be a
- * login. Nothing here touches Cyberspace: an object has no coordinate and this
- * app never computes one.
+ * Keys are ONOSENDAI's four (lib/signers): a key this app makes and keeps in
+ * the browser, an nsec, an encrypted ncryptsec, or a signer that is not this
+ * app at all, an extension or a bunker. A key held here can be taken away
+ * again, encrypted (lib/keyExport), because a key that lives in one browser is
+ * one cleared cache from gone. Nothing here touches Cyberspace: an object has
+ * no coordinate and this app never computes one.
  */
 
 import { create } from 'zustand'
-import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip19, type Event } from 'nostr-tools'
+import { SimplePool, nip19, type Event } from 'nostr-tools'
+import {
+  forgetLocal, loadLocal, loadPref, localSigner, nip07Signer, nip46Signer,
+  randomSigner, savePref, saveLocal, signerFromNcryptsec, signerFromNsec, type Signer, type SignerKind,
+} from '../lib/signers'
+import { exportNcryptsec } from '../lib/keyExport'
 import { fromPayload, toPayload, type ShardModel } from '../lib/shards'
 
 /** DECK-0004 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
@@ -30,8 +36,6 @@ export const DEFAULT_RELAYS = [
   'wss://relay.nostr.band',
 ]
 
-const SK_KEY = 'snocrash:sk'
-
 /** An object someone published, with the event it came from. */
 export interface FeedObject {
   id: string
@@ -42,29 +46,11 @@ export interface FeedObject {
   shard: ShardModel
 }
 
-export type SignerKind = 'none' | 'local' | 'extension'
+/** Who signs right now. Not in the store: it holds a key and React state is copied. */
+let signer: Signer | null = null
 
-interface Nip07 {
-  getPublicKey: () => Promise<string>
-  signEvent: (e: { kind: number; created_at: number; tags: string[][]; content: string }) => Promise<Event>
-}
-
-function extension(): Nip07 | null {
-  const w = window as unknown as { nostr?: Nip07 }
-  return w.nostr ?? null
-}
-
-function loadSecret(): Uint8Array | null {
-  try {
-    const hex = localStorage.getItem(SK_KEY)
-    if (!hex || !/^[0-9a-f]{64}$/.test(hex)) return null
-    return Uint8Array.from(hex.match(/../g)!.map((b) => parseInt(b, 16)))
-  } catch { return null }
-}
-
-function saveSecret(sk: Uint8Array): void {
-  try { localStorage.setItem(SK_KEY, [...sk].map((b) => b.toString(16).padStart(2, '0')).join('')) } catch { /* private mode */ }
-}
+/** The current signer, for the one thing outside this module that needs it. */
+export function currentSigner(): Signer | null { return signer }
 
 interface NostrState {
   pubkey: string | null
@@ -74,12 +60,22 @@ interface NostrState {
   loading: boolean
   publishing: boolean
   notice: string | null
-  /** Pick up whatever identity is already available, without prompting. */
+  /** Whether an identity has been chosen at all. */
+  signedIn: boolean
+  /** The last thing that went wrong while choosing one. */
+  loginError: string | null
+  /** Pick up a key this browser already holds, without prompting for anything. */
   init: () => Promise<void>
-  /** Make a key in this browser and keep it. */
-  useLocalKey: () => void
-  /** Ask the extension for its key, which is the only prompt this app makes. */
+  useNewKey: () => void
+  useNsec: (nsec: string) => Promise<void>
+  useNcryptsec: (ncryptsec: string, password: string) => Promise<void>
   useExtension: () => Promise<void>
+  useBunker: (uri: string) => Promise<void>
+  /** Forget the key this browser holds, and who is signing. */
+  signOut: () => void
+  clearLoginError: () => void
+  /** This device's key, encrypted (NIP-49), or a thrown error naming the problem. */
+  exportKey: (password: string, again: string) => string
   npub: () => string | null
   publish: (shard: ShardModel) => Promise<boolean>
   loadFeed: () => Promise<void>
@@ -116,9 +112,30 @@ export function objectFromEvent(ev: Event): FeedObject | null {
   return { id: ev.id, pubkey: ev.pubkey, createdAt: ev.created_at, d, shard }
 }
 
+/**
+ * Take a signer, or say why not.
+ *
+ * Every way in behaves the same on failure: nothing changes, and the reason is
+ * shown where it was asked for. A half-adopted signer would leave the app
+ * signing as somebody it no longer is.
+ */
+async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer | Promise<Signer>): Promise<void> {
+  try {
+    const next = await make()
+    signer = next
+    if (next.kind === 'local' && next.secretKey) saveLocal(next.secretKey)
+    else savePref(next.kind)
+    set({ pubkey: next.pubkey, signer: next.kind, signedIn: true, loginError: null })
+  } catch (err) {
+    set({ loginError: err instanceof Error ? err.message : String(err) })
+  }
+}
+
 export const useNostr = create<NostrState>((set, get) => ({
   pubkey: null,
-  signer: 'none',
+  signer: 'local',
+  signedIn: false,
+  loginError: null,
   relays: DEFAULT_RELAYS,
   feed: [],
   loading: false,
@@ -126,28 +143,39 @@ export const useNostr = create<NostrState>((set, get) => ({
   notice: null,
 
   init: async () => {
-    const sk = loadSecret()
-    if (sk) { set({ pubkey: getPublicKey(sk), signer: 'local' }); return }
-    // An extension that is already unlocked answers without a prompt; one that
-    // is not will ask, so this is only tried when the user asks for it.
+    // Only the key already in this browser is picked up silently. An extension
+    // may prompt and a bunker may take a round trip, so neither is tried until
+    // somebody asks for it.
+    if (loadPref() !== 'local') return
+    const sk = loadLocal()
+    if (!sk) return
+    signer = localSigner(sk)
+    set({ pubkey: signer.pubkey, signer: 'local', signedIn: true })
   },
 
-  useLocalKey: () => {
-    const sk = loadSecret() ?? generateSecretKey()
-    saveSecret(sk)
-    set({ pubkey: getPublicKey(sk), signer: 'local', notice: 'A key was made in this browser. It lives here and nowhere else.' })
+  useNewKey: () => {
+    signer = randomSigner()
+    saveLocal(signer.secretKey!)
+    set({
+      pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null,
+      notice: 'A key was made in this browser. Export it before you clear your cache, or it is gone.',
+    })
   },
 
-  useExtension: async () => {
-    const ext = extension()
-    if (!ext) { set({ notice: 'No nostr extension found in this browser.' }); return }
-    try {
-      const pk = await ext.getPublicKey()
-      set({ pubkey: pk, signer: 'extension', notice: null })
-    } catch {
-      set({ notice: 'The extension refused.' })
-    }
+  useNsec: async (nsec) => { await adopt(set, () => signerFromNsec(nsec)) },
+  useNcryptsec: async (ncryptsec, password) => { await adopt(set, () => signerFromNcryptsec(ncryptsec, password)) },
+  useExtension: async () => { await adopt(set, () => nip07Signer()) },
+  useBunker: async (uri) => { await adopt(set, () => nip46Signer(uri)) },
+
+  signOut: () => {
+    signer = null
+    forgetLocal()
+    set({ pubkey: null, signedIn: false, signer: 'local', loginError: null, notice: 'Signed out. The key this browser held is gone.' })
   },
+
+  clearLoginError: () => set({ loginError: null }),
+
+  exportKey: (password, again) => exportNcryptsec(signer?.secretKey, password, again),
 
   npub: () => {
     const pk = get().pubkey
@@ -155,22 +183,13 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   publish: async (shard) => {
-    const { signer, relays } = get()
-    if (signer === 'none') { set({ notice: 'Pick a key first.' }); return false }
+    const { relays } = get()
+    if (!signer) { set({ notice: 'Pick a key first.' }); return false }
     if (shard.vertices.length === 0) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
     const template = objectTemplate(shard, Math.floor(Date.now() / 1000))
     try {
-      let signed: Event
-      if (signer === 'extension') {
-        const ext = extension()
-        if (!ext) throw new Error('the extension went away')
-        signed = await ext.signEvent(template)
-      } else {
-        const sk = loadSecret()
-        if (!sk) throw new Error('no key in this browser')
-        signed = finalizeEvent(template, sk)
-      }
+      const signed = await signer.signEvent(template)
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = results.filter((r) => r.status === 'fulfilled').length
       set({

@@ -30,6 +30,7 @@ import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, typ
 import { useWorkshop, type Tool } from '../store/useWorkshop'
 import { Bench } from './Bench'
 import { Feed } from './Feed'
+import { LoginModal } from './LoginModal'
 import { useNostr } from '../store/useNostr'
 import { fileNameFor, toPly } from '../lib/ply'
 
@@ -300,11 +301,13 @@ export function Workshop(): JSX.Element | null {
   const plane = useWorkshop((s) => s.plane)
   const division = useWorkshop((s) => s.division)
   const showAvatar = useWorkshop((s) => s.showAvatar)
-  const signer = useNostr((s) => s.signer)
+  const signedIn = useNostr((s) => s.signedIn)
   const npub = useNostr((s) => s.npub())
+  const signerKind = useNostr((s) => s.signer)
   const publishing = useNostr((s) => s.publishing)
   const nostrNotice = useNostr((s) => s.notice)
   const [view, setView] = useState<'make' | 'feed'>('make')
+  const [loginOpen, setLoginOpen] = useState(false)
   // One place things are said: publishing speaks through the workshop's toast
   // rather than opening a second channel beside it.
   useEffect(() => {
@@ -435,6 +438,7 @@ export function Workshop(): JSX.Element | null {
       </div>
       <Intro />
       <Toast />
+      {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} />}
 
       {/* Top left: the three chips and the history in one row, wrapping on a phone,
           and the open panel under whatever the row wrapped to. */}
@@ -491,20 +495,24 @@ export function Workshop(): JSX.Element | null {
           <div className="workshop__avatar" role="group" aria-label="Publishing">
             <div className="workshop__row">
               <span className="workshop__label">KEY</span>
-              <span className="workshop__value workshop__value--wide">{signer === 'none' ? 'none yet' : npub ? `${npub.slice(0, 14)}…${npub.slice(-4)}` : 'signed in'}</span>
+              <span className="workshop__value workshop__value--wide">{!signedIn ? 'none yet' : npub ? `${npub.slice(0, 14)}…${npub.slice(-4)}` : 'signed in'}</span>
             </div>
-            {signer === 'none' ? (
+            {!signedIn ? (
               <div className="workshop__list-row">
-                <button className="workshop__btn" onClick={() => void useNostr.getState().useExtension()} title="Sign with a nostr browser extension">EXTENSION</button>
-                <button className="workshop__btn" onClick={() => useNostr.getState().useLocalKey()} title="Make a key that lives in this browser only">NEW KEY</button>
+                <button className="workshop__btn workshop__btn--warn" onClick={() => setLoginOpen(true)} title="Choose how you sign">CHOOSE A KEY</button>
               </div>
             ) : (
-              <span className="workshop__work">{signer === 'extension' ? 'YOUR EXTENSION SIGNS' : 'A KEY IN THIS BROWSER, AND NOWHERE ELSE'}</span>
+              <span className="workshop__work">{signerKind === 'nip07' ? 'YOUR EXTENSION SIGNS' : signerKind === 'nip46' ? 'A BUNKER SIGNS, AND HOLDS THE KEY' : 'A KEY IN THIS BROWSER, AND NOWHERE ELSE'}</span>
             )}
             <div className="workshop__list-row">
-              <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || signer === 'none'} onClick={() => { if (shard) void useNostr.getState().publish(shard) }} title={signer === 'none' ? 'Pick a key first' : 'Publish this object as a kind 33331 event'}>{publishing ? 'PUBLISHING' : 'PUBLISH'}</button>
+              <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { if (shard) void useNostr.getState().publish(shard) }} title={!signedIn ? 'Pick a key first' : 'Publish this object as a kind 33331 event'}>{publishing ? 'PUBLISHING' : 'PUBLISH'}</button>
               <button className="workshop__btn" disabled={!buildable} onClick={() => { if (shard) saveFile(toPly(shard), fileNameFor(shard, 'ply')) }} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
             </div>
+            {signedIn && (
+              <div className="workshop__list-row">
+                <button className="workshop__btn" onClick={() => setLoginOpen(true)} title="Change how you sign, or export this key">CHANGE KEY</button>
+              </div>
+            )}
             <span className="workshop__work">{bytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES</span>
           </div>
           <div className="ws__panel-title">OBJECTS ({shards.length})</div>
@@ -598,9 +606,9 @@ export function Workshop(): JSX.Element | null {
       <div className="ws__exit">
         <button
           className="workshop__deploy"
-          disabled={!buildable || publishing || signer === 'none'}
+          disabled={!buildable || publishing || !signedIn}
           onClick={() => { if (shard) void useNostr.getState().publish(shard) }}
-          title={signer === 'none' ? 'Pick a key in MENU first' : 'Publish this object as a kind 33331 event'}
+          title={!signedIn ? 'Pick a key in MENU first' : 'Publish this object as a kind 33331 event'}
         >{publishing ? 'PUBLISHING' : 'PUBLISH ▸'}</button>
       </div>
 
