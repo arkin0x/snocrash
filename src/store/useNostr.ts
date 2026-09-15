@@ -22,8 +22,9 @@ import { nip19, type Event } from 'nostr-tools'
 import { pool, stream } from '../lib/pool'
 import { relaySet } from './useRelays'
 import {
-  forgetLocal, loadLocal, loadPref, localSigner, nip07Signer, nip46Signer,
-  randomSigner, savePref, saveLocal, signerFromNcryptsec, signerFromNsec, type Signer, type SignerKind,
+  deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
+  prefOf, randomSigner, saveSignerPref, signWithin, signerFromNcryptsec, signerFromNsec,
+  signerFromPref, type Signer, type SignerKind,
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
@@ -117,13 +118,64 @@ export function objectFromEvent(ev: Event): FeedObject | null {
 async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer | Promise<Signer>): Promise<void> {
   try {
     const next = await make()
+    const old = signer
     signer = next
-    if (next.kind === 'local' && next.secretKey) saveLocal(next.secretKey)
-    else savePref(next.kind)
+    // The one it replaces holds sockets of its own; let them go.
+    if (old && old !== next) void old.close?.().catch(() => { /* already gone */ })
+    saveSignerPref(prefOf(next))
     set({ pubkey: next.pubkey, signer: next.kind, signedIn: true, loginError: null })
   } catch (err) {
     set({ loginError: err instanceof Error ? err.message : String(err) })
   }
+}
+
+/**
+ * A signature, with the patience a remote signer needs.
+ *
+ * A local key signs at once. An extension or a bunker gets SIGN_PATIENCE_MS,
+ * and if it does not answer its channel is presumed dead, which is what a
+ * phone leaves behind after the tab has sat in another app: the sockets look
+ * open and the request goes into the void. So they are dropped and the same
+ * signer is asked once more over fresh ones.
+ */
+async function signEvent(template: Parameters<Signer['signEvent']>[0]): Promise<Event> {
+  const current = signer
+  if (!current) throw new Error('Pick a key first.')
+  if (current.kind === 'local') return current.signEvent(template) as Promise<Event>
+  pendingSigns++
+  try {
+    return await signWithin(current, template) as Event
+  } catch (err) {
+    if (!current.reconnect) throw err
+    const fresh = await current.reconnect()
+    if (signer === current) signer = fresh
+    return await signWithin(fresh, template) as Event
+  } finally {
+    pendingSigns--
+  }
+}
+
+/** Remote signatures in flight, so a wake cannot drop the sockets one is arriving on. */
+let pendingSigns = 0
+
+/**
+ * The tab is back from another app.
+ *
+ * A remote signer's sockets are presumed half-open and dropped now, before
+ * anything is asked of them, so the next request goes out over live ones. Not
+ * while a signature is pending: the answer to that one is on its way over
+ * these sockets, and dropping them would lose it and ask again, which is a
+ * second prompt for the same event. If they really are dead, that request's
+ * own timeout reconnects and asks again.
+ */
+function wakeSigner(): void {
+  const current = signer
+  if (!current || current.kind === 'local' || pendingSigns > 0) return
+  void current.reconnect?.().then((fresh) => { if (signer === current) signer = fresh }).catch(() => { /* next request retries */ })
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wakeSigner() })
 }
 
 export const useNostr = create<NostrState>((set, get) => ({
@@ -138,16 +190,24 @@ export const useNostr = create<NostrState>((set, get) => ({
   notice: null,
 
   init: async () => {
-    // An extension may prompt and a bunker may take a round trip, so neither is
-    // tried until somebody asks for it; whichever signed last is offered again
-    // through the menu instead.
-    const pref = loadPref()
-    if (pref === 'nip07' || pref === 'nip46') return
-    const sk = loadLocal()
-    if (sk) {
-      signer = localSigner(sk)
-      set({ pubkey: signer.pubkey, signer: 'local', signedIn: true })
-      return
+    const pref = loadSignerPref()
+    if (pref) {
+      // A local key is instant. An extension or a bunker is shown by its
+      // pubkey now and reconnected on the first thing that needs a signature,
+      // so opening the app never waits on somebody's phone.
+      try {
+        signer = pref.kind === 'local'
+          ? await signerFromPref(pref)
+          : deferredReconnect(pref, (live) => { signer = live })
+        set({ pubkey: signer.pubkey, signer: signer.kind, signedIn: true })
+        return
+      } catch {
+        // A stored identity that cannot be rebuilt: say so rather than
+        // silently handing over a different one, which would look like the
+        // objects published under it had vanished.
+        set({ notice: 'The identity this browser had could not be restored. Choose a key in the menu.' })
+        return
+      }
     }
     // Nobody has been here before. Rather than meet a new arrival with a
     // question they have no way to answer yet, make them a key: everything in
@@ -163,8 +223,10 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   useNewKey: () => {
+    const old = signer
     signer = randomSigner()
-    saveLocal(signer.secretKey!)
+    if (old) void old.close?.().catch(() => { /* already gone */ })
+    saveSignerPref(prefOf(signer))
     set({
       pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null,
       notice: 'A key was made in this browser. Export it before you clear your cache, or it is gone.',
@@ -177,8 +239,9 @@ export const useNostr = create<NostrState>((set, get) => ({
   useBunker: async (uri) => { await adopt(set, () => nip46Signer(uri)) },
 
   signOut: () => {
+    void signer?.close?.().catch(() => { /* already gone */ })
     signer = null
-    forgetLocal()
+    forgetSignerPref()
     set({ pubkey: null, signedIn: false, signer: 'local', loginError: null, notice: 'Signed out. The key this browser held is gone.' })
   },
 
@@ -198,7 +261,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     set({ publishing: true, notice: null })
     const template = objectTemplate(shard, Math.floor(Date.now() / 1000))
     try {
-      const signed = await signer.signEvent(template)
+      const signed = await signEvent(template)
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = results.filter((r) => r.status === 'fulfilled').length
       if (took > 0) {

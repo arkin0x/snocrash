@@ -205,12 +205,20 @@ export function LoginModal({ onClose }: { onClose: () => void }): JSX.Element {
             disabled={disabled}
             onClick={() => void run('new', () => useNostr.getState().useNewKey())}
           >{label('new', 'MAKE A NEW KEY')}</button>
-          {signedIn && kind === 'local' && (
+          {signedIn && (
             <button
               className="secret__act login__act workshop__btn--danger"
               disabled={disabled}
-              onClick={() => { if (window.confirm('Forget the key this browser holds? Without an export, it cannot come back.')) { useNostr.getState().signOut(); onClose() } }}
-            >SIGN OUT</button>
+              onClick={() => {
+                // Only a key held here can be lost by forgetting it. An
+                // extension or a bunker keeps its own, so disconnecting costs
+                // nothing and the warning would be a lie.
+                const warning = kind === 'local'
+                  ? 'Forget the key this browser holds? Without an export, it cannot come back.'
+                  : 'Disconnect this signer? It keeps its own key, so you can connect it again.'
+                if (window.confirm(warning)) { useNostr.getState().signOut(); onClose() }
+              }}
+            >{kind === 'local' ? 'SIGN OUT' : 'DISCONNECT'}</button>
           )}
         </div>
       </div>
