@@ -25,24 +25,28 @@ body {
 
 .app { display: flex; flex-direction: column; height: 100%; }
 
+/* One wrapping row. The wordmark holds its place, the views and the identity
+   share what is left, and on a narrow screen they wrap under it rather than
+   each taking a full row of their own. */
 .top {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
 .wordmark {
+  flex: none;
   margin: 0;
-  font-size: 18px;
-  letter-spacing: 0.22em;
+  font-size: clamp(14px, 4.5vw, 18px);
+  letter-spacing: 0.2em;
   color: var(--accent);
   text-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
 }
 
-.views { display: flex; gap: 6px; margin-left: auto; }
+.views { display: flex; gap: 6px; margin-left: auto; flex: none; }
 
 .view, .btn, .tool, .chip, .publish, .icon {
   display: inline-flex;
@@ -67,7 +71,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 /* Every round icon button is one size, which is the touchpad key's. */
 .icon { width: 38px; height: 38px; padding: 0; border-radius: 50%; flex: none; }
 
-.who { display: flex; align-items: center; gap: 8px; }
+.who { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
 .who__key { font-size: 10px; color: var(--accent); }
 .who__kind { font-size: 9px; letter-spacing: 0.12em; color: var(--dim); }
 
@@ -83,7 +87,13 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 /* ---- make ---- */
 .make { flex: 1 1 auto; display: flex; min-height: 0; }
-.make__bench { flex: 1 1 auto; position: relative; min-width: 0; }
+/* The canvas is taken out of the flow and pinned to the box. A Canvas sizes
+   itself to its parent, and a flex item whose height comes from `flex: 1`
+   is not a definite height for that purpose, so the canvas sat at its default
+   150px inside a 529px box on a phone. Absolute inside a relative box gives it
+   something definite to fill. */
+.make__bench { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; }
+.make__fill { position: absolute; inset: 0; }
 .make__side {
   flex: none;
   width: 300px;
@@ -114,7 +124,9 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .stat { margin: 0; font-size: 10px; color: var(--dim); letter-spacing: 0.06em; }
 
-.tools { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+/* As many across as fit: five tools sit two-and-three on a phone and five in
+   a row on a wide panel, rather than leaving a stranded half-width button. */
+.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
 
 .publish {
   padding: 12px;
@@ -159,7 +171,26 @@ button:disabled { opacity: 0.35; cursor: default; }
 .foot code { color: var(--warn); }
 
 @media (max-width: 760px) {
+  /* The page scrolls as a document here rather than being pinned to the
+     viewport. Pinned, the editor's panel had nowhere to go: it overflowed the
+     app and the footer drew straight through the tool buttons. */
+  html, body, #root { height: auto; }
+  /* Viewport units, not a percentage: a percentage minimum resolves against an
+     auto-height parent and comes out as nothing, so the app stopped at its
+     content and left a band of dead space under the footer. dvh follows the
+     phone's shrinking address bar; vh is the fallback for anything older. */
+  .app { height: auto; min-height: 100vh; min-height: 100dvh; }
   .make { flex-direction: column; }
-  .make__bench { height: 52vh; flex: none; }
-  .make__side { width: auto; border-left: 0; border-top: 1px solid var(--border); }
+  /* The bench takes whatever the panel does not, so a tall phone gives the
+     model more room rather than leaving a band of nothing under the footer. */
+  .make__bench { flex: 1 1 auto; min-height: 42vh; }
+  .make__side { width: auto; border-left: 0; border-top: 1px solid var(--border); overflow: visible; }
+  .feed { overflow: visible; }
+
+  /* Compact controls: a phone header should not spend a whole row on two
+     buttons that say four words between them. */
+  .view, .btn, .tool, .chip { padding: 8px 9px; letter-spacing: 0.1em; }
+  .icon { width: 34px; height: 34px; }
+  .top { gap: 6px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }

@@ -34,7 +34,11 @@ export function Make(): JSX.Element {
   return (
     <section className="make">
       <div className="make__bench">
-        <Bench />
+        {/* The canvas sizes itself to its parent as a percentage, and a flex
+            item's height is not definite for that, so it needs a box that is:
+            absolute inside a relative one. Without this the canvas sat at its
+            default 150px inside a 529px bench on a phone. */}
+        <div className="make__fill"><Bench /></div>
       </div>
 
       <div className="make__side">
