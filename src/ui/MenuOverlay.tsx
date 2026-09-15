@@ -94,23 +94,6 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
           <p>Simple Nostr Object (SNO) Explorer</p>
         </header>
 
-        <div className="menu__about">
-          <p className="menu__line">
-            A SNO is a small 3D object that fits in one nostr event: whole-unit points with a
-            color each, the triangles between them, and nothing else. No server holds it and no
-            account owns it. Publish one and it is addressable by your key and its own id, so
-            you can correct it in place, and anyone can read it, copy it or remix it.
-          </p>
-          <div className="menu__links">
-            {/* The decks directory rather than the file: DECK-0003 is the number
-                SNO now claims, and the rename is still an open pull request, so
-                a link to the file itself would be right tomorrow and broken
-                today. Point it at DECK-0003-sno.md once that merges. */}
-            <a className="menu__link" href="https://github.com/arkin0x/cyberspace/tree/master/decks" target="_blank" rel="noreferrer">THE SPECIFICATION</a>
-            <a className="menu__link" href="https://paulbourke.net/dataformats/ply/" target="_blank" rel="noreferrer">PLY, WHAT EXPORT WRITES</a>
-            <a className="menu__link" href="https://github.com/arkin0x/snocrash" target="_blank" rel="noreferrer">THE SOURCE</a>
-          </div>
-        </div>
 
         <div className="menu__go">
           <button className={`menu__big ${view === 'feed' ? 'is-on' : ''}`} onClick={() => go('feed')}>
@@ -197,6 +180,36 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
             publishing it now would write a second object rather than replace the first.
           </Explanation>
         </section>
+
+        {/* What this is, last: somebody arriving wants the two buttons and their
+            key, and reads the description once. Each link sits under the
+            sentence that gives a reason to follow it. */}
+        <div className="menu__about explain__well">
+          <p>
+            SNO is a simple 3D object format made to travel with a nostr event. It is
+            intentionally minimal and uses colored whole-unit vertices (with subdivision
+            snapping) which can be connected with triangular faces. You can set a 2^X scale
+            multiplier to control the output scale of the object.
+          </p>
+          <div className="menu__links">
+            {/* TODO: DECK-0003-sno.md, once arkin0x/cyberspace#27 merges. SNO
+                claims deck 3 in that pull request; on master it is still 4, and
+                this has to be the file that exists or it is a dead link. */}
+            <a className="menu__link" href="https://github.com/arkin0x/cyberspace/blob/master/decks/DECK-0004-sno.md" target="_blank" rel="noreferrer">THE SPECIFICATION</a>
+            <a className="menu__link" href="https://github.com/arkin0x/snocrash" target="_blank" rel="noreferrer">THE SOURCE</a>
+          </div>
+          <p>
+            SNO is similar to the PLY format (1994) which many 3D applications can load, so
+            Snocrash exports a PLY file when you download an object.
+          </p>
+          <div className="menu__links">
+            <a className="menu__link" href="https://paulbourke.net/dataformats/ply/" target="_blank" rel="noreferrer">THE PLY FORMAT</a>
+          </div>
+          <p>
+            Having a 3D object format native to nostr enables remixing and collaborating in a
+            whole new way!
+          </p>
+        </div>
 
         <div className="menu__version" title="The day of the commit this build came from, and its short hash">{__SNOCRASH_VERSION__}</div>
       </div>

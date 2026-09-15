@@ -1842,6 +1842,11 @@ button:disabled { opacity: 0.35; cursor: default; }
 .brand { padding-top: 34px; }
 
 .menu__about { display: flex; flex-direction: column; gap: 8px; }
+/* It is a well, so it takes the well's paint; the gap does the spacing the
+   well's own `p + p` margin would otherwise do twice. */
+.menu__about.explain__well { margin: 0; padding: 10px 12px; }
+.menu__about p { margin: 0; font-size: 11px; line-height: 1.55; color: var(--dim); }
+.menu__about p + p { margin-top: 0; }
 .menu__links { display: flex; flex-wrap: wrap; gap: 6px; }
 .menu__link {
   font-size: 8px;
@@ -1857,7 +1862,6 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 /* The build, last thing in the menu, the way ONOSENDAI ends its column. */
 .menu__version {
-  margin-top: auto;
   padding-top: 4px;
   font-size: 8px;
   letter-spacing: 0.14em;
