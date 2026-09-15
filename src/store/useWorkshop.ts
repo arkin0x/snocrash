@@ -137,6 +137,27 @@ function countLabel(clip: ClipPoints): string {
   return clip.faces.length === 0 ? pts : `${pts} and ${clip.faces.length} face${clip.faces.length === 1 ? '' : 's'}`
 }
 
+/**
+ * Every vertex reachable from a selection, following the two things that join
+ * one vertex to another: a face, which joins its three corners, and a shared
+ * point, since two stamps that touch keep their own corners so an edge between
+ * different colors stays crisp.
+ *
+ * Union-find rather than a graph walk because the joins arrive in no order and
+ * both kinds are the same operation on a set. Returned sorted, so a selection
+ * built from it is in the same order as one built by hand.
+ */
+function connectedTo(s: ShardModel, selection: number[]): number[] {
+  const parent = s.vertices.map((_, i) => i)
+  const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] } return i }
+  const join = (a: number, b: number): void => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
+  const byPoint = new Map<string, number>()
+  s.vertices.forEach((v, i) => { const k = pointKey(ticksOf(v)); const first = byPoint.get(k); if (first === undefined) byPoint.set(k, i); else join(first, i) })
+  for (const f of s.faces) { join(f[0], f[1]); join(f[1], f[2]) }
+  const roots = new Set(selection.filter((i) => s.vertices[i]).map(find))
+  return s.vertices.map((_, i) => i).filter((i) => roots.has(find(i)))
+}
+
 export interface WorkshopState {
   shards: ShardModel[]
   currentId: string | null
@@ -229,6 +250,8 @@ export interface WorkshopState {
   rotateSelected: (turns: 1 | -1) => void
   colorSelected: (c: [number, number, number]) => void
   colorAll: (c: [number, number, number]) => void
+  /** The colour onto the selection and everything joined to it by faces. */
+  colorConnected: (c: [number, number, number]) => void
   deleteSelected: () => void
   /** Take the selected points out of the shard and hold them for PASTE. */
   cutSelection: () => void
@@ -515,15 +538,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const s = get().current()
       const { selection } = get()
       if (!s || selection.length === 0) return
-      // Union-find over vertices: a shared point joins, a face joins its three corners.
-      const parent = s.vertices.map((_, i) => i)
-      const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] } return i }
-      const join = (a: number, b: number): void => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
-      const byPoint = new Map<string, number>()
-      s.vertices.forEach((v, i) => { const k = pointKey(ticksOf(v)); const first = byPoint.get(k); if (first === undefined) byPoint.set(k, i); else join(first, i) })
-      for (const f of s.faces) { join(f[0], f[1]); join(f[1], f[2]) }
-      const roots = new Set(selection.map(find))
-      const out = s.vertices.map((_, i) => i).filter((i) => roots.has(find(i)))
+      const out = connectedTo(s, selection)
       const grew = out.length > selection.length
       set({ selection: out, selectedFace: null, notice: grew ? `${new Set(out.map((i) => pointKey(ticksOf(s.vertices[i])))).size} points connected by faces.` : 'Nothing else is joined to the selection by faces.' })
     },
@@ -623,6 +638,23 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     colorAll: (c) => {
       set({ color: clampColor(c) })
       edit((s) => ({ ...s, vertices: s.vertices.map((v) => ({ ...v, c: clampColor(c) })) }))
+    },
+
+    // The whole piece you are pointing at, without having to select it first.
+    // The selection is left alone on purpose: this paints a group, it does not
+    // take one, and growing the selection underneath would move every later
+    // nudge and delete onto vertices nobody asked for.
+    colorConnected: (c) => {
+      const { selection } = get()
+      set({ color: clampColor(c) })
+      if (selection.length === 0) return
+      edit((s) => {
+        const reach = connectedTo(s, selection)
+        if (reach.length === 0) return null
+        const chosen = new Set(reach)
+        const vertices = s.vertices.map((v, i) => (chosen.has(i) ? { ...v, c: clampColor(c) } : v))
+        return { ...s, vertices }
+      })
     },
 
     deleteSelected: () => {

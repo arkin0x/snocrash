@@ -3,11 +3,12 @@
  * controls as overlays on it, the way the main scene's instruments sit on
  * the world.
  *
- * Top left, a row of chips: MENU (the shard itself: name, mode, the list,
- * clear, explain) and GRID (the level the placing tools work on, the deploy
- * scale multiplier, and the grid's own size), each opening one panel below
- * the row; UNDO and REDO float beside them. Bottom left, TOOLS (STAMP, ADD,
- * SELECT, FACE and each tool's options). Top right, DEPLOY and the way out. Bottom right,
+ * Top left, the hamburger (the app: identity, feed, workshop) and a row of
+ * chips: MENU (the object itself: name, mode, the list, clear, explain) and
+ * GRID (the level the placing tools work on, the scale, the grid's own size
+ * and the size reference), each opening one panel below the row; UNDO and
+ * REDO float beside them. Bottom left, TOOLS (STAMP, ADD, SELECT, FACE and
+ * each tool's options). Top right, PUBLISH and the compass. Bottom right,
  * the CONTROLS pad, present only while points are selected: the main pad's
  * shape, nudging the selection in screen directions, with CONNECT and DELETE
  * in its corners; and below it COLOR, folded to a swatch of the current
@@ -19,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Boxes, ClipboardPaste, Copy, Eye, Grid3x3, Link, MousePointer2, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Wrench, X } from 'lucide-react'
+import { Box, ClipboardPaste, Copy, Eye, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { ConfirmModal } from './ConfirmModal'
 import { Explanation } from './Explanation'
@@ -29,6 +30,7 @@ import { formatCellSize } from '../lib/scale'
 import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, type StampKind } from '../lib/stamps'
 import { useWorkshop, type Tool } from '../store/useWorkshop'
 import { Bench } from './Bench'
+import { Compass3D } from './Compass3D'
 import { Feed } from './Feed'
 import { LoginModal } from './LoginModal'
 import { MenuOverlay } from './MenuOverlay'
@@ -45,7 +47,7 @@ function saveFile(text: string, name: string): void {
   a.click()
   URL.revokeObjectURL(url)
 }
-import { nudgeFor, nudgeLabel, planeAfter, requestView, useBenchView, type NudgeName } from './benchAxes'
+import { benchPose, nudgeFor, nudgeLabel, planeAfter, requestView, useBenchView, type NudgeName } from './benchAxes'
 
 const TOOLS: Tool[] = ['view', 'stamp', 'add', 'select', 'face']
 const TOOL_ICON: Record<Tool, LucideIcon> = { view: Eye, stamp: Stamp, add: Plus, select: MousePointer2, face: Triangle }
@@ -367,8 +369,8 @@ export function Workshop(): JSX.Element | null {
   // ADD, SELECT and FACE have nothing under them, so choosing one by key puts
   // the TOOLS panel away; STAMP keeps it for the shape, size and facing.
   useEffect(() => { if (tool !== 'stamp') setPanel((p) => (p === 'tools' ? null : p)) }, [tool])
-  // The view pad goes with the VIEW tool, and shuts on a tap anywhere else.
-  useEffect(() => { if (tool !== 'view') setViewOpen(false) }, [tool])
+  // The view pad shuts on a tap anywhere else. It no longer shuts when the
+  // tool changes: the plane it turns is the one every tool places on.
   useEffect(() => {
     if (!viewOpen) return
     const shut = (e: PointerEvent): void => {
@@ -466,9 +468,6 @@ export function Workshop(): JSX.Element | null {
         <button className={`chip ws__chip ${panel === 'grid' ? 'is-on' : ''}`} aria-pressed={panel === 'grid'} onClick={() => toggle('grid')}>
           <Grid3x3 size={12} strokeWidth={2.25} aria-hidden />GRID
         </button>
-        <button className={`chip ws__chip ${view === 'feed' ? 'is-on' : ''}`} aria-pressed={view === 'feed'} onClick={() => { setView(view === 'feed' ? 'make' : 'feed'); setPanel(null) }} title="Objects other people published">
-          <Boxes size={12} strokeWidth={2.25} aria-hidden />FEED
-        </button>
         {publishing && (
           <button className="chip ws__chip ws__chip--work" aria-live="polite">
             <Pickaxe size={12} strokeWidth={2.25} aria-hidden />PUBLISHING
@@ -487,7 +486,7 @@ export function Workshop(): JSX.Element | null {
         <div className="ws__panel" role="region" aria-label="Menu">
           <input className="workshop__name" value={shard.name} onChange={(e) => w().rename(shard.id, e.target.value)} aria-label="Shard name" spellCheck={false} />
           <div className="ws__stats">
-            {shard.vertices.length} vertices · {shard.faces.length} faces · unit 2^{shard.unit} = {formatCellSize(shard.unit)}
+            {shard.vertices.length} vertices · {shard.faces.length} faces
             {shard.mode !== 'solid' && shard.faces.length > 0 && <> · faces draw in SOLID</>}
           </div>
           <div className="workshop__row">
@@ -496,13 +495,6 @@ export function Workshop(): JSX.Element | null {
               {MODES.map((m: ShardMode) => (
                 <button key={m} className={`workshop__mode ${shard.mode === m ? 'is-on' : ''}`} aria-pressed={shard.mode === m} onClick={() => w().setMode(m)}>{m.toUpperCase()}</button>
               ))}
-            </div>
-          </div>
-          <div className="workshop__row" role="group" aria-label="Default avatar ghost">
-            <span className="workshop__label">SIZE REFERENCE</span>
-            <div className="workshop__modes">
-              <button className={`workshop__mode ${showAvatar ? 'is-on' : ''}`} aria-pressed={showAvatar} onClick={() => w().setShowAvatar(true)} title="Show the to-scale avatar at the grid's centre">SHOW</button>
-              <button className={`workshop__mode ${!showAvatar ? 'is-on' : ''}`} aria-pressed={!showAvatar} onClick={() => w().setShowAvatar(false)} title="Hide it">HIDE</button>
             </div>
           </div>
           {/* Publishing: what this app does with an object instead of hiding it
@@ -518,7 +510,6 @@ export function Workshop(): JSX.Element | null {
               <span className={`tag ${STATE_TAG[state]}`} title={STATE_HELP[state]}>{STATE_LABEL[state]}</span>
               <span className="workshop__gap" />
             </div>
-            {!signedIn && <span className="workshop__work">NO KEY YET · CHOOSE ONE IN THE MENU</span>}
             <div className="workshop__list-row">
               <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { if (shard) void useNostr.getState().publish(shard) }} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}>{publishing ? 'PUBLISHING' : state === 'published' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
               <button className="workshop__btn" disabled={!buildable} onClick={() => { if (shard) saveFile(toPly(shard), fileNameFor(shard, 'ply')) }} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
@@ -556,19 +547,21 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn workshop__btn--danger" disabled={shard.vertices.length === 0} onClick={() => { if (window.confirm('Delete all vertices and faces in the scene?')) w().clearShard() }} title="Empty this scene (undoable)">CLEAR THIS SCENE</button>
             <span className="workshop__gap" />
             <Explanation>
-              A shard is colored points on a grid of whole units, drawn SOLID (faces, colors blending
+              An object is colored points on a grid of whole units, drawn SOLID (faces, colors blending
               across them), POINTS (every point a light) or LINES (one line through the points in the
               order they were made). STAMP places a whole shape; ADD one point; SELECT points, by tap
-              or by dragging a box, to move, color or delete them together, and CONNECT takes everything
+              or by dragging a box, to move, color or delete them together, and JOINED takes everything
               faces join to them; FACE picks corners and FILL joins them, and a tap on a face selects it
               for DELETE FACE. The palette keeps every color the picker settles on; hold a swatch to
-              delete it. Stamps keep their own corners even where they touch, so a red block against a
-              blue one keeps a crisp edge. Under GRID, LEVEL is the height the placing tools work at,
-              DEPLOY SCALE MULTIPLIER says how big one grid unit is in the world, from a picometre to
-              the width of a sector, and GRID SIZE is how far the grid reaches from the origin. DEPLOY shows
-              the shard at true size before you place it. Keys: 1 2 3 4 tools, Q turns a stamp, WASD and
-              RF or the arrows nudge the selection in screen directions, C selects what faces join, Del
-              deletes, Enter fills, [ ] change the level, Ctrl+Z undoes, Esc clears then closes.
+              delete it. At the foot of the palette are the three things a color can reach: the points
+              in hand, the piece they are joined to by faces, and the whole object. Stamps keep their
+              own corners even where they touch, so a red block against a blue one keeps a crisp edge.
+              Under GRID, LEVEL is the height the placing tools work at, SCALE says how big one grid
+              unit is, from a picometre upward, GRID SIZE is how far the grid reaches from the origin,
+              and SIZE REFERENCE puts a person at the centre to judge it against. Keys: 1 2 3 4 tools,
+              Q turns a stamp, WASD and RF or the arrows nudge the selection in screen directions, C
+              selects what faces join, Del deletes, Enter fills, [ ] change the level, Ctrl+Z undoes,
+              Esc clears then closes.
             </Explanation>
           </div>
         </div>
@@ -584,12 +577,12 @@ export function Workshop(): JSX.Element | null {
             <span className="workshop__unit-size">the height the placing tools work at</span>
           </div>
           <div className="workshop__row">
-            <span className="workshop__label">DEPLOY SCALE MULTIPLIER</span>
+            <span className="workshop__label">SCALE</span>
             <span className="workshop__value">2^</span>
             <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) - 1))} disabled={shard.unit <= 0} aria-label="Smaller unit">−</button>
             <span className="workshop__value">{shard.unit}</span>
             <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) + 1))} disabled={shard.unit >= MAX_UNIT} aria-label="Larger unit">+</button>
-            <span className="workshop__unit-size" title="What one grid unit is in the world. DEPLOY shows the shard at this size.">one unit = {formatCellSize(shard.unit)}</span>
+            <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(shard.unit)}</span>
           </div>
           <div className="workshop__row" role="group" aria-label="Grid division">
             <span className="workshop__label">DIVISION</span>
@@ -605,8 +598,16 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn" {...bind(() => w().setExtent((w().current()?.extent ?? MIN_EXTENT) - 1))} disabled={extent <= minExtent} aria-label="Smaller grid">−</button>
             <span className="workshop__value">{extent}</span>
             <button className="workshop__btn" {...bind(() => w().setExtent((w().current()?.extent ?? MIN_EXTENT) + 1))} disabled={extent >= MAX_EXTENT} aria-label="Larger grid">+</button>
-            <span className="workshop__unit-size" title="Saved with the shard. Never below what its points need.">gibsons each side of each axis</span>
+            <span className="workshop__unit-size" title="Saved with the shard. Never below what its points need.">units each side of each axis</span>
           </div>
+          <div className="workshop__row" role="group" aria-label="Size reference">
+            <span className="workshop__label">SIZE REFERENCE</span>
+            <div className="workshop__modes">
+              <button className={`workshop__mode ${showAvatar ? 'is-on' : ''}`} aria-pressed={showAvatar} onClick={() => w().setShowAvatar(true)} title="Show the to-scale avatar at the grid's centre">SHOW</button>
+              <button className={`workshop__mode ${!showAvatar ? 'is-on' : ''}`} aria-pressed={!showAvatar} onClick={() => w().setShowAvatar(false)} title="Hide it">HIDE</button>
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -622,14 +623,13 @@ export function Workshop(): JSX.Element | null {
         >{publishing ? 'PUBLISHING' : 'PUBLISH ▸'}</button>
       </div>
 
-      {/* Top right, under DEPLOY and the way out: the compass while VIEW is in
-          hand, the grid pad under it when tapped. */}
-      {tool === 'view' && (
-        <div className="ws__view">
-          <button className="chip ws__icon" onClick={() => setViewOpen((o) => !o)} title="Point the bench at a face" aria-label="View"><Eye size={15} strokeWidth={2.25} aria-hidden /></button>
-          {viewOpen && <BenchViewMenu />}
-        </div>
-      )}
+      {/* The very top right corner: the compass while VIEW is in hand, the grid
+          pad under it when tapped. PUBLISH keeps a standing berth to its left
+          (.ws__exit), so nothing moves when the tool changes. */}
+      <div className="ws__view">
+        <Compass3D pose={benchPose} onTap={() => setViewOpen((o) => !o)} />
+        {viewOpen && <BenchViewMenu />}
+      </div>
 
       {/* Bottom left: TURN and the pad while points are selected, over TOOLS and
           its panel, which opens upward over the chip. */}
@@ -709,12 +709,6 @@ export function Workshop(): JSX.Element | null {
             <span className="workshop__value workshop__value--wide">at ({ticksOf(one).map(unitsLabel).join(', ')})</span>
           </div>
         )}
-        {selectedPoints >= 3 && (
-          <div className="benchops" role="group" aria-label="Fill the selection">
-            <span className="workshop__value workshop__value--wide">{selectedPoints} points</span>
-            <button className="workshop__btn" onClick={() => w().fillSelection()} title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)">FILL</button>
-          </div>
-        )}
         {facing && selectedFace !== null && (
           <div className="benchops" role="group" aria-label="Selected face">
             <span className="workshop__value workshop__value--wide">face {selectedFace + 1} of {shard?.faces.length ?? 0}</span>
@@ -740,7 +734,25 @@ export function Workshop(): JSX.Element | null {
                 <Swatch key={h} hex={h} on={h === hex} onUse={() => w().colorSelected(hexToRgb(h))} onHold={() => setDeleteColor(h)} />
               ))}
             </div>
-            <button className="workshop__btn" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="Apply the color to every vertex">ALL</button>
+            {/* What an action reaches, left to right: the points in hand, the
+                piece they are part of, the whole object. FILL is here because
+                it is the other thing a set of points is for, and because the
+                colour you are about to use is the colour the new faces take. */}
+            <div className="ws__acts" role="group" aria-label="Apply">
+              {selection.length > 0 && (
+                <button className="workshop__color ws__act" disabled={selectedPoints < 3} onClick={() => w().fillSelection()} title={selectedPoints < 3 ? 'Three points or more make a face' : 'Faces across these points: a flat set becomes one face, a solid set its hull (Enter)'} aria-label="Fill the selection with faces" {...noCallout}>
+                  <PaintBucket size={14} strokeWidth={2.25} aria-hidden />
+                </button>
+              )}
+              {selection.length > 0 && (
+                <button className="workshop__color ws__act" onClick={() => w().colorConnected(w().color)} title="The color onto these points and everything joined to them by faces" aria-label="Color the connected piece" {...noCallout}>
+                  <Waypoints size={14} strokeWidth={2.25} aria-hidden />
+                </button>
+              )}
+              <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" {...noCallout}>
+                <Globe size={14} strokeWidth={2.25} aria-hidden />
+              </button>
+            </div>
           </div>
         ) : (
           <button className="chip ws__colorchip" style={{ background: hex }} onClick={() => { setColorOpen(true); if (narrow && panel === 'tools') setPanel(null) }} title={`Color ${hex}. Tap for the palette.`} aria-label={`Color ${hex}, tap for the palette`} />

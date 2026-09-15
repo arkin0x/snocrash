@@ -1920,3 +1920,149 @@ button:disabled { opacity: 0.35; cursor: default; }
 @media (max-width: 520px) {
   .menu__card { width: 100vw; border-right: 0; }
 }
+
+/* ---------- Rules the port dropped ----------
+
+   Each of these is used by markup that came over from ONOSENDAI whose rule did
+   not. The symptom is always the same shape: an element with no box, or one
+   auto-placed into whatever grid cell was free. */
+
+/* The two quarter-turn keys above the pad. Without the container they had no
+   track to size against, so they collapsed to their glyphs. */
+.benchturn {
+  display: grid;
+  grid-template-columns: repeat(2, 48px);
+  grid-template-rows: 48px;
+  gap: 4px;
+}
+
+/* The count of selected points, in the middle of the directions it moves.
+   Without grid-area it auto-placed into the first free cell, which is the one
+   to the right of the top row. */
+.touchpad__hub {
+  grid-area: hub;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  border-radius: 9px;
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  cursor: pointer;
+}
+.touchpad__hub:hover { background: rgba(0, 229, 255, 0.16); }
+.touchpad__hub:active { background: rgba(0, 229, 255, 0.3); border-color: var(--accent); }
+
+/* A row of readouts and actions about whatever is in hand. */
+.benchops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: rgba(6, 14, 22, 0.85);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+/* ---------- The compass, and the grid pad under it ----------
+
+   Pinned to the very top right corner. PUBLISH keeps a standing berth to its
+   left (.ws__exit below), so the corner does not reshuffle when the tool
+   changes and the compass comes or goes. */
+.compass-3d {
+  position: static;
+  width: 64px;
+  height: 64px;
+  pointer-events: none;
+}
+.compass-3d--tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  background: rgba(6, 14, 22, 0.55);
+  backdrop-filter: blur(6px);
+  touch-action: none;
+}
+/* The letters are ordinary spans placed over the canvas at the projected arrow
+   tips, so they stay upright instead of turning edge-on with the arrow. */
+.compass-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: bold;
+  pointer-events: none;
+}
+.compass-label--x { color: #ff4444; text-shadow: 0 0 3px rgba(0, 0, 0, 0.8); }
+.compass-label--y { color: #44ff44; text-shadow: 0 0 3px rgba(0, 0, 0, 0.8); }
+.compass-label--z { color: #4488ff; text-shadow: 0 0 3px rgba(0, 0, 0, 0.8); }
+
+.ws__view { top: 12px; }
+/* The berth: always wide enough for the compass, whether or not it is there. */
+.ws__exit { right: 86px; }
+
+.viewmenu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(6, 14, 22, 0.9);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  touch-action: none;
+}
+.viewmenu__pad {
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows: repeat(3, 34px);
+  gap: 3px;
+  grid-template-areas:
+    ".    up    ."
+    "left hub   right"
+    ".    down  .";
+}
+.viewmenu__key,
+.viewmenu__op {
+  font-family: inherit;
+  color: var(--fg);
+  background: rgba(6, 14, 22, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: none;
+  padding: 0;
+}
+.viewmenu__key { font-size: 13px; }
+.viewmenu__key--up { grid-area: up; }
+.viewmenu__key--down { grid-area: down; }
+.viewmenu__key--left { grid-area: left; }
+.viewmenu__key--right { grid-area: right; }
+.viewmenu__key:active { background: rgba(0, 229, 255, 0.28); border-color: var(--accent); }
+.viewmenu__hub {
+  grid-area: hub;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+}
+.viewmenu__row { display: grid; grid-template-columns: 1fr; gap: 3px; }
+.viewmenu__op { height: 30px; font-size: 8px; letter-spacing: 0.1em; }
+.viewmenu__op:active { background: rgba(0, 229, 255, 0.28); border-color: var(--accent); }
+
+/* The three scopes at the foot of the colour column: these points, the piece
+   they belong to, the whole object. A row, so the widening reads left to
+   right; the column above is two swatches wide and these match it. */
+.ws__acts { display: flex; justify-content: center; gap: 4px; }
+.ws__act { width: 24px; height: 24px; padding: 0; }
+
+/* The Explanation well, and two more the port left bare. */
+.legend__note { font-size: 10px; line-height: 1.5; color: var(--dim); }
+.modal__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.workshop__pick-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
