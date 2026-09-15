@@ -1568,6 +1568,26 @@ button:disabled { opacity: 0.35; cursor: default; }
 .preview { width: 100%; }
 .tile__bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
 .tile__who { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; }
+
+/* Whose object it is, left of what the object is. The fallback is a real
+   answer, not a placeholder: most keys have no kind:0 and never will, and two
+   strangers still have to look like two people. */
+.pfp {
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: rgba(6, 14, 22, 0.8);
+}
+.pfp--fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #05070d;
+  font-weight: 700;
+  letter-spacing: 0;
+  border-color: rgba(255, 255, 255, 0.2);
+}
 .tile__name { font-size: 11px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile__meta { font-size: 9px; color: var(--dim); letter-spacing: 0.06em; }
 .tile__acts { display: flex; gap: 4px; flex: none; }
@@ -1975,6 +1995,31 @@ button:disabled { opacity: 0.35; cursor: default; }
 }
 .identity__change:hover { background: rgba(0, 229, 255, 0.16); }
 
+/* One relay per row: the socket as a dot, the host, and the way to drop it. */
+.menu__relays { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.menu__relays li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.relays__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  box-shadow: none;
+}
+.relays__dot.is-on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.relays__dot.is-off { background: var(--danger); }
+.relays__url {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu__addrelay { display: flex; gap: 6px; margin-bottom: 8px; }
+.menu__addrelay .avatars__input { flex: 1; min-width: 0; }
+
 .menu__line { margin: 0 0 8px; font-size: 11px; line-height: 1.45; color: var(--dim); }
 .menu__wide { width: 100%; justify-content: center; }
 .menu__list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -2039,6 +2084,32 @@ button:disabled { opacity: 0.35; cursor: default; }
 }
 .touchpad__hub:hover { background: rgba(0, 229, 255, 0.16); }
 .touchpad__hub:active { background: rgba(0, 229, 255, 0.3); border-color: var(--accent); }
+
+/* The selected point's coordinate, on the end of the TOOLS row so it follows
+   that chip rather than guessing its width, which changes with the tool's name.
+   The corner it lives in is capped short of the colour column, and the readout
+   is the part that gives way, so the two never meet. It takes no taps: the
+   bench is underneath. */
+.ws__tools { max-width: calc(100% - 128px); }
+.ws__toolchips { min-width: 0; }
+.ws__at {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: rgba(6, 14, 22, 0.72);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
 
 /* A row of readouts and actions about whatever is in hand. */
 .benchops {

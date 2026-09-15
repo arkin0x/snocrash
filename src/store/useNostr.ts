@@ -18,7 +18,9 @@
  */
 
 import { create } from 'zustand'
-import { SimplePool, nip19, type Event } from 'nostr-tools'
+import { nip19, type Event } from 'nostr-tools'
+import { pool, stream } from '../lib/pool'
+import { relaySet } from './useRelays'
 import {
   forgetLocal, loadLocal, loadPref, localSigner, nip07Signer, nip46Signer,
   randomSigner, savePref, saveLocal, signerFromNcryptsec, signerFromNsec, type Signer, type SignerKind,
@@ -29,13 +31,6 @@ import { fromPayload, toPayload, type ShardModel } from '../lib/shards'
 
 /** DECK-0004 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
 export const SNO_KIND = 33331
-
-export const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://nos.lol',
-  'wss://relay.primal.net',
-  'wss://relay.nostr.band',
-]
 
 /** An object someone published, with the event it came from. */
 export interface FeedObject {
@@ -56,7 +51,6 @@ export function currentSigner(): Signer | null { return signer }
 interface NostrState {
   pubkey: string | null
   signer: SignerKind
-  relays: string[]
   feed: FeedObject[]
   loading: boolean
   publishing: boolean
@@ -84,8 +78,6 @@ interface NostrState {
   loadFeed: () => Promise<void>
   say: (note: string | null) => void
 }
-
-const pool = new SimplePool()
 
 /** The event an object goes out as. Pure, so the shape is testable without a relay. */
 export function objectTemplate(shard: ShardModel, createdAt: number): { kind: number; created_at: number; tags: string[][]; content: string } {
@@ -140,7 +132,6 @@ export const useNostr = create<NostrState>((set, get) => ({
   signedIn: false,
   published: loadLedger(),
   loginError: null,
-  relays: DEFAULT_RELAYS,
   feed: [],
   loading: false,
   publishing: false,
@@ -201,7 +192,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   publish: async (shard) => {
-    const { relays } = get()
+    const relays = relaySet()
     if (!signer) { set({ notice: 'Pick a key first.' }); return false }
     if (shard.vertices.length === 0) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
@@ -231,36 +222,53 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   loadFeed: async () => {
-    set({ loading: true })
+    // Objects appear as they arrive rather than when the last relay finishes.
+    // Waiting for all of them meant the whole read cost whatever the slowest
+    // one cost, and one of four is always slow (lib/pool).
+    set({ loading: true, feed: [] })
+    // Addressable: one object per (pubkey, d), the newest of them. Relays
+    // repeat each other, so the same event arrives more than once and an older
+    // edit can arrive after a newer one; the map settles both.
+    const newest = new Map<string, Event>()
+    let paint: number | undefined
+    const show = (): void => {
+      paint = undefined
+      set({
+        feed: [...newest.values()]
+          .map(objectFromEvent)
+          .filter((o): o is FeedObject => o !== null)
+          .sort((a, b) => b.createdAt - a.createdAt),
+      })
+    }
     try {
-      const events = await pool.querySync(get().relays, { kinds: [SNO_KIND], limit: 100 }, { maxWait: 8000 })
-      // Addressable: one object per (pubkey, d), the newest of them.
-      const newest = new Map<string, Event>()
-      for (const ev of events) {
+      await stream(relaySet(), { kinds: [SNO_KIND], limit: 100 }, (ev) => {
         const d = ev.tags.find((t) => t[0] === 'd')?.[1]
-        if (!d) continue
+        if (!d) return
         const key = `${ev.pubkey}:${d}`
         const prev = newest.get(key)
-        if (!prev || ev.created_at > prev.created_at) newest.set(key, ev)
-      }
-      const feed = [...newest.values()]
-        .map(objectFromEvent)
-        .filter((o): o is FeedObject => o !== null)
-        .sort((a, b) => b.createdAt - a.createdAt)
-      // An object of mine that came back from a relay was published, even if it
-      // was published from another browser. It is noted without a fingerprint,
-      // because what a relay returns has been through the reader and the writer
-      // again and need only match in meaning, not byte for byte.
-      const mine = get().pubkey
-      if (mine) {
-        let ledger = get().published
-        for (const o of feed) if (o.pubkey === mine) ledger = noteSeen(ledger, o.d, mine, o.createdAt)
-        if (ledger !== get().published) { saveLedger(ledger); set({ published: ledger }) }
-      }
-      set({ feed, loading: false })
+        if (prev && prev.created_at >= ev.created_at) return
+        newest.set(key, ev)
+        // A burst from one relay is one repaint, not one per event: parsing
+        // and drawing every object again for each arrival is what would make
+        // a fast read feel slow.
+        if (paint === undefined) paint = window.setTimeout(show, 120)
+      }).done
     } catch {
-      set({ loading: false, notice: 'Could not reach the relays.' })
+      set({ notice: 'Could not reach the relays.' })
     }
+    window.clearTimeout(paint)
+    show()
+    // An object of mine that came back from a relay was published, even if it
+    // was published from another browser. It is noted without a fingerprint,
+    // because what a relay returns has been through the reader and the writer
+    // again and need only match in meaning, not byte for byte.
+    const mine = get().pubkey
+    if (mine) {
+      let ledger = get().published
+      for (const o of get().feed) if (o.pubkey === mine) ledger = noteSeen(ledger, o.d, mine, o.createdAt)
+      if (ledger !== get().published) { saveLedger(ledger); set({ published: ledger }) }
+    }
+    set({ loading: false })
   },
 
   say: (note) => set({ notice: note }),

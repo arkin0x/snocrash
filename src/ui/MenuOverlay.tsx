@@ -15,11 +15,18 @@
  * and then edited, or never sent anywhere at all.
  */
 
+import { useEffect, useState } from 'react'
 import { Boxes, Wrench } from 'lucide-react'
 import { useNostr } from '../store/useNostr'
+import { DEFAULT_RELAYS, useRelays } from '../store/useRelays'
+import { pool } from '../lib/pool'
 import { useWorkshop } from '../store/useWorkshop'
 import { Explanation } from './Explanation'
 import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
+import { keyColor } from '../lib/keyColor'
+
+/** How long a relay gets to accept a connection before the dot calls it dead. */
+const PROBE_MS = 4000
 
 const SIGNER_LABEL: Record<string, string> = {
   local: 'LOCAL KEY',
@@ -31,16 +38,6 @@ const SIGNER_NOTE: Record<string, string> = {
   local: 'A key in this browser, and nowhere else.',
   nip07: 'Your browser extension signs, and keeps the key.',
   nip46: 'A bunker signs, on another machine, and keeps the key.',
-}
-
-/**
- * A key's own colour: the hue comes from the first byte of the pubkey, so the
- * same identity is the same colour every time without asking a relay for a
- * picture. It is a swatch, not a portrait, and it is honest about that.
- */
-function keyColor(pubkey: string): string {
-  const hue = (parseInt(pubkey.slice(0, 2), 16) || 0) * 360 / 256
-  return `hsl(${hue.toFixed(0)}, 70%, 55%)`
 }
 
 /**
@@ -56,6 +53,102 @@ function Logomark(): JSX.Element {
       <circle cx="54" cy="50" r="4.5" fill="var(--warn)" />
       <circle cx="10" cy="50" r="4.5" fill="var(--fg)" />
     </svg>
+  )
+}
+
+
+/**
+ * Which relays this app reads from and publishes to.
+ *
+ * ONOSENDAI's panel, with its one pinned relay taken out: that client has a
+ * world everyone has to meet in, and this one does not. An object lives
+ * wherever somebody put it, so every relay here is as removable as the next,
+ * down to the last, which stays because a client with no relays fails at
+ * everything for a reason nothing on screen would explain.
+ *
+ * The dot is whether the relay will take a connection, tested while this panel
+ * is open. Asking the pool what it has open instead would show grey for
+ * everything: a read closes its subscription the moment every relay is
+ * finished, and the pool drops idle sockets after that, so by the time anyone
+ * opens this panel nothing is connected and the dots would say so truthfully
+ * and uselessly. What somebody wants to know here is whether a relay they
+ * typed in actually answers.
+ */
+function RelaysPanel(): JSX.Element {
+  const relays = useRelays((s) => s.relays)
+  const [input, setInput] = useState('')
+  const [bad, setBad] = useState(false)
+  const [live, setLive] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    let gone = false
+    const probe = async (): Promise<void> => {
+      for (const r of relays) {
+        let ok = false
+        try { await pool.ensureRelay(r, { connectionTimeout: PROBE_MS }); ok = true } catch { ok = false }
+        if (gone) return
+        setLive((m) => (m[r] === ok ? m : { ...m, [r]: ok }))
+      }
+    }
+    void probe()
+    const t = window.setInterval(() => void probe(), 15000)
+    return () => { gone = true; window.clearInterval(t) }
+  }, [relays])
+
+  const standard = relays.length === DEFAULT_RELAYS.length && relays.every((r) => DEFAULT_RELAYS.includes(r))
+
+  const submit = (e: React.FormEvent): void => {
+    e.preventDefault()
+    if (useRelays.getState().add(input)) { setInput(''); setBad(false) } else setBad(true)
+  }
+
+  return (
+    <section className="panel">
+      <header className="panel__head">
+        <h2>Relays</h2>
+        <span className="tag tag--local">{relays.length}</span>
+      </header>
+      <ul className="menu__relays">
+        {relays.map((r) => (
+          <li key={r}>
+            <span
+              className={`relays__dot ${live[r] ? 'is-on' : live[r] === false ? 'is-off' : ''}`}
+              title={live[r] ? 'Answers' : live[r] === false ? 'Does not answer' : 'Trying'}
+            />
+            <span className="relays__url" title={r}>{r.replace(/^wss?:\/\//, '')}</span>
+            <button
+              className="workshop__mini workshop__mini--danger workshop__mini--x"
+              disabled={relays.length === 1}
+              title={relays.length === 1 ? 'The last relay stays: with none, nothing works' : 'Remove this relay'}
+              aria-label={`Remove ${r}`}
+              onClick={() => useRelays.getState().remove(r)}
+            >×</button>
+          </li>
+        ))}
+      </ul>
+      <form className="menu__addrelay" onSubmit={submit}>
+        <input
+          className="avatars__input login__input"
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setBad(false) }}
+          placeholder="wss://relay.example.com"
+          spellCheck={false}
+          autoComplete="off"
+          aria-label="Relay to add"
+        />
+        <button className="workshop__btn" type="submit" disabled={!input.trim()}>ADD</button>
+      </form>
+      {bad && <p className="notice">Not a ws:// or wss:// address.</p>}
+      {!standard && (
+        <button className="workshop__btn menu__wide" onClick={() => useRelays.getState().reset()}>BACK TO THE DEFAULTS</button>
+      )}
+      <Explanation>
+        An object is published to every relay on this list, and the feed is whatever they hand
+        back, so the list is the whole of this app's reach. Add one a friend uses and their
+        objects appear beside yours; publishing to a relay nobody else reads is how an object
+        ends up findable by nobody. Profiles are read from these same relays, which is why
+        somebody with no picture here may have one elsewhere.
+      </Explanation>
+    </section>
   )
 }
 
@@ -180,6 +273,8 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
             publishing it now would write a second object rather than replace the first.
           </Explanation>
         </section>
+
+        <RelaysPanel />
 
         {/* What this is, last: somebody arriving wants the two buttons and their
             key, and reads the description once. Each link sits under the

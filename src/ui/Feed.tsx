@@ -19,6 +19,7 @@ import { useWorkshop } from '../store/useWorkshop'
 import { toPayload } from '../lib/shards'
 import { fileNameFor, toPly } from '../lib/ply'
 import { Preview } from './Preview'
+import { ProfilePic } from './ProfilePic'
 
 function shortKey(pk: string): string {
   return `${pk.slice(0, 8)}…${pk.slice(-4)}`
@@ -46,6 +47,7 @@ function Tile({ o, onOpen }: { o: FeedObject; onOpen: () => void }): JSX.Element
     <article className="tile">
       <Preview shard={o.shard} />
       <div className="tile__bar">
+        <ProfilePic pubkey={o.pubkey} size={28} />
         <div className="tile__who">
           <span className="tile__name">{o.shard.name}</span>
           <span className="tile__meta">{o.shard.vertices.length} v · {o.shard.faces.length} f · {shortKey(o.pubkey)}</span>

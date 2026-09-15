@@ -713,6 +713,13 @@ export function Workshop(): JSX.Element | null {
               <X size={13} strokeWidth={2.25} aria-hidden />
             </button>
           )}
+          {/* Where the one selected point is, in the gap this row leaves before
+              the colour chip. A readout, so taps go through to the bench. */}
+          {one && (
+            <span className="ws__at" role="status" aria-label="Selected point">
+              at ({publishedFrame(ticksOf(one)).map(unitsLabel).join(', ')})
+            </span>
+          )}
         </div>
       </div>
       )}
@@ -726,11 +733,6 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn" onClick={() => w().fillSelection()} title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)">
               <Triangle size={12} strokeWidth={2.25} aria-hidden /> FILL
             </button>
-          </div>
-        )}
-        {one && (
-          <div className="benchops" role="status" aria-label="Selected point">
-            <span className="workshop__value workshop__value--wide">at ({publishedFrame(ticksOf(one)).map(unitsLabel).join(', ')})</span>
           </div>
         )}
         {facing && selectedFace !== null && (
