@@ -19,12 +19,11 @@
  * the bottom above the two corners.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Box, ClipboardPaste, Copy, Eye, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Box, ClipboardPaste, Copy, Eye, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
-import { ConfirmModal } from './ConfirmModal'
 import { Explanation } from './Explanation'
-import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, hexToRgb, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from '../lib/shards'
+import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from '../lib/shards'
 import { formatCellSize } from '../lib/scale'
 import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, type StampKind } from '../lib/stamps'
 import { useWorkshop, type Tool } from '../store/useWorkshop'
@@ -52,7 +51,6 @@ import { benchPose, nudgeFor, nudgeLabel, planeAfter, publishedFrame, requestVie
 const TOOLS: Tool[] = ['view', 'stamp', 'add', 'select', 'face']
 const TOOL_ICON: Record<Tool, LucideIcon> = { view: Eye, stamp: Stamp, add: Plus, select: MousePointer2, face: Triangle }
 
-const LONG_PRESS_MS = 550
 const TOAST_MS = 4000
 
 /** One line under the tool row. SELECT needs none: the pad appears when something is selected. */
@@ -81,28 +79,6 @@ function Intro(): JSX.Element | null {
       </ol>
       <button className="workshop__btn workshop__intro-ok" onClick={done}>GOT IT</button>
     </div>
-  )
-}
-
-function Swatch({ hex, on, onUse, onHold }: { hex: string; on: boolean; onUse: () => void; onHold: () => void }): JSX.Element {
-  const timer = useRef<number>()
-  const held = useRef(false)
-  const stop = (): void => { window.clearTimeout(timer.current); timer.current = undefined }
-  useEffect(() => stop, [])
-  return (
-    <button
-      className={`workshop__swatch ${on ? 'is-on' : ''}`}
-      style={{ background: hex }}
-      aria-label={`Color ${hex}`}
-      aria-pressed={on}
-      title={`${hex} (hold to delete)`}
-      onPointerDown={() => { held.current = false; stop(); timer.current = window.setTimeout(() => { held.current = true; onHold() }, LONG_PRESS_MS) }}
-      onPointerUp={stop}
-      onPointerCancel={stop}
-      onPointerLeave={stop}
-      onClick={() => { if (!held.current) onUse() }}
-      {...noCallout}
-    />
   )
 }
 
@@ -245,7 +221,6 @@ export function Workshop(): JSX.Element | null {
   const selection = useWorkshop((s) => s.selection)
   const facePick = useWorkshop((s) => s.facePick)
   const selectedFace = useWorkshop((s) => s.selectedFace)
-  const palette = useWorkshop((s) => s.palette)
   const level = useWorkshop((s) => s.level)
   const plane = useWorkshop((s) => s.plane)
   const division = useWorkshop((s) => s.division)
@@ -279,7 +254,6 @@ export function Workshop(): JSX.Element | null {
   const canUndo = useWorkshop((s) => s.past.length > 0)
   const canRedo = useWorkshop((s) => s.future.length > 0)
   const [panel, setPanel] = useState<Panel | null>(null)
-  const [colorOpen, setColorOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [viewOpen, setViewOpen] = useState(false)
   // On a phone the open colour bar and the TOOLS panel share the bottom, so
@@ -291,23 +265,8 @@ export function Workshop(): JSX.Element | null {
     mq.addEventListener('change', on)
     return () => mq.removeEventListener('change', on)
   }, [])
-  const colorBar = (colorOpen || tool === 'select') && !(narrow && panel === 'tools')
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
-  const [deleteColor, setDeleteColor] = useState<string | null>(null)
-  // A tap anywhere outside the colour bar shuts it, except while SELECT is
-  // the tool, when colouring the selection is the work and the bar stays.
-  useEffect(() => {
-    if (!colorOpen) return
-    const shut = (e: PointerEvent): void => {
-      if (useWorkshop.getState().tool === 'select') return
-      const el = e.target as HTMLElement | null
-      if (el?.closest('.ws__color, .ws__colorchip, .ws__mixer')) return
-      setColorOpen(false)
-    }
-    document.addEventListener('pointerdown', shut, true)
-    return () => document.removeEventListener('pointerdown', shut, true)
-  }, [colorOpen])
   // ADD, SELECT and FACE have nothing under them, so choosing one by key puts
   // the TOOLS panel away; STAMP keeps it for the shape, size and facing.
   useEffect(() => { if (tool !== 'stamp') setPanel((p) => (p === 'tools' ? null : p)) }, [tool])
@@ -476,9 +435,9 @@ export function Workshop(): JSX.Element | null {
               order they were made). STAMP places a whole shape; ADD one point; SELECT points, by tap
               or by dragging a box, to move, color or delete them together, and JOINED takes everything
               faces join to them; FACE picks corners and FILL joins them, and a tap on a face selects it
-              for DELETE FACE. The palette keeps every color the picker settles on; hold a swatch to
-              delete it. At the foot of the palette are the three things a color can reach: the points
-              in hand, the piece they are joined to by faces, and the whole object. Stamps keep their
+              for DELETE FACE. The swatch in the corner is the color in hand; tap it for all 256 and
+              for the palettes this object can be put on. Above it are the three things a color can
+              reach: the points in hand, the piece they are joined to by faces, and the whole object. Stamps keep their
               own corners even where they touch, so a red block against a blue one keeps a crisp edge.
               Under GRID, LEVEL is the height the placing tools work at, SCALE says how big one grid
               unit is, from a picometre upward, GRID SIZE is how far the grid reaches from the origin,
@@ -664,53 +623,42 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn" onClick={() => w().clearFacePick()} title="Drop the picks (Esc)">CANCEL</button>
           </div>
         )}
-        {(tool !== 'face' || selectedFace !== null) && (colorBar ? (
-          <div className={`ws__color ${tool === 'select' ? '' : 'is-open'}`} role="group" aria-label="Color">
-            <span className="workshop__label">COLOR</span>
-            <button className={`workshop__color ${pickerOpen ? 'is-on' : ''}`} onClick={() => setPickerOpen((o) => !o)} aria-pressed={pickerOpen} title="All 256 colors, and which palette this object is on" aria-label="Open the palette" {...noCallout}>
-              <Pipette size={13} strokeWidth={2.25} aria-hidden />
-            </button>
-            <div className="workshop__swatches">
-              {palette.map((h) => (
-                <Swatch key={h} hex={h} on={h === hex} onUse={() => w().colorSelected(hexToRgb(h))} onHold={() => setDeleteColor(h)} />
-              ))}
-            </div>
-            {/* What an action reaches, left to right: the points in hand, the
-                piece they are part of, the whole object. FILL is here because
-                it is the other thing a set of points is for, and because the
-                colour you are about to use is the colour the new faces take. */}
-            <div className="ws__acts" role="group" aria-label="Apply">
-              {selection.length > 0 && (
-                <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" {...noCallout}>
-                  <PaintBucket size={14} strokeWidth={2.25} aria-hidden />
-                </button>
-              )}
-              {selection.length > 0 && (
-                <button className="workshop__color ws__act" onClick={() => w().colorConnected(w().color)} title="The color onto these points and everything joined to them by faces" aria-label="Color the connected piece" {...noCallout}>
-                  <Waypoints size={14} strokeWidth={2.25} aria-hidden />
-                </button>
-              )}
-              <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" {...noCallout}>
-                <Globe size={14} strokeWidth={2.25} aria-hidden />
+        {/* What an action reaches, widening downward: the points in hand, the
+            piece they are joined to, the whole object. These used to sit inside
+            a column the chip unfolded into, along with eight remembered
+            swatches and a second way to open the palette. The palette modal
+            replaced all three of those, so the column was a worse copy of it
+            wrapped around the only part worth keeping. */}
+        {(tool !== 'face' || selectedFace !== null) && (
+          <div className="ws__acts" role="group" aria-label="Apply the color">
+            {selection.length > 0 && (
+              <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" {...noCallout}>
+                <PaintBucket size={17} strokeWidth={2.25} aria-hidden />
               </button>
-            </div>
+            )}
+            {selection.length > 0 && (
+              <button className="workshop__color ws__act" onClick={() => w().colorConnected(w().color)} title="The color onto these points and everything joined to them by faces" aria-label="Color the connected piece" {...noCallout}>
+                <Waypoints size={17} strokeWidth={2.25} aria-hidden />
+              </button>
+            )}
+            <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" {...noCallout}>
+              <Globe size={17} strokeWidth={2.25} aria-hidden />
+            </button>
           </div>
-        ) : (
-          <button className="chip ws__colorchip" style={{ background: hex }} onClick={() => { setColorOpen(true); if (narrow && panel === 'tools') setPanel(null) }} title={`Color ${hex}. Tap for the palette.`} aria-label={`Color ${hex}, tap for the palette`} />
-        ))}
+        )}
+        {(tool !== 'face' || selectedFace !== null) && (
+          <button
+            className="chip ws__colorchip"
+            style={{ background: hex }}
+            onClick={() => { setPickerOpen(true); if (narrow && panel === 'tools') setPanel(null) }}
+            title={`${hex}. Tap for all 256.`}
+            aria-label={`Color ${hex}, tap to open the palette`}
+          />
+        )}
         {pickerOpen && <PaletteModal onClose={() => setPickerOpen(false)} />}
       </div>
       )}
 
-      {deleteColor !== null && (
-        <ConfirmModal
-          title="Delete color from palette?"
-          body={<><span className="workshop__swatch workshop__swatch--sample" style={{ background: deleteColor }} aria-hidden />{deleteColor} leaves the palette. Vertices already painted with it keep it.</>}
-          confirmLabel="DELETE"
-          onConfirm={() => { w().forgetColor(deleteColor); setDeleteColor(null) }}
-          onCancel={() => setDeleteColor(null)}
-        />
-      )}
     </div>
   )
 }
