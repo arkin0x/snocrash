@@ -5,6 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>SNOCRASH</title>
     <meta name="description" content="Make, publish, browse and remix small 3D objects on nostr." />
+
+    <!--
+      The icon, at the sizes each place actually asks for. favicon.ico is here
+      because browsers still request /favicon.ico whether or not anything links
+      to it, and it carries 16, 32 and 48 inside one file; the 96 is what a
+      modern tab picks when it has the choice. apple-touch-icon is iOS's home
+      screen, which reads this tag and not the manifest.
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon-96.png" type="image/png" sizes="96x96" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!--
+      Matching the app's own background (--bg in styles.css) rather than a
+      lighter chrome color, so the browser bar, the launch screen and the app
+      are one surface instead of three. black-translucent lets the scene run
+      under the status bar, which is what viewport-fit=cover above is for.
+    -->
+    <meta name="theme-color" content="#05070d" />
+    <meta name="apple-mobile-web-app-title" content="SNOCRASH" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
   <body>
     <div id="root"></div>
