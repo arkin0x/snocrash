@@ -15,7 +15,7 @@
  * one's name.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Download, Plus, Trash2, Upload, X } from 'lucide-react'
 import { BUILT_IN, BUILT_IN_NAME, hexAt, type Palette } from 'sno-core/snoPalette'
@@ -30,6 +30,16 @@ const BANDS = [
   { from: 192, to: 223, title: 'STEELS', note: 'black to white, faintly cyan' },
   { from: 224, to: 255, title: 'SIGNATURES', note: "the client's own colors, the gamut corners, deep grounds" },
 ]
+
+/**
+ * How long the overlay takes to fold away.
+ *
+ * Short enough that picking several colors in a row does not feel like waiting
+ * on an animation, long enough that the direction it goes is legible. The
+ * color is applied before the fold starts, so this delays nothing but the
+ * unmount.
+ */
+const FOLD_MS = 190
 
 export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element {
   const shard = useWorkshop((s) => s.current())
@@ -58,6 +68,44 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   const [note, setNote] = useState<string | null>(null)
   const [shared, setShared] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
+  const [folding, setFolding] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const foldTimer = useRef<number | null>(null)
+
+  // A fold in flight when this unmounts would call onClose into nothing.
+  useEffect(() => () => { if (foldTimer.current !== null) window.clearTimeout(foldTimer.current) }, [])
+
+  /**
+   * Close by folding the overlay back into the color chip that opened it.
+   *
+   * The point is where it goes, not that it goes: this sheet is the chip's
+   * contents, and shrinking it into the chip says so, where fading it out in
+   * place would leave it belonging to the screen. Picking a color is a
+   * decision, and the fold is the sheet acknowledging it rather than the
+   * author having to dismiss a thing they are finished with.
+   *
+   * The transform cannot be written in CSS, because the chip sits in a corner
+   * that moves with the layout, so its distance from the middle of the screen
+   * is not a constant. Both rectangles are measured here and handed to the
+   * stylesheet as custom properties.
+   *
+   * With reduced motion asked for, or with no chip on screen to fold into
+   * (the feed has none), it just closes.
+   */
+  const fold = (): void => {
+    if (folding) return
+    const root = rootRef.current
+    const chip = document.querySelector('.ws__colorchip')
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!root || !chip || still) { onClose(); return }
+    const from = root.getBoundingClientRect()
+    const to = chip.getBoundingClientRect()
+    root.style.setProperty('--fold-x', `${to.left + to.width / 2 - (from.left + from.width / 2)}px`)
+    root.style.setProperty('--fold-y', `${to.top + to.height / 2 - (from.top + from.height / 2)}px`)
+    root.style.setProperty('--fold-scale', `${to.width / from.width}`)
+    setFolding(true)
+    foldTimer.current = window.setTimeout(onClose, FOLD_MS)
+  }
 
   /**
    * Put a palette on nostr, or publish an edit of one already there.
@@ -101,6 +149,7 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
       return
     }
     w().colorSelected(hexToRgbLocal(hexAt(active, index)))
+    fold()
   }
 
   const create = (): void => {
@@ -118,7 +167,7 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   // therefore a stacking context, so a full-screen modal left in there paints
   // under the chip row that follows it.
   return createPortal(
-    <div className="modal palettes" role="dialog" aria-modal="true" aria-label="Palette">
+    <div className={`modal palettes${folding ? ' is-folding' : ''}`} ref={rootRef} role="dialog" aria-modal="true" aria-label="Palette">
       <div className="palettes__head">
         <div>
           <h2 className="palettes__title">PALETTE</h2>
@@ -128,7 +177,7 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
               : `${activeName} · ${active.length} colors · a color on the wire is an index into this`}
           </p>
         </div>
-        <button className="chip ws__icon" onClick={onClose} aria-label="Close"><X size={16} strokeWidth={2.25} /></button>
+        <button className="chip ws__icon" onClick={fold} aria-label="Close"><X size={16} strokeWidth={2.25} /></button>
       </div>
 
       <div className="palettes__body">
