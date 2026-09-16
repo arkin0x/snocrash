@@ -2,3 +2,8 @@ node_modules
 dist
 .vercel
 *.local
+
+# A screenshot script with an unset output path wrote its files to a directory
+# literally named "undefined", and they were committed. Ignored so a rerun of
+# whatever did it cannot put them back without somebody noticing.
+undefined/
