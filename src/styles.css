@@ -2269,6 +2269,38 @@ button:disabled { opacity: 0.35; cursor: default; }
   padding: 0;
   background: rgba(3, 6, 12, 0.96);
 }
+
+/*
+ * The palette folding back into the color chip that opened it.
+ *
+ * The distance and the scale come in as custom properties, because the chip
+ * sits in a corner that moves with the layout and its offset from the middle
+ * of the screen is not a constant. PaletteModal measures both rectangles and
+ * writes them here; the fallbacks are only so a missing measurement collapses
+ * in place rather than flying somewhere arbitrary.
+ *
+ * Ease-in, not ease-out. A thing being put away should gather speed as it
+ * goes; a thing arriving should shed it. Using the arriving curve to leave is
+ * the usual reason a dismissal feels reluctant.
+ *
+ * The opacity is held back briefly so the motion is read before it is gone. A
+ * fade that starts at once reaches nothing in particular.
+ *
+ * Specificity: 0,2,0 against .palettes and .modal at 0,1,0, so this wins from
+ * wherever it sits in the file.
+ */
+.palettes.is-folding {
+  transform: translate(var(--fold-x, 0px), var(--fold-y, 0px)) scale(var(--fold-scale, 0.08));
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  transition: transform 190ms cubic-bezier(0.4, 0, 1, 1), opacity 150ms linear 40ms;
+}
+
+/* Belt and braces: the modal already closes outright when this is asked for. */
+@media (prefers-reduced-motion: reduce) {
+  .palettes.is-folding { transition: none; }
+}
 .palettes__head {
   display: flex;
   align-items: flex-start;
