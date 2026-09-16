@@ -2234,8 +2234,20 @@ button:disabled { opacity: 0.35; cursor: default; }
 /* The three scopes at the foot of the colour column: these points, the piece
    they belong to, the whole object. A row, so the widening reads left to
    right; the column above is two swatches wide and these match it. */
-.ws__acts { display: flex; justify-content: center; gap: 4px; }
-.ws__act { width: 24px; height: 24px; padding: 0; }
+/* The three reaches, out of the folded column they used to sit in and standing
+   above the colour chip in their own right. Larger than they were, because they
+   are now a first-class control rather than a footer inside a panel. */
+.ws__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.ws__act {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 9px;
+}
 
 /* The Explanation well, and two more the port left bare. */
 .legend__note { font-size: 10px; line-height: 1.5; color: var(--dim); }
