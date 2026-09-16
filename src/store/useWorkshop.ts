@@ -46,8 +46,8 @@ import {
   validPoint,
   type ShardMode,
   type ShardModel,
-  type ShardVertex, cloneVertex, hexToRgb, rgbToHex } from '../lib/shards'
-import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from '../lib/snoPalette'
+  type ShardVertex, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
+import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from 'sno-core/snoPalette'
 
 /** A palette with a name somebody gave it. The name is this browser's, not the wire's. */
 export interface NamedPalette {
@@ -73,8 +73,8 @@ function loadPalettes(): NamedPalette[] {
 function savePalettes(list: NamedPalette[]): void {
   try { localStorage.setItem(PALETTES_STORAGE, JSON.stringify(list)) } catch { /* quota or private mode */ }
 }
-import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from '../lib/stamps'
-import { newell, triangulate } from '../lib/triangulate'
+import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
+import { newell, triangulate } from 'sno-core/triangulate'
 import { Vector3 } from 'three'
 import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
 

@@ -29,10 +29,10 @@ import {
   LineBasicMaterial,
 } from 'three'
 import { easeOutCubic, hash01, scrambleOffset, seedOf, SHARD_DECODE_MS } from '../lib/decode'
-import { expandFaceColors, flatten, ticksOf, toRender, type ShardModel } from '../lib/shards'
-import { boxContains, clipMesh, clipPoints, type Box } from '../lib/clip'
-import { orientShard } from '../lib/orient'
-import { faceEdges } from '../lib/outline'
+import { expandFaceColors, flatten, ticksOf, toRender, type ShardModel } from 'sno-core/shards'
+import { boxContains, clipMesh, clipPoints, type Box } from 'sno-core/clip'
+import { orientShard } from 'sno-core/orient'
+import { faceEdges } from 'sno-core/outline'
 import { SHARD_DOTS, SHARD_POINTS, createDiscMaterial, sizeDisc, withDiscColors } from './pointDisc'
 
 interface Props {

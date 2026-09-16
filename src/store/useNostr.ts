@@ -28,7 +28,7 @@ import {
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
-import { fromPayload, toPayload, type ShardModel } from '../lib/shards'
+import { fromPayload, toPayload, type ShardModel } from 'sno-core/shards'
 
 /** DECK-0003 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
 export const SNO_KIND = 33331

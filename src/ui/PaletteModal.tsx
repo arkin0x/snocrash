@@ -18,8 +18,8 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Plus, Trash2, X } from 'lucide-react'
-import { BUILT_IN, BUILT_IN_NAME, hexAt, type Palette } from '../lib/snoPalette'
-import { rgbToHex } from '../lib/shards'
+import { BUILT_IN, BUILT_IN_NAME, hexAt, type Palette } from 'sno-core/snoPalette'
+import { rgbToHex } from 'sno-core/shards'
 import { useWorkshop } from '../store/useWorkshop'
 import { ConfirmModal } from './ConfirmModal'
 

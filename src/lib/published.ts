@@ -29,7 +29,7 @@
  * unknown, and never a guess.
  */
 
-import { toPayload, type ShardModel } from './shards'
+import { toPayload, type ShardModel } from 'sno-core/shards'
 
 const STORAGE = 'snocrash:published'
 
