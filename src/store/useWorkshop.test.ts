@@ -784,3 +784,53 @@ describe('pasting a shard that cannot be taken', () => {
     expect(w().shards.find((s) => s.id === id)?.vertices).toHaveLength(3)
   })
 })
+
+/**
+ * An object written between ONOSENDAI #165 and #167 declares v2 and carries
+ * literal colour triples, because the right-handed wire and the palette index
+ * shipped two releases apart. Three of the eight SNOs published to date are in
+ * that form. sno-core v0.1.4 reads them; this is the app-level proof that one
+ * arrives intact through the paste box (arkinox's "Triforce", 2026-09-16).
+ */
+describe('a shard from the window where v2 meant triples', () => {
+  const TRIFORCE = JSON.stringify({
+    v: 2, type: 'shard', name: 'Triforce', unit: 12, extent: 8, mode: 'solid',
+    vertices: [[0, 2, 0], [-1, 0, 0], [1, 0, 0], [-2, -1, 0], [0, -1, 0], [2, -1, 0],
+               [0, 2, -1], [-1, 0, -1], [1, 0, -1], [-2, -1, -1], [0, -1, -1], [2, -1, -1]],
+    ticks: [[0, 40, 0], [0, 80, 0], [0, 80, 0], -3, [0, 40, 80], [0, 80, 80], [0, 80, 80],
+            [0, 0, 80], [0, 0, 80], [0, 0, 80]],
+    colors: Array.from({ length: 12 }, () => [1, 0.8352941176470589, 0]),
+    faces: [[1, 0, 2], [3, 1, 4], [2, 4, 5], [7, 6, 8], [9, 7, 10], [8, 10, 11], [5, 0, 6],
+            [6, 11, 5], [9, 11, 5], [5, 3, 9], [9, 6, 0], [0, 3, 9], [10, 7, 1], [1, 4, 10],
+            [4, 2, 8], [8, 10, 4], [1, 2, 8], [8, 7, 1]],
+  })
+
+  it('pastes in whole, rather than being refused', () => {
+    const id = w().importText(TRIFORCE)
+    expect(id).not.toBeNull()
+    const s = w().shards.find((x) => x.id === id)!
+    expect(s.name).toBe('Triforce')
+    expect(s.vertices).toHaveLength(12)
+    expect(s.faces).toHaveLength(18)
+    expect(s.unit).toBe(12)
+    expect(s.mode).toBe('solid')
+  })
+
+  it('keeps the gold it was drawn in', () => {
+    const id = w().importText(TRIFORCE)!
+    const s = w().shards.find((x) => x.id === id)!
+    // Not snapped to the nearest palette entry on the way in: the colour an
+    // author chose stays theirs until the object is next published.
+    expect(s.vertices[0].c[0]).toBeCloseTo(1, 6)
+    expect(s.vertices[0].c[1]).toBeCloseTo(0.8352941176470589, 6)
+    expect(s.vertices[0].c[2]).toBeCloseTo(0, 6)
+  })
+
+  it('has sub-unit positions, so the run-length ticks survived the trip', () => {
+    const id = w().importText(TRIFORCE)!
+    const s = w().shards.find((x) => x.id === id)!
+    // The payload's ticks are [a, b, c, -3, ...]: the -3 repeats the entry
+    // before it three times. If that unpacked wrong the geometry would be flat.
+    expect(s.vertices.some((v) => v.t && (v.t[0] || v.t[1] || v.t[2]))).toBe(true)
+  })
+})
