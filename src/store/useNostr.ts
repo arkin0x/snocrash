@@ -28,8 +28,8 @@ import {
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
-import { fromPayload, toPayload, type ShardModel } from '../lib/shards'
-import { hexAt, parsePaletteEvent, type Palette } from '../lib/snoPalette'
+import { fromPayload, toPayload, type ShardModel } from 'sno-core/shards'
+import { hexAt, parsePaletteEvent, type Palette } from 'sno-core/snoPalette'
 import type { PublishedPalette } from './useWorkshop'
 
 /** DECK-0003 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
