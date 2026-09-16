@@ -287,10 +287,7 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
             multiplier to control the output scale of the object.
           </p>
           <div className="menu__links">
-            {/* TODO: DECK-0003-sno.md, once arkin0x/cyberspace#27 merges. SNO
-                claims deck 3 in that pull request; on master it is still 4, and
-                this has to be the file that exists or it is a dead link. */}
-            <a className="menu__link" href="https://github.com/arkin0x/cyberspace/blob/master/decks/DECK-0004-sno.md" target="_blank" rel="noreferrer">THE SPECIFICATION</a>
+            <a className="menu__link" href="https://github.com/arkin0x/cyberspace/blob/master/decks/DECK-0003-sno.md" target="_blank" rel="noreferrer">THE SPECIFICATION</a>
             <a className="menu__link" href="https://github.com/arkin0x/snocrash" target="_blank" rel="noreferrer">THE SOURCE</a>
           </div>
           <p>

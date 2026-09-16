@@ -2020,6 +2020,18 @@ button:disabled { opacity: 0.35; cursor: default; }
 .menu__addrelay { display: flex; gap: 6px; margin-bottom: 8px; }
 .menu__addrelay .avatars__input { flex: 1; min-width: 0; }
 
+/* A word in a status line that can be acted on, without becoming a button. */
+.workshop__link {
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted currentColor;
+  cursor: pointer;
+}
+
 .menu__line { margin: 0 0 8px; font-size: 11px; line-height: 1.45; color: var(--dim); }
 .menu__wide { width: 100%; justify-content: center; }
 .menu__list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }

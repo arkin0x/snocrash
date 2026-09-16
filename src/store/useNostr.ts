@@ -2,7 +2,7 @@
  * useNostr.ts - the identity, the relays, and the two things this app does
  * with them: publish an object and read the ones other people published.
  *
- * DECK-0004 §3.1: a standalone object is a `kind 33331` event, addressable, so
+ * DECK-0003 §3.1: a standalone object is a `kind 33331` event, addressable, so
  * relays keep the newest per (pubkey, kind, d). The `d` is the object's own id,
  * stable across edits, which is what lets someone fix a mistake in an object
  * without publishing a second copy of it. The payload in `content` is exactly
@@ -30,7 +30,7 @@ import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
 import { fromPayload, toPayload, type ShardModel } from '../lib/shards'
 
-/** DECK-0004 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
+/** DECK-0003 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
 export const SNO_KIND = 33331
 
 /** An object someone published, with the event it came from. */

@@ -238,6 +238,10 @@ export interface WorkshopState {
   selectConnected: () => void
   selectFace: (index: number | null) => void
   deleteSelectedFace: () => void
+  /** The colour onto one face as a hard seam, not onto its corners. */
+  colorFace: (index: number, c: [number, number, number]) => void
+  /** Give every face back to its corners: the object interpolates again. */
+  clearFaceColors: () => void
   /** Put a color at the front of the palette (moving it there if it is already in). */
   rememberColor: (hex: string) => void
   forgetColor: (hex: string) => void
@@ -550,6 +554,41 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (selectedFace === null) return
       get().removeFace(selectedFace)
       set({ selectedFace: null })
+    },
+
+    /**
+     * A hard colour on one face.
+     *
+     * Colouring a face's three corners is not the same thing: a corner belongs
+     * to every face that touches it, so the colour bleeds across every shared
+     * edge. A face colour is carried per face (DECK-0003 §1.4a) and stops at
+     * the edge, which is what makes a crisp seam possible at all.
+     *
+     * The first one fills the rest of the list from what each face already
+     * looks like, the average of its corners, so turning one face hard leaves
+     * every other face looking exactly as it did.
+     */
+    colorFace: (index, c) => {
+      set({ color: clampColor(c) })
+      edit((s) => {
+        if (!s.faces[index]) return null
+        const current = s.facecolors && s.facecolors.length === s.faces.length
+          ? s.facecolors
+          : s.faces.map((f) => {
+            const sum = f.reduce((acc, i) => {
+              const v = s.vertices[i]
+              return v ? [acc[0] + v.c[0], acc[1] + v.c[1], acc[2] + v.c[2]] : acc
+            }, [0, 0, 0])
+            return sum.map((n) => n / 3) as [number, number, number]
+          })
+        const facecolors = current.slice()
+        facecolors[index] = clampColor(c)
+        return { ...s, facecolors }
+      }, 'That face keeps its own color now.')
+    },
+
+    clearFaceColors: () => {
+      edit((s) => (s.facecolors ? { ...s, facecolors: undefined } : null), 'Faces blend across their corners again.')
     },
 
     rememberColor: (hex) => {

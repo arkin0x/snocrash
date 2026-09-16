@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { flatten, fromPayload, newShard, toPayload, validFace, validPoint, type ShardModel, TICKS_PER_UNIT, packTicks, unpackTicks, unitsLabel, toRender, ticksOf, vertexAt, normalizeStored } from './shards'
+import { TICKS_PER_UNIT, expandFaceColors, flatten, fromPayload, newShard, normalizeStored, packFaceColors, packTicks, ticksOf, toPayload, toRender, unitsLabel, unpackFaceColors, unpackTicks, validFace, validPoint, vertexAt, type ShardModel } from './shards'
 
 const tri: ShardModel = {
   ...newShard('tri'),
@@ -39,8 +39,30 @@ describe('payload', () => {
     expect(fromPayload({ ...p, colors: p.colors.slice(1) }, 'x')).toBeNull()
     expect(fromPayload({ ...p, mode: 'voxels' }, 'x')).toBeNull()
     expect(fromPayload({ ...p, unit: 99 }, 'x')).toBeNull()
-    expect(fromPayload({ ...p, type: 'note' }, 'x')).toBeNull()
     expect(fromPayload('nope', 'x')).toBeNull()
+  })
+
+  it('ignores a `type` field rather than requiring or rejecting on it', () => {
+    // DECK-0003 §1.1a: the format has no such field. Payloads written before
+    // that deck carry `type: "shard"`, and rejecting on it would refuse every
+    // object anyone else writes correctly.
+    const p = toPayload(tri)
+    expect(p).not.toHaveProperty('type')
+    for (const type of ['shard', 'note', 17, null]) {
+      expect(fromPayload({ ...p, type }, 'x'), String(type)).not.toBeNull()
+    }
+  })
+
+  it('writes colours at four decimal places and no more', () => {
+    // The largest cost in the format, and the precision buys nothing: four
+    // places is 10,000 steps per channel where a screen shows 256.
+    const messy = { ...tri, vertices: tri.vertices.map((v) => ({ ...v, c: [0.8039215686274510, 1 / 3, 0] as [number, number, number] })) }
+    for (const c of toPayload(messy).colors) {
+      for (const channel of c) expect(String(channel).replace(/^\d+\.?/, '').length, String(channel)).toBeLessThanOrEqual(4)
+    }
+    // A reader still takes whatever arrives.
+    const back = fromPayload({ ...toPayload(tri), colors: tri.vertices.map(() => [0.8039215686274510, 0.1, 0.1]) }, 'x')
+    expect(back!.vertices[0].c[0]).toBe(0.8039215686274510)
   })
 
   it('clamps colors into 0..1', () => {
@@ -125,7 +147,7 @@ describe('ticks', () => {
     const s = { ...newShard('t'), vertices: [v([0, 0, 0]), v([TICKS_PER_UNIT, 0, 0]), v([40, -30, 24 + 2 * TICKS_PER_UNIT]), v([0, 0, 0])] }
     expect(s.vertices[2]).toEqual({ p: [0, -1, 2], t: [40, 90, 24], c: [1, 0, 0] })
     expect(s.vertices[1]).toEqual({ p: [1, 0, 0], c: [1, 0, 0] })
-    // Out on the wire, Z is negated into the published frame (DECK-0004 §2):
+    // Out on the wire, Z is negated into the published frame (DECK-0003 §2):
     // 24 + 2 units forward becomes the same distance back, which is three
     // units short with 96 ticks of remainder.
     const wire = toPayload(s)
@@ -162,7 +184,7 @@ describe('ticks', () => {
   })
 })
 
-describe('DECK-0004 §2: the wire is right-handed, this client is not', () => {
+describe('DECK-0003 §2: the wire is right-handed, this client is not', () => {
   const model = {
     ...newShard('flip'),
     vertices: [
@@ -203,5 +225,104 @@ describe('DECK-0004 §2: the wire is right-handed, this client is not', () => {
     expect(fromPayload({ ...p, v: 2 }, 'x')).not.toBeNull()
     expect(fromPayload({ ...p, v: 3 }, 'x')).toBeNull()
     expect(fromPayload({ ...p, v: 0 }, 'x')).toBeNull()
+  })
+})
+
+describe('face colours (DECK-0003 §1.4a)', () => {
+  const cube = (facecolors?: Array<[number, number, number]>): ShardModel => ({
+    id: 'c', name: 'cube', unit: 0, extent: 8, mode: 'solid', up: false, spin: 0, updatedAt: 0,
+    vertices: [
+      vertexAt([0, 0, 0], [1, 1, 1]), vertexAt([1, 0, 0], [1, 1, 1]),
+      vertexAt([1, 1, 0], [1, 1, 1]), vertexAt([0, 1, 0], [1, 1, 1]),
+    ],
+    faces: [[0, 1, 2], [0, 2, 3]],
+    ...(facecolors ? { facecolors } : {}),
+  })
+
+  it('is absent when nothing asked for it, which is not the same as black', () => {
+    expect(toPayload(cube())).not.toHaveProperty('facecolors')
+    expect(fromPayload(toPayload(cube()), 'x')!.facecolors).toBeUndefined()
+  })
+
+  it('round-trips one colour per face', () => {
+    const back = fromPayload(toPayload(cube([[1, 0, 0], [0, 0, 1]])), 'x')
+    expect(back!.facecolors).toEqual([[1, 0, 0], [0, 0, 1]])
+  })
+
+  it('packs a run rather than repeating the colour', () => {
+    // The whole point: a stamped block is twelve triangles of one colour, and
+    // twelve copies of a triple is what the format cannot afford.
+    const many: Array<[number, number, number]> = Array.from({ length: 12 }, () => [1, 0, 0])
+    expect(packFaceColors(many)).toEqual([[1, 0, 0], -11])
+    expect(unpackFaceColors([[1, 0, 0], -11], 12)).toEqual(many)
+  })
+
+  it('refuses a run before there is anything to repeat', () => {
+    expect(unpackFaceColors([-3], 3)).toBeNull()
+  })
+
+  it('refuses entries that expand to the wrong number of faces', () => {
+    expect(unpackFaceColors([[1, 0, 0], -5], 2)).toBeNull()
+    expect(unpackFaceColors([[1, 0, 0]], 2)).toBeNull()
+    expect(unpackFaceColors([], 0)).toBeNull()
+  })
+
+  it('refuses a positive or fractional run, and junk entries', () => {
+    expect(unpackFaceColors([[1, 0, 0], 3], 4)).toBeNull()
+    expect(unpackFaceColors([[1, 0, 0], -1.5], 2)).toBeNull()
+    expect(unpackFaceColors([[1, 0, 0], 'red'], 2)).toBeNull()
+    expect(unpackFaceColors([[1, 0]], 1)).toBeNull()
+  })
+
+  it('rejects a whole payload whose face colours do not fit its faces', () => {
+    const p = { ...toPayload(cube([[1, 0, 0], [0, 0, 1]])), facecolors: [[1, 0, 0]] }
+    expect(fromPayload(p, 'x')).toBeNull()
+  })
+
+  it('writes face colours at four decimal places too', () => {
+    const p = toPayload(cube([[1 / 3, 1 / 3, 1 / 3], [0, 0, 1]]))
+    const first = (p.facecolors as Array<[number, number, number]>)[0]
+    for (const channel of first) expect(String(channel).replace(/^\d+\.?/, '').length).toBeLessThanOrEqual(4)
+  })
+})
+
+describe('expandFaceColors', () => {
+  const two: ShardModel = {
+    id: 'c', name: 'two', unit: 0, extent: 8, mode: 'solid', up: false, spin: 0, updatedAt: 0,
+    vertices: [
+      vertexAt([0, 0, 0], [1, 1, 1]), vertexAt([1, 0, 0], [1, 1, 1]),
+      vertexAt([1, 1, 0], [1, 1, 1]), vertexAt([0, 1, 0], [1, 1, 1]),
+    ],
+    faces: [[0, 1, 2], [0, 2, 3]],
+    facecolors: [[1, 0, 0], [0, 0, 1]],
+  }
+
+  it('gives every face three corners of its own, in the face colour', () => {
+    // Shared corners cannot hold a seam: vertex 0 belongs to both faces.
+    const out = expandFaceColors(two)
+    expect(out.vertices).toHaveLength(6)
+    expect(out.vertices.slice(0, 3).map((v) => v.c)).toEqual([[1, 0, 0], [1, 0, 0], [1, 0, 0]])
+    expect(out.vertices.slice(3).map((v) => v.c)).toEqual([[0, 0, 1], [0, 0, 1], [0, 0, 1]])
+  })
+
+  it('keeps every corner where it was', () => {
+    const out = expandFaceColors(two)
+    expect(ticksOf(out.vertices[0])).toEqual(ticksOf(two.vertices[0]))
+    expect(ticksOf(out.vertices[3])).toEqual(ticksOf(two.vertices[0]))
+  })
+
+  it('keeps face order, so a tap still lands on the same face', () => {
+    expect(expandFaceColors(two).faces).toEqual([[0, 1, 2], [3, 4, 5]])
+  })
+
+  it('leaves a shard alone when it has no face colours, or the wrong number', () => {
+    const plain = { ...two, facecolors: undefined }
+    expect(expandFaceColors(plain)).toBe(plain)
+    const wrong = { ...two, facecolors: [[1, 0, 0]] as Array<[number, number, number]> }
+    expect(expandFaceColors(wrong)).toBe(wrong)
+  })
+
+  it('drops the face colours it consumed, so nothing expands twice', () => {
+    expect(expandFaceColors(two).facecolors).toBeUndefined()
   })
 })

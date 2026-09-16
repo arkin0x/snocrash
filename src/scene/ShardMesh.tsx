@@ -29,7 +29,7 @@ import {
   LineBasicMaterial,
 } from 'three'
 import { easeOutCubic, hash01, scrambleOffset, seedOf, SHARD_DECODE_MS } from '../lib/decode'
-import { flatten, ticksOf, toRender, type ShardModel } from '../lib/shards'
+import { expandFaceColors, flatten, ticksOf, toRender, type ShardModel } from '../lib/shards'
 import { boxContains, clipMesh, clipPoints, type Box } from '../lib/clip'
 import { orientShard } from '../lib/orient'
 import { faceEdges } from '../lib/outline'
@@ -86,7 +86,11 @@ const STATIC = [0, 0.9, 1] as const
  */
 const TAG_BLEND = { blending: CustomBlending, blendEquation: AddEquation, blendSrc: OneFactor, blendDst: ZeroFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: ZeroFactor } as const
 
-export function ShardMesh({ shard, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip }: Props): JSX.Element | null {
+export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip }: Props): JSX.Element | null {
+  // A face that carries its own colour needs three corners of its own, or the
+  // colour would bleed across every edge it shares. Expanded here and nowhere
+  // else, so the rest of this file never learns about face colours.
+  const shard = useMemo(() => expandFaceColors(given), [given])
   const { positions, colors, index, faces } = useMemo(() => {
     const f = flatten(shard)
     const oriented = lit

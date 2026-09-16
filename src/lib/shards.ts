@@ -79,14 +79,20 @@ export interface ShardModel {
   up: boolean
   /** The compass bearing +Z faces when `up`: whole degrees 0..359, clockwise from north. 0 otherwise. */
   spin: number
+  /**
+   * A colour of its own for each face, or absent when every face interpolates
+   * its corners. Expanded here, one entry per face, and run-length encoded
+   * only on the wire: a run is a wire economy, and carrying it in memory would
+   * mean every edit had to think about it.
+   */
+  facecolors?: Array<[number, number, number]>
   updatedAt: number
 }
 
 /** Wire form: what goes in an event's content, public or decrypted. */
 export interface ShardPayload {
-  /** 1 was this client's own frame; 2 is the published one (DECK-0004 §2). */
+  /** 1 was this client's own frame; 2 is the published one (DECK-0003 §2). */
   v: 1 | 2
-  type: 'shard'
   name: string
   unit: number
   /** Grid half-width the shard was built on; absent in older payloads (8). */
@@ -102,6 +108,14 @@ export interface ShardPayload {
   ticks?: Array<[number, number, number] | number>
   colors: Array<[number, number, number]>
   faces: Array<[number, number, number]>
+  /**
+   * One colour per face, in the order `faces` gives them, run-length encoded
+   * the way `ticks` is: an entry is either a triple or a negative integer -N
+   * standing for N further faces of the triple before it. Absent means every
+   * face interpolates its three vertices, which is the format's default and
+   * not the same as black (DECK-0003 §1.4a).
+   */
+  facecolors?: Array<[number, number, number] | number>
   /** Present and true when the shard stands on the Earth where it is hidden (lib/pose.ts). Absent otherwise. */
   up?: true
   /** With `up`: the compass bearing +Z faces, a whole number 0..359. Ignored without `up`. */
@@ -202,6 +216,28 @@ export function clampColor(c: [number, number, number]): [number, number, number
   return c.map((v) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0))) as [number, number, number]
 }
 
+/**
+ * Decimal places a colour channel is written with (DECK-0003 §1.3).
+ *
+ * A publisher MUST write at most four. It is the single largest cost in the
+ * format and the precision buys nothing: four places is 10,000 steps per
+ * channel where eight-bit colour, which is what a screen shows, has 256. The
+ * saving is not marginal. A worst-case vertex costs 87 bytes with full double
+ * precision and 52 at four places, because `0.8039215686274510` is eighteen
+ * characters and `0.8039` is six, three times over per vertex. At the format's
+ * ceiling that is the difference between an object every relay takes and one
+ * that is over strfry's stock limit before its face colours are counted.
+ *
+ * A reader still takes whatever arrives and only clamps: this is an obligation
+ * on writers, and rejecting a payload for being too precise would help nobody.
+ */
+export const COLOR_PLACES = 4
+
+/** A colour as it goes on the wire: clamped, and no more precise than it should be. */
+export function wireColor(c: [number, number, number]): [number, number, number] {
+  return clampColor(c).map((v) => Number(v.toFixed(COLOR_PLACES))) as [number, number, number]
+}
+
 /** A face needs three distinct vertices that exist. */
 export function validFace(f: [number, number, number], count: number): boolean {
   return f.every((i) => Number.isInteger(i) && i >= 0 && i < count) && new Set(f).size === 3
@@ -210,7 +246,7 @@ export function validFace(f: [number, number, number], count: number): boolean {
 /**
  * The wire's handedness, and why it is not this client's.
  *
- * DECK-0004 §2: an SNO payload is right-handed with Y up and +Z toward the
+ * DECK-0003 §2: an SNO payload is right-handed with Y up and +Z toward the
  * viewer, which is the glTF and three.js convention, so that any tool can read
  * one without a special case. Cyberspace's own +Z is the black sun, away from
  * the viewer, and everything in this client is built in that frame.
@@ -240,14 +276,16 @@ export function toPayload(s: ShardModel): ShardPayload {
   const vertices = s.vertices.map(flipZ)
   return {
     v: WIRE_VERSION,
-    type: 'shard',
     name: s.name,
     unit: s.unit,
     extent: s.extent,
     mode: s.mode,
     vertices: vertices.map((v) => v.p),
     ticks: packTicks(vertices.map((v) => v.t ?? [0, 0, 0])),
-    colors: vertices.map((v) => v.c),
+    colors: vertices.map((v) => wireColor(v.c)),
+    ...(s.facecolors && s.facecolors.length === s.faces.length
+      ? { facecolors: packFaceColors(s.facecolors) }
+      : {}),
     faces: s.faces,
     // `up` and `spin` are carried as data. They say the object stands on the
     // Earth where it is hidden, which is a Cyberspace idea; here an object has
@@ -274,6 +312,77 @@ export function packTicks(rest: Array<[number, number, number]>): Array<[number,
   return out
 }
 
+/**
+ * Face colours packed for the wire (DECK-0003 §1.4a).
+ *
+ * The same run-length shape as `ticks`, for the same reason: the common case
+ * is a run. A stamped block is twelve triangles of one colour, so a solid cube
+ * is `[[1, 0, 0], -11]` rather than twelve copies of the same triple. The
+ * first entry is always a triple, because a run has nothing to repeat before
+ * one.
+ */
+export function packFaceColors(colors: Array<[number, number, number]>): Array<[number, number, number] | number> {
+  const out: Array<[number, number, number] | number> = []
+  let run = 0
+  for (let i = 0; i < colors.length; i++) {
+    const c = wireColor(colors[i])
+    const prev = i > 0 ? wireColor(colors[i - 1]) : null
+    if (prev && c[0] === prev[0] && c[1] === prev[1] && c[2] === prev[2]) { run++; continue }
+    if (run) { out.push(-run); run = 0 }
+    out.push(c)
+  }
+  if (run) out.push(-run)
+  return out
+}
+
+/** Face colours read back, one per face, or null when they do not fit `count` faces. */
+export function unpackFaceColors(packed: unknown, count: number): Array<[number, number, number]> | null {
+  if (packed === undefined) return null
+  if (!Array.isArray(packed) || packed.length === 0) return null
+  const out: Array<[number, number, number]> = []
+  for (const e of packed) {
+    if (typeof e === 'number') {
+      // A run repeats the colour before it, so the first entry cannot be one.
+      if (!Number.isInteger(e) || e >= 0 || out.length === 0) return null
+      const prev = out[out.length - 1]
+      for (let i = 0; i < -e; i++) out.push([...prev] as [number, number, number])
+    } else if (Array.isArray(e) && e.length === 3 && e.every((v) => typeof v === 'number')) {
+      out.push(clampColor(e as [number, number, number]))
+    } else return null
+    if (out.length > count) return null
+  }
+  return out.length === count ? out : null
+}
+
+/**
+ * A shard with its face colours turned into vertex colours, for drawing.
+ *
+ * A face colour is a hard seam: the three corners of a triangle must all be
+ * that colour and nothing may interpolate across the edge into the next one.
+ * Shared vertices cannot express that, since a vertex belongs to every face
+ * that touches it, so each face gets three corners of its own.
+ *
+ * Done here, once, before anything else looks at the geometry, so the winding
+ * pass, the clipper and the face picker all work on ordinary vertex colours
+ * and none of them has to know this feature exists. Face order is preserved,
+ * which is what keeps a tap on a face resolving to the same face.
+ *
+ * This is a render-time expansion and never goes back on the wire, so it is
+ * not subject to the format's vertex ceiling.
+ */
+export function expandFaceColors(s: ShardModel): ShardModel {
+  if (!s.facecolors || s.facecolors.length !== s.faces.length || s.faces.length === 0) return s
+  const vertices: ShardVertex[] = []
+  const faces: Array<[number, number, number]> = []
+  s.faces.forEach((f, i) => {
+    const c = clampColor(s.facecolors![i])
+    const base = vertices.length
+    for (const vi of f) vertices.push({ ...s.vertices[vi], c })
+    faces.push([base, base + 1, base + 2])
+  })
+  return { ...s, vertices, faces, facecolors: undefined }
+}
+
 /** The ticks column read back, one triple per vertex, or null when it does not fit `count` vertices. */
 export function unpackTicks(packed: unknown, count: number): Array<[number, number, number]> | null {
   if (packed === undefined) return Array.from({ length: count }, () => [0, 0, 0])
@@ -294,7 +403,11 @@ export function unpackTicks(packed: unknown, count: number): Array<[number, numb
 export function fromPayload(raw: unknown, id: string): ShardModel | null {
   if (!raw || typeof raw !== 'object') return null
   const p = raw as Partial<ShardPayload>
-  if ((p.v !== 1 && p.v !== WIRE_VERSION) || p.type !== 'shard') return null
+  // DECK-0003 §1.1a: there is no `type` field. Payloads written before that
+  // deck carry `type: "shard"`; it is ignored here and never rejected on,
+  // because the field is noise and rejecting on noise would refuse every
+  // object anyone else writes correctly.
+  if (p.v !== 1 && p.v !== WIRE_VERSION) return null
   if (!Array.isArray(p.vertices) || !Array.isArray(p.colors) || !Array.isArray(p.faces)) return null
   if (p.vertices.length !== p.colors.length || p.vertices.length > MAX_VERTICES || p.faces.length > MAX_FACES) return null
   if (!MODES.includes(p.mode as ShardMode)) return null
@@ -323,6 +436,14 @@ export function fromPayload(raw: unknown, id: string): ShardModel | null {
     if (!validFace(face, vertices.length)) return null
     faces.push(face)
   }
+  // §1.4a: present means exactly one colour per face. A list that expands to
+  // any other length is a defect in the payload, not something to pad.
+  let facecolors: Array<[number, number, number]> | undefined
+  if (p.facecolors !== undefined) {
+    const expanded = unpackFaceColors(p.facecolors, faces.length)
+    if (!expanded) return null
+    facecolors = expanded
+  }
   const extent = Number.isInteger(p.extent) && (p.extent as number) >= MIN_EXTENT && (p.extent as number) <= MAX_EXTENT ? (p.extent as number) : GRID_HALF
   return {
     id,
@@ -332,6 +453,7 @@ export function fromPayload(raw: unknown, id: string): ShardModel | null {
     mode: p.mode as ShardMode,
     vertices,
     faces,
+    ...(facecolors ? { facecolors } : {}),
     // Only a payload that says so stands up; `spin` without `up` is ignored,
     // the way the field is documented.
     up,

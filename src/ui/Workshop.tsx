@@ -503,6 +503,7 @@ export function Workshop(): JSX.Element | null {
           <div className="ws__stats">
             {shard.vertices.length} vertices · {shard.faces.length} faces
             {shard.mode !== 'solid' && shard.faces.length > 0 && <> · faces draw in SOLID</>}
+            {shard.facecolors && <> · <button className="workshop__link" onClick={() => w().clearFaceColors()} title="Give every face back to its corners, so colors blend across them again">{shard.facecolors.length} face colors, clear</button></>}
           </div>
           <div className="workshop__row">
             <span className="workshop__label">DRAW</span>
@@ -738,6 +739,12 @@ export function Workshop(): JSX.Element | null {
         {facing && selectedFace !== null && (
           <div className="benchops" role="group" aria-label="Selected face">
             <span className="workshop__value workshop__value--wide">face {selectedFace + 1} of {shard?.faces.length ?? 0}</span>
+            {/* A hard colour, which colouring the corners cannot give: a corner
+                belongs to every face touching it, so that bleeds across the
+                shared edges. This stops at the edge. */}
+            <button className="workshop__btn" onClick={() => w().colorFace(selectedFace, w().color)} title="Give this face the current color as a hard seam, not blended from its corners">
+              <PaintBucket size={12} strokeWidth={2.25} aria-hidden /> SEAM
+            </button>
             <button className="workshop__btn workshop__btn--danger" onClick={() => w().deleteSelectedFace()} title="Remove this face (Del)">DELETE FACE</button>
             <button className="workshop__btn" onClick={() => w().selectFace(null)} title="Keep it (Esc)">CANCEL</button>
           </div>
