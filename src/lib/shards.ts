@@ -87,6 +87,24 @@ export interface ShardModel {
    * mean every edit had to think about it.
    */
   facecolors?: Array<[number, number, number]>
+  /**
+   * The 256 colours this object's indices name (DECK-0003 §1.3a), or absent
+   * for the built-in.
+   *
+   * The index itself is not stored on a vertex. A colour in the model is
+   * always exactly a palette entry, because the workshop only offers palette
+   * colours, so the index is recoverable at any moment by looking the colour
+   * up in whichever palette is current. That keeps one source of truth instead
+   * of an index and a colour that can drift apart, and it keeps every renderer
+   * and the clipper reading plain RGB, which the clipper needs: it interpolates
+   * colour across a cut, and you cannot interpolate an index.
+   *
+   * Switching palettes is therefore a single pass that reads each index off the
+   * old palette and writes the new palette's colour at that index.
+   */
+  palette?: Array<[number, number, number]>
+  /** What the author called that palette. Local only; the wire carries colours, not names. */
+  paletteName?: string
   updatedAt: number
 }
 
@@ -263,6 +281,7 @@ function flipZ(v: ShardVertex): ShardVertex {
 
 export function toPayload(s: ShardModel): ShardPayload {
   const vertices = s.vertices.map(flipZ)
+  const palette = s.palette ?? BUILT_IN
   return {
     v: WIRE_VERSION,
     name: s.name,
@@ -271,9 +290,10 @@ export function toPayload(s: ShardModel): ShardPayload {
     mode: s.mode,
     vertices: vertices.map((v) => v.p),
     ticks: packTicks(vertices.map((v) => v.t ?? [0, 0, 0])),
-    colors: vertices.map((v) => indexOf(BUILT_IN, toBytes(v.c))),
+    ...(s.palette ? { palette: s.palette } : {}),
+    colors: vertices.map((v) => indexOf(palette, toBytes(v.c))),
     ...(s.facecolors && s.facecolors.length === s.faces.length
-      ? { facecolors: packFaceColors(s.facecolors.map((c) => indexOf(BUILT_IN, toBytes(c)))) }
+      ? { facecolors: packFaceColors(s.facecolors.map((c) => indexOf(palette, toBytes(c)))) }
       : {}),
     faces: s.faces,
     // `up` and `spin` are carried as data. They say the object stands on the
@@ -469,6 +489,9 @@ export function fromPayload(raw: unknown, id: string, fetchedPalette?: string | 
     vertices,
     faces,
     ...(facecolors ? { facecolors } : {}),
+    // Carried through so the object keeps its own colours when it is edited
+    // and republished. An absent one means the built-in, as on the wire.
+    ...(Array.isArray(p.palette) ? { palette } : {}),
     // Only a payload that says so stands up; `spin` without `up` is ignored,
     // the way the field is documented.
     up,

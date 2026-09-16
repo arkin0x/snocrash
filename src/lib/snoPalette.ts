@@ -185,3 +185,31 @@ export function snapHex(palette: Palette, hex: string): string | null {
 
 /** The whole built-in as hex, for a swatch grid. */
 export const BUILT_IN_HEX: string[] = BUILT_IN.map((_, i) => hexAt(BUILT_IN, i))
+
+/**
+ * A shard's colours moved from one palette to another.
+ *
+ * This is what "switching palettes" means, and it is the behaviour of every
+ * indexed image format there has ever been: the indices stay put and what they
+ * name changes. A vertex sitting at index 7 is still at index 7 afterwards, and
+ * index 7 in the new palette is a different colour, so the object changes
+ * appearance. That is the point, and it is why the switch is worth a warning.
+ *
+ * An index the new palette does not reach, which happens whenever the new one
+ * is shorter, falls back to the built-in's colour at that index rather than
+ * being clamped to the new palette's last entry. Clamping would silently
+ * collapse every out-of-range colour onto one, which looks like corruption;
+ * the built-in always has an entry and the result stays legible.
+ */
+export function remap(colors: Rgb[], from: Palette, to: Palette): Rgb[] {
+  return colors.map((c) => {
+    const i = indexOf(from, toBytes(c))
+    return toModel(i < to.length ? to[i] : BUILT_IN[i] ?? to[0])
+  })
+}
+
+/** Whether two palettes hold the same colours in the same order. */
+export function samePalette(a: Palette | undefined, b: Palette | undefined): boolean {
+  const x = a ?? BUILT_IN, y = b ?? BUILT_IN
+  return x.length === y.length && x.every((c, i) => c[0] === y[i][0] && c[1] === y[i][1] && c[2] === y[i][2])
+}

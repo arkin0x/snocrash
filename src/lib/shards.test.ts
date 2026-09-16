@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { TICKS_PER_UNIT, expandFaceColors, flatten, fromPayload, newShard, normalizeStored, packFaceColors, packTicks, ticksOf, toPayload, toRender, unitsLabel, unpackFaceColors, unpackTicks, validFace, validPoint, vertexAt, type ShardModel } from './shards'
-import { BUILT_IN, indexOf, readPalette, resolvePalette } from './snoPalette'
+import { BUILT_IN, indexOf, readPalette, remap, resolvePalette } from './snoPalette'
 
 const tri: ShardModel = {
   ...newShard('tri'),
@@ -446,5 +446,47 @@ describe('a shard from before the palette', () => {
 
   it('refuses a v1 payload whose colours are not triples', () => {
     expect(fromPayload({ ...OLD, colors: [7, 7, 7] }, 'x')).toBeNull()
+  })
+})
+
+describe('switching palettes keeps the indices', () => {
+  // What an indexed format has always meant by switching a palette: the
+  // indices stay and what they name changes. It is why the switch asks first.
+  const RED = BUILT_IN[238], BLUE = BUILT_IN[239], WHITE = BUILT_IN[225]
+  const four: Array<[number, number, number]> = [[9, 9, 9], [40, 40, 40], [90, 90, 90], [200, 200, 200]]
+
+  it('moves a colour to the same index in the new palette', () => {
+    const at = (c: [number, number, number]): [number, number, number] => c.map((n) => n / 255) as [number, number, number]
+    const moved = remap([at(BUILT_IN[0]), at(BUILT_IN[2])], BUILT_IN, four)
+    expect(moved[0]).toEqual(at(four[0]))
+    expect(moved[1]).toEqual(at(four[2]))
+  })
+
+  it('falls back to the built-in for an index the new palette cannot reach', () => {
+    // Not clamped to the new palette's last entry: clamping would collapse
+    // every out-of-range colour onto one, which reads as corruption.
+    const at = (c: [number, number, number]): [number, number, number] => c.map((n) => n / 255) as [number, number, number]
+    const moved = remap([at(RED)], BUILT_IN, four)
+    expect(moved[0]).toEqual(at(BUILT_IN[238]))
+  })
+
+  it('is its own inverse when the palettes are the same length', () => {
+    const at = (c: [number, number, number]): [number, number, number] => c.map((n) => n / 255) as [number, number, number]
+    const other = BUILT_IN.map((c) => [255 - c[0], 255 - c[1], 255 - c[2]] as [number, number, number])
+    const start = [at(RED), at(BLUE), at(WHITE)]
+    expect(remap(remap(start, BUILT_IN, other), other, BUILT_IN)).toEqual(start)
+  })
+
+  it('carries the palette on the wire and back', () => {
+    const s = { ...tri, palette: four }
+    const p = toPayload(s)
+    expect(p.palette).toEqual(four)
+    for (const c of p.colors) expect(c).toBeLessThan(four.length)
+    expect(fromPayload(p, 'x')!.palette).toEqual(four)
+  })
+
+  it('writes no palette field for an object on the built-in', () => {
+    expect(toPayload(tri)).not.toHaveProperty('palette')
+    expect(fromPayload(toPayload(tri), 'x')!.palette).toBeUndefined()
   })
 })

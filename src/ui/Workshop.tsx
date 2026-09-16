@@ -25,16 +25,15 @@ import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { ConfirmModal } from './ConfirmModal'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, hexToRgb, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from '../lib/shards'
-import { hsvToRgb, rgbToHsv, type Hsv } from '../lib/hsv'
 import { formatCellSize } from '../lib/scale'
 import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, type StampKind } from '../lib/stamps'
 import { useWorkshop, type Tool } from '../store/useWorkshop'
-import { BUILT_IN, snapHex } from '../lib/snoPalette'
 import { Bench } from './Bench'
 import { Compass3D } from './Compass3D'
 import { Feed } from './Feed'
 import { LoginModal } from './LoginModal'
 import { MenuOverlay } from './MenuOverlay'
+import { PaletteModal } from './PaletteModal'
 import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
 import { useNostr } from '../store/useNostr'
 import { fileNameFor, toPly } from '../lib/ply'
@@ -199,60 +198,6 @@ function ControlsPad({ points }: { points: number }): JSX.Element {
   )
 }
 
-/**
- * The mixer: HUE, SATURATION and BRIGHTNESS, each a slider on a track painted
- * with what that slider would give, the colour they make at the top and a hex
- * field for a colour from elsewhere. It opens on the colour in hand; when that
- * has no saturation or no brightness (white, grey, black) those two open at
- * the middle, so the first touch of HUE gives a colour rather than another grey.
- */
-const MID = 50
-function opening(hex: string): Hsv {
-  const [h, s, v] = rgbToHsv(hexToRgb(hex))
-  return [Math.round(h), s === 0 ? MID : Math.round(s), v === 0 ? MID : Math.round(v)]
-}
-function Mixer({ hex, onChange }: { hex: string; onChange: (hex: string) => void }): JSX.Element {
-  const [hsv, setHsv] = useState<Hsv>(() => opening(hex))
-  const [text, setText] = useState(hex)
-  const made = rgbToHex(hsvToRgb(hsv))
-  // A swatch tapped while the mixer is up moves the sliders to it.
-  useEffect(() => { if (hex !== made) { setHsv(opening(hex)); setText(hex) } }, [hex]) // eslint-disable-line react-hooks/exhaustive-deps
-  const slide = (i: 0 | 1 | 2) => (e: { target: { value: string } }): void => {
-    const next = [...hsv] as Hsv
-    next[i] = Number(e.target.value)
-    const out = rgbToHex(hsvToRgb(next))
-    setHsv(next); setText(out); onChange(out)
-  }
-  const typed = (value: string): void => {
-    setText(value)
-    const m = /^#?([0-9a-f]{6})$/i.exec(value.trim())
-    if (!m) return
-    const out = '#' + m[1].toLowerCase()
-    setHsv(opening(out)); onChange(out)
-  }
-  const at = (h: number, sat: number, v: number): string => rgbToHex(hsvToRgb([h, sat, v]))
-  const tracks = [
-    'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
-    `linear-gradient(to right, ${at(hsv[0], 0, hsv[2])}, ${at(hsv[0], 100, hsv[2])})`,
-    `linear-gradient(to right, #000, ${at(hsv[0], hsv[1], 100)})`,
-  ]
-  const rows: Array<[string, number, number]> = [['HUE', 360, hsv[0]], ['SATURATION', 100, hsv[1]], ['BRIGHTNESS', 100, hsv[2]]]
-  return (
-    <div className="ws__mixer" role="group" aria-label="Mix a color">
-      <div className="ws__mixer-head">
-        <span className="workshop__swatch workshop__swatch--sample" style={{ background: made }} aria-hidden />
-        <input className="ws__mixer-hex" value={text} onChange={(e) => typed(e.target.value)} spellCheck={false} aria-label="Hex color" />
-      </div>
-      {rows.map(([label, max, value], i) => (
-        <label key={label} className="ws__mixer-row">
-          <span className="workshop__label">{label}</span>
-          <input type="range" min={0} max={max} step={1} value={value} style={{ background: tracks[i] }} onChange={slide(i as 0 | 1 | 2)} aria-label={label} />
-        </label>
-      ))}
-    </div>
-  )
-}
-
 
 /**
  * The view pad, for the bench: the arrows turn the working grid a quarter
@@ -350,8 +295,6 @@ export function Workshop(): JSX.Element | null {
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [deleteColor, setDeleteColor] = useState<string | null>(null)
-  // The mixed colour that has not been written to the palette yet.
-  const pending = useRef<string | null>(null)
   // A tap anywhere outside the colour bar shuts it, except while SELECT is
   // the tool, when colouring the selection is the work and the bar stays.
   useEffect(() => {
@@ -380,27 +323,6 @@ export function Workshop(): JSX.Element | null {
     document.addEventListener('pointerdown', shut, true)
     return () => document.removeEventListener('pointerdown', shut, true)
   }, [viewOpen])
-  // The mixer shuts with the column, and on a tap anywhere else.
-  useEffect(() => { if (!colorBar) setPickerOpen(false) }, [colorBar])
-  // Self-contained on purpose: the component returns early before it is open,
-  // and an effect registered up here that reached for a `const` declared after
-  // that return would find it uninitialized on exactly those renders.
-  useEffect(() => {
-    if (pickerOpen) return
-    const value = pending.current
-    pending.current = null
-    if (value) useWorkshop.getState().rememberColor(value)
-  }, [pickerOpen])
-  useEffect(() => {
-    if (!pickerOpen) return
-    const shut = (e: PointerEvent): void => {
-      const el = e.target as HTMLElement | null
-      if (el?.closest('.ws__mixer, .workshop__color')) return
-      setPickerOpen(false)
-    }
-    document.addEventListener('pointerdown', shut, true)
-    return () => document.removeEventListener('pointerdown', shut, true)
-  }, [pickerOpen])
   const bind = useRepeatable()
 
   if (!open) return null
@@ -416,25 +338,6 @@ export function Workshop(): JSX.Element | null {
   // The picker paints live and, once the wheel has settled, puts the color at
   // the front of the palette; leaving the picker settles it at once.
   const hex = rgbToHex(color)
-  // Dragging a slider paints the selection as it goes, but the palette is a
-  // list of colours somebody chose, not every colour a thumb passed over on
-  // the way. So a mixed colour waits here and is written to the palette at the
-  // two moments it has actually been settled on: the picker being put away,
-  // and another colour being chosen instead.
-  const pick = (value: string): void => {
-    // Snapped here, at the one door every colour comes through, so the bench
-    // never shows a colour the object cannot carry (lib/snoPalette).
-    const snapped = snapHex(BUILT_IN, value)
-    if (!snapped) return
-    w().colorSelected(hexToRgb(snapped))
-    pending.current = snapped
-  }
-  const keepPending = (): void => {
-    const value = pending.current
-    pending.current = null
-    if (value) w().rememberColor(value)
-  }
-
   const copy = (id: string): void => {
     const s = w().shards.find((x) => x.id === id)
     if (!s) return
@@ -764,12 +667,12 @@ export function Workshop(): JSX.Element | null {
         {(tool !== 'face' || selectedFace !== null) && (colorBar ? (
           <div className={`ws__color ${tool === 'select' ? '' : 'is-open'}`} role="group" aria-label="Color">
             <span className="workshop__label">COLOR</span>
-            <button className={`workshop__color ${pickerOpen ? 'is-on' : ''}`} onClick={() => setPickerOpen((o) => !o)} aria-pressed={pickerOpen} title="Mix a color: hue, saturation, brightness" aria-label="Mix a color" {...noCallout}>
+            <button className={`workshop__color ${pickerOpen ? 'is-on' : ''}`} onClick={() => setPickerOpen((o) => !o)} aria-pressed={pickerOpen} title="All 256 colors, and which palette this object is on" aria-label="Open the palette" {...noCallout}>
               <Pipette size={13} strokeWidth={2.25} aria-hidden />
             </button>
             <div className="workshop__swatches">
               {palette.map((h) => (
-                <Swatch key={h} hex={h} on={h === hex} onUse={() => { keepPending(); w().colorSelected(hexToRgb(h)) }} onHold={() => setDeleteColor(h)} />
+                <Swatch key={h} hex={h} on={h === hex} onUse={() => w().colorSelected(hexToRgb(h))} onHold={() => setDeleteColor(h)} />
               ))}
             </div>
             {/* What an action reaches, left to right: the points in hand, the
@@ -795,7 +698,7 @@ export function Workshop(): JSX.Element | null {
         ) : (
           <button className="chip ws__colorchip" style={{ background: hex }} onClick={() => { setColorOpen(true); if (narrow && panel === 'tools') setPanel(null) }} title={`Color ${hex}. Tap for the palette.`} aria-label={`Color ${hex}, tap for the palette`} />
         ))}
-        {colorBar && pickerOpen && (tool !== 'face' || selectedFace !== null) && <Mixer hex={hex} onChange={pick} />}
+        {pickerOpen && <PaletteModal onClose={() => setPickerOpen(false)} />}
       </div>
       )}
 
