@@ -49,11 +49,29 @@ import {
   type ShardVertex, cloneVertex, hexToRgb, rgbToHex } from '../lib/shards'
 import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from '../lib/snoPalette'
 
+/**
+ * Where a palette this browser knows lives on nostr (DECK-0003 §1.3b).
+ *
+ * A palette event is a regular event, so it cannot be replaced: correcting one
+ * publishes a second event that names the first. That is why this is kept at
+ * all. `id` is the newest version, which is what a reference points at, and
+ * `genesis` is the first, which is what lets an edit say where the chain
+ * started without a reader walking the whole of it.
+ */
+export interface PublishedPalette {
+  id: string
+  genesis: string
+  /** Where it was seen, for the relay hint in a chain tag and in an nevent. */
+  relays: string[]
+}
+
 /** A palette with a name somebody gave it. The name is this browser's, not the wire's. */
 export interface NamedPalette {
   id: string
   name: string
   colors: Palette
+  /** Set once it has been published, or once it came from somebody's event. */
+  event?: PublishedPalette
 }
 
 const PALETTES_STORAGE = 'snocrash:palettes'
@@ -66,8 +84,15 @@ function loadPalettes(): NamedPalette[] {
       !!p && typeof p.id === 'string' && typeof p.name === 'string'
       && Array.isArray(p.colors) && p.colors.length >= 2 && p.colors.length <= 256
       && p.colors.every((c: unknown) => Array.isArray(c) && c.length === 3 && c.every((n) => Number.isInteger(n) && n >= 0 && n <= 255))
-    ))
+    // A half-written `event` is dropped rather than carried: every use of it
+    // writes an id into a tag, and a tag holding `undefined` would publish an
+    // edit chain that points nowhere.
+    )).map((p) => (validEvent(p.event) ? p : { id: p.id, name: p.name, colors: p.colors }))
   } catch { return [] }
+}
+
+function validEvent(e: PublishedPalette | undefined): boolean {
+  return !e || (typeof e.id === 'string' && typeof e.genesis === 'string' && Array.isArray(e.relays))
 }
 
 function savePalettes(list: NamedPalette[]): void {
@@ -292,9 +317,17 @@ export interface WorkshopState {
   colorSelected: (c: [number, number, number]) => void
   colorAll: (c: [number, number, number]) => void
   /** Keep a palette under a name, and return its id. */
-  savePalette: (name: string, colors: Palette) => string
+  savePalette: (name: string, colors: Palette, event?: PublishedPalette) => string
   renamePalette: (id: string, name: string) => void
   forgetPalette: (id: string) => void
+  /**
+   * Remember where a palette went, so the next publish of it is an edit.
+   *
+   * Without this an edit would be a second unrelated palette on the network
+   * rather than the next link in one chain, and nothing could walk back to
+   * what the colours used to be.
+   */
+  notePalettePublished: (id: string, event: PublishedPalette) => void
   /**
    * Put the current shard on another palette, keeping every index.
    * `id` is a saved palette, or null for the built-in.
@@ -634,12 +667,18 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       }, 'That face keeps its own color now.')
     },
 
-    savePalette: (name, colors) => {
+    savePalette: (name, colors, event) => {
       const id = uuid()
-      const list = [...get().palettes, { id, name: name.trim().slice(0, 48) || 'untitled', colors }]
+      const list = [...get().palettes, { id, name: name.trim().slice(0, 48) || 'untitled', colors, ...(event ? { event } : {}) }]
       set({ palettes: list })
       savePalettes(list)
       return id
+    },
+
+    notePalettePublished: (id, event) => {
+      const list = get().palettes.map((p) => (p.id === id ? { ...p, event } : p))
+      set({ palettes: list })
+      savePalettes(list)
     },
 
     renamePalette: (id, name) => {

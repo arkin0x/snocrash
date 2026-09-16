@@ -17,10 +17,11 @@
 
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Plus, Trash2, X } from 'lucide-react'
+import { Check, Download, Plus, Trash2, Upload, X } from 'lucide-react'
 import { BUILT_IN, BUILT_IN_NAME, hexAt, type Palette } from '../lib/snoPalette'
 import { rgbToHex } from '../lib/shards'
-import { useWorkshop } from '../store/useWorkshop'
+import { paletteNevent, useNostr } from '../store/useNostr'
+import { useWorkshop, type NamedPalette } from '../store/useWorkshop'
 import { ConfirmModal } from './ConfirmModal'
 
 /** How the built-in is laid out, so the sheet can be read rather than scanned. */
@@ -35,6 +36,8 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   const palettes = useWorkshop((s) => s.palettes)
   const color = useWorkshop((s) => s.color)
   const w = useWorkshop.getState
+  const n = useNostr.getState
+  const busy = useNostr((s) => s.publishing)
 
   const active: Palette = shard?.palette ?? BUILT_IN
   const activeName = shard?.palette ? (shard.paletteName ?? 'a palette of its own') : BUILT_IN_NAME
@@ -50,6 +53,38 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   const [picked, setPicked] = useState<number[]>([])
   const [switching, setSwitching] = useState<{ id: string | null; name: string } | null>(null)
   const [forgetting, setForgetting] = useState<{ id: string; name: string } | null>(null)
+  const [ref, setRef] = useState('')
+  // Said here rather than through the store's toast, which this modal covers.
+  const [note, setNote] = useState<string | null>(null)
+  const [shared, setShared] = useState<string | null>(null)
+
+  /**
+   * Put a palette on nostr, or publish an edit of one already there.
+   *
+   * An edit is a new event that names the old one, because a palette event is
+   * immutable (DECK-0003 §1.3b). Objects already pointing at the old event
+   * keep the colours they were published with, which is the point of it.
+   */
+  const share = async (p: NamedPalette): Promise<void> => {
+    setNote(null); setShared(null)
+    const where = await n().publishPalette(p.name, p.colors, p.event)
+    if (!where) { setNote(useNostr.getState().notice); return }
+    w().notePalettePublished(p.id, where)
+    setShared(paletteNevent(where))
+    setNote(p.event ? `"${p.name}" is edited. This is the new event; the old one still says what it said.` : `"${p.name}" is on nostr.`)
+  }
+
+  /** Read somebody's palette event and keep it under the name they gave it. */
+  const bring = async (): Promise<void> => {
+    setNote(null); setShared(null)
+    const got = await n().fetchPalette(ref)
+    if (!got) { setNote(useNostr.getState().notice); return }
+    const name = got.name ?? 'a palette from nostr'
+    const id = w().savePalette(name, got.colors, got.event)
+    setRef('')
+    setNote(`"${name}", ${got.colors.length} colors, is in the list.`)
+    setSwitching({ id, name })
+  }
 
   const take = (index: number): void => {
     if (making) {
@@ -140,6 +175,15 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
                 <button className={`workshop__mode ${activeId === p.id ? 'is-on' : ''}`} onClick={() => setSwitching({ id: p.id, name: p.name })}>
                   {p.name} <em>{p.colors.length}</em>
                 </button>
+                <button
+                  className="workshop__mini"
+                  disabled={busy}
+                  title={p.event ? `Publish an edit of "${p.name}"` : `Publish "${p.name}" to nostr`}
+                  aria-label={p.event ? `Publish an edit of ${p.name}` : `Publish ${p.name}`}
+                  onClick={() => { void share(p) }}
+                >
+                  <Upload size={11} strokeWidth={2.25} />
+                </button>
                 <button className="workshop__mini workshop__mini--danger" title={`Forget "${p.name}"`} aria-label={`Forget ${p.name}`} onClick={() => setForgetting({ id: p.id, name: p.name })}>
                   <Trash2 size={11} strokeWidth={2.25} />
                 </button>
@@ -149,6 +193,33 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
             <button className="workshop__btn" onClick={() => { setMaking(true); setPicked([]) }}>
               <Plus size={12} strokeWidth={2.25} /> NEW PALETTE
             </button>
+
+            <div className="palettes__row">
+              <span className="palettes__label">FROM NOSTR</span>
+              <input
+                className="avatars__input login__input palettes__name"
+                value={ref}
+                onChange={(e) => setRef(e.target.value)}
+                placeholder="nevent1… a palette somebody published"
+                aria-label="A palette event to read"
+                spellCheck={false}
+              />
+              <button className="workshop__btn" disabled={!ref.trim()} onClick={() => { void bring() }}>
+                <Download size={12} strokeWidth={2.25} /> BRING IT IN
+              </button>
+            </div>
+
+            {shared && (
+              <div className="palettes__row">
+                <span className="palettes__label">POINT AT IT</span>
+                {/* Read-only and selectable: this is the reference an object
+                    carries, and it is only useful if it can be copied out. */}
+                <input className="avatars__input login__input palettes__name" value={shared} readOnly spellCheck={false} aria-label="This palette's reference" onFocus={(e) => e.currentTarget.select()} />
+                <button className="workshop__btn" onClick={() => { void navigator.clipboard?.writeText(shared).catch(() => { /* select it by hand */ }) }}>COPY</button>
+              </div>
+            )}
+
+            {note && <p className="palettes__note">{note}</p>}
           </>
         )}
       </div>

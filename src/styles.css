@@ -2311,6 +2311,11 @@ button:disabled { opacity: 0.35; cursor: default; }
 .palettes__one .workshop__mode em { font-style: normal; color: var(--dim); margin-left: 5px; }
 .palettes__name { flex: 1; min-width: 120px; }
 
+/* Its own line inside the wrapping footer, so the palette chips above it stay
+   on one row and the reference is wide enough to read. */
+.palettes__row { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; }
+.palettes__note { flex: 1 0 100%; margin: 0; font-size: 11px; line-height: 1.5; color: var(--dim); }
+
 @media (min-width: 720px) {
   .palettes__grid { grid-template-columns: repeat(16, 1fr); }
   .palettes__sw { min-height: 34px; }
