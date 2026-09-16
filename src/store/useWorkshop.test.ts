@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { TICKS_PER_UNIT as T, ticksOf } from 'sno-core/shards'
+import { TICKS_PER_UNIT as T, hexToRgb, ticksOf } from 'sno-core/shards'
 import { DEFAULT_PALETTE, useWorkshop } from './useWorkshop'
 import { BUILT_IN, hexAt, snapHex } from 'sno-core/snoPalette'
 
@@ -583,6 +583,28 @@ describe('faces and palette', () => {
     w().selectFace(0); w().pickForFace(2); expect(w().selectedFace).toBeNull()
     w().clearFacePick()
     w().selectFace(0); w().setTool('select'); expect(w().selectedFace).toBeNull()
+  })
+
+  it('records a color in the recent row whenever one is actually used', () => {
+    // The row went dead once before: rememberColor existed and nothing called
+    // it, so the recent colors silently stopped being recent. These pin the
+    // three ways a color gets used to the row that is supposed to show them.
+    const pick = (i: number): [number, number, number] => hexToRgb(hexAt(BUILT_IN, i))
+
+    w().colorAll(pick(30))
+    expect(w().palette[0]).toBe(hexAt(BUILT_IN, 30))
+
+    w().colorSelected(pick(60))
+    expect(w().palette[0]).toBe(hexAt(BUILT_IN, 60))
+
+    w().colorConnected(pick(90))
+    expect(w().palette[0]).toBe(hexAt(BUILT_IN, 90))
+
+    // Newest first, and used once each means listed once each.
+    expect(w().palette.slice(0, 3)).toEqual([hexAt(BUILT_IN, 90), hexAt(BUILT_IN, 60), hexAt(BUILT_IN, 30)])
+    w().colorAll(pick(60))
+    expect(w().palette[0]).toBe(hexAt(BUILT_IN, 60))
+    expect(w().palette.filter((h) => h === hexAt(BUILT_IN, 60))).toHaveLength(1)
   })
 
   it('remembers a picked color at the front once, moves a repeat forward, ignores junk, forgets on request', () => {
