@@ -15,6 +15,7 @@
  *
  * Pure. The builder store mutates copies of these; the world draws them.
  */
+import { BUILT_IN, colorAt, indexOf, resolvePalette, toBytes, type Palette } from './snoPalette'
 
 
 export type ShardMode = 'solid' | 'points' | 'lines'
@@ -106,16 +107,25 @@ export interface ShardPayload {
    * row. Absent in older payloads: every position is whole.
    */
   ticks?: Array<[number, number, number] | number>
-  colors: Array<[number, number, number]>
-  faces: Array<[number, number, number]>
   /**
-   * One colour per face, in the order `faces` gives them, run-length encoded
-   * the way `ticks` is: an entry is either a triple or a negative integer -N
-   * standing for N further faces of the triple before it. Absent means every
-   * face interpolates its three vertices, which is the format's default and
-   * not the same as black (DECK-0003 §1.4a).
+   * One palette index per vertex, parallel to `vertices` (DECK-0003 §1.3).
+   *
+   * A `v: 1` payload carries a literal `[r, g, b]` triple here instead, which
+   * is what every shard written before the palette existed looks like. A
+   * writer only ever produces indices.
    */
-  facecolors?: Array<[number, number, number] | number>
+  colors: Array<number | [number, number, number]>
+  faces: Array<[number, number, number]>
+  /** Which 256 colours the indices name: a name, an naddr, or the list itself (§1.3a). */
+  palette?: string | Array<[number, number, number]>
+  /**
+   * One palette index per face, in the order `faces` gives them, run-length
+   * encoded the way `ticks` is: an entry is either an index or a negative
+   * integer -N standing for N further faces of the index before it. Absent
+   * means every face interpolates its three vertices, which is the format's
+   * default and not the same as colour 0 (DECK-0003 §1.4a).
+   */
+  facecolors?: number[]
   /** Present and true when the shard stands on the Earth where it is hidden (lib/pose.ts). Absent otherwise. */
   up?: true
   /** With `up`: the compass bearing +Z faces, a whole number 0..359. Ignored without `up`. */
@@ -216,27 +226,6 @@ export function clampColor(c: [number, number, number]): [number, number, number
   return c.map((v) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0))) as [number, number, number]
 }
 
-/**
- * Decimal places a colour channel is written with (DECK-0003 §1.3).
- *
- * A publisher MUST write at most four. It is the single largest cost in the
- * format and the precision buys nothing: four places is 10,000 steps per
- * channel where eight-bit colour, which is what a screen shows, has 256. The
- * saving is not marginal. A worst-case vertex costs 87 bytes with full double
- * precision and 52 at four places, because `0.8039215686274510` is eighteen
- * characters and `0.8039` is six, three times over per vertex. At the format's
- * ceiling that is the difference between an object every relay takes and one
- * that is over strfry's stock limit before its face colours are counted.
- *
- * A reader still takes whatever arrives and only clamps: this is an obligation
- * on writers, and rejecting a payload for being too precise would help nobody.
- */
-export const COLOR_PLACES = 4
-
-/** A colour as it goes on the wire: clamped, and no more precise than it should be. */
-export function wireColor(c: [number, number, number]): [number, number, number] {
-  return clampColor(c).map((v) => Number(v.toFixed(COLOR_PLACES))) as [number, number, number]
-}
 
 /** A face needs three distinct vertices that exist. */
 export function validFace(f: [number, number, number], count: number): boolean {
@@ -282,9 +271,9 @@ export function toPayload(s: ShardModel): ShardPayload {
     mode: s.mode,
     vertices: vertices.map((v) => v.p),
     ticks: packTicks(vertices.map((v) => v.t ?? [0, 0, 0])),
-    colors: vertices.map((v) => wireColor(v.c)),
+    colors: vertices.map((v) => indexOf(BUILT_IN, toBytes(v.c))),
     ...(s.facecolors && s.facecolors.length === s.faces.length
-      ? { facecolors: packFaceColors(s.facecolors) }
+      ? { facecolors: packFaceColors(s.facecolors.map((c) => indexOf(BUILT_IN, toBytes(c)))) }
       : {}),
     faces: s.faces,
     // `up` and `spin` are carried as data. They say the object stands on the
@@ -321,34 +310,42 @@ export function packTicks(rest: Array<[number, number, number]>): Array<[number,
  * first entry is always a triple, because a run has nothing to repeat before
  * one.
  */
-export function packFaceColors(colors: Array<[number, number, number]>): Array<[number, number, number] | number> {
-  const out: Array<[number, number, number] | number> = []
+export function packFaceColors(indices: number[]): number[] {
+  const out: number[] = []
   let run = 0
-  for (let i = 0; i < colors.length; i++) {
-    const c = wireColor(colors[i])
-    const prev = i > 0 ? wireColor(colors[i - 1]) : null
-    if (prev && c[0] === prev[0] && c[1] === prev[1] && c[2] === prev[2]) { run++; continue }
+  for (let i = 0; i < indices.length; i++) {
+    if (i > 0 && indices[i] === indices[i - 1]) { run++; continue }
     if (run) { out.push(-run); run = 0 }
-    out.push(c)
+    out.push(indices[i])
   }
   if (run) out.push(-run)
   return out
 }
 
-/** Face colours read back, one per face, or null when they do not fit `count` faces. */
-export function unpackFaceColors(packed: unknown, count: number): Array<[number, number, number]> | null {
+/**
+ * Face colours read back, one index per face, or null when they do not fit
+ * `count` faces or name a colour the palette does not have.
+ *
+ * The sign separates an index from a run, which works because an index is
+ * never negative. It is the same trick `ticks` uses, and it is why a colour
+ * had to become one number before face colours were affordable: a list of
+ * triples interleaved with run markers cost more than it saved.
+ */
+export function unpackFaceColors(packed: unknown, count: number, palette: Palette): number[] | null {
   if (packed === undefined) return null
   if (!Array.isArray(packed) || packed.length === 0) return null
-  const out: Array<[number, number, number]> = []
+  const out: number[] = []
   for (const e of packed) {
-    if (typeof e === 'number') {
-      // A run repeats the colour before it, so the first entry cannot be one.
-      if (!Number.isInteger(e) || e >= 0 || out.length === 0) return null
+    if (!Number.isInteger(e)) return null
+    if ((e as number) < 0) {
+      // A run repeats the index before it, so the first entry cannot be one.
+      if (out.length === 0) return null
       const prev = out[out.length - 1]
-      for (let i = 0; i < -e; i++) out.push([...prev] as [number, number, number])
-    } else if (Array.isArray(e) && e.length === 3 && e.every((v) => typeof v === 'number')) {
-      out.push(clampColor(e as [number, number, number]))
-    } else return null
+      for (let i = 0; i < -(e as number); i++) out.push(prev)
+    } else {
+      if ((e as number) >= palette.length) return null
+      out.push(e as number)
+    }
     if (out.length > count) return null
   }
   return out.length === count ? out : null
@@ -400,7 +397,7 @@ export function unpackTicks(packed: unknown, count: number): Array<[number, numb
   return out.length === count ? out : null
 }
 
-export function fromPayload(raw: unknown, id: string): ShardModel | null {
+export function fromPayload(raw: unknown, id: string, fetchedPalette?: string | null): ShardModel | null {
   if (!raw || typeof raw !== 'object') return null
   const p = raw as Partial<ShardPayload>
   // DECK-0003 §1.1a: there is no `type` field. Payloads written before that
@@ -416,15 +413,32 @@ export function fromPayload(raw: unknown, id: string): ShardModel | null {
   if (!rest) return null
   if (p.up !== undefined && typeof p.up !== 'boolean') return null
   if (p.spin !== undefined && (!Number.isInteger(p.spin) || (p.spin as number) < 0 || (p.spin as number) > 359)) return null
+  // §1.3a: which colours the indices name. A reference that has not resolved
+  // is the built-in rather than a failure, so an object is never undrawable
+  // because a second event is missing.
+  const palette = resolvePalette(p.palette, fetchedPalette)
+  if (!palette) return null
   const up = p.up === true
   const vertices: ShardVertex[] = []
   for (let i = 0; i < p.vertices.length; i++) {
     const pt = p.vertices[i], c = p.colors[i]
-    if (!Array.isArray(pt) || pt.length !== 3 || !Array.isArray(c) || c.length !== 3) return null
+    if (!Array.isArray(pt) || pt.length !== 3) return null
     const whole = pt.map(Number) as [number, number, number]
     if (!whole.every(Number.isInteger)) return null
     const r = rest[i]
-    const colour = clampColor(c.map(Number) as [number, number, number])
+    // A v1 payload's colours are literal triples and stay exactly as written:
+    // every shard this client made before the palette existed is one, and
+    // snapping them on read would change objects nobody asked to change. They
+    // snap when they are next published, which is when they become v2.
+    let colour: [number, number, number]
+    if (p.v === 1) {
+      const triple = c as unknown
+      if (!Array.isArray(triple) || triple.length !== 3 || !triple.every((n) => typeof n === 'number')) return null
+      colour = clampColor(triple as [number, number, number])
+    } else {
+      if (!Number.isInteger(c) || (c as number) < 0 || (c as number) >= palette.length) return null
+      colour = colorAt(palette, c as number)
+    }
     const read: ShardVertex = r[0] === 0 && r[1] === 0 && r[2] === 0 ? { p: whole, c: colour } : { p: whole, t: r, c: colour }
     // A v1 payload is already in this client's frame; a v2 one is the wire's.
     vertices.push(p.v === WIRE_VERSION ? flipZ(read) : read)
@@ -439,10 +453,11 @@ export function fromPayload(raw: unknown, id: string): ShardModel | null {
   // §1.4a: present means exactly one colour per face. A list that expands to
   // any other length is a defect in the payload, not something to pad.
   let facecolors: Array<[number, number, number]> | undefined
+  // Face colours arrived with the palette, so there is no v1 form of them.
   if (p.facecolors !== undefined) {
-    const expanded = unpackFaceColors(p.facecolors, faces.length)
+    const expanded = unpackFaceColors(p.facecolors, faces.length, palette)
     if (!expanded) return null
-    facecolors = expanded
+    facecolors = expanded.map((i) => colorAt(palette, i))
   }
   const extent = Number.isInteger(p.extent) && (p.extent as number) >= MIN_EXTENT && (p.extent as number) <= MAX_EXTENT ? (p.extent as number) : GRID_HALF
   return {

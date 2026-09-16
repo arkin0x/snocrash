@@ -29,6 +29,7 @@ import { hsvToRgb, rgbToHsv, type Hsv } from '../lib/hsv'
 import { formatCellSize } from '../lib/scale'
 import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, type StampKind } from '../lib/stamps'
 import { useWorkshop, type Tool } from '../store/useWorkshop'
+import { BUILT_IN, snapHex } from '../lib/snoPalette'
 import { Bench } from './Bench'
 import { Compass3D } from './Compass3D'
 import { Feed } from './Feed'
@@ -421,8 +422,12 @@ export function Workshop(): JSX.Element | null {
   // two moments it has actually been settled on: the picker being put away,
   // and another colour being chosen instead.
   const pick = (value: string): void => {
-    w().colorSelected(hexToRgb(value))
-    pending.current = value
+    // Snapped here, at the one door every colour comes through, so the bench
+    // never shows a colour the object cannot carry (lib/snoPalette).
+    const snapped = snapHex(BUILT_IN, value)
+    if (!snapped) return
+    w().colorSelected(hexToRgb(snapped))
+    pending.current = snapped
   }
   const keepPending = (): void => {
     const value = pending.current
