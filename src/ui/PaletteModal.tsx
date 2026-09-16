@@ -18,7 +18,7 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Download, Plus, Trash2, Upload, X } from 'lucide-react'
-import { BUILT_IN, BUILT_IN_NAME, hexAt, type Palette } from 'sno-core/snoPalette'
+import { BUILT_IN, BUILT_IN_NAME, explainPasteProblem, hexAt, parsePaletteText, type Palette } from 'sno-core/snoPalette'
 import { rgbToHex } from 'sno-core/shards'
 import { paletteNevent, useNostr } from '../store/useNostr'
 import { useWorkshop, type NamedPalette } from '../store/useWorkshop'
@@ -54,6 +54,7 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   const [switching, setSwitching] = useState<{ id: string | null; name: string } | null>(null)
   const [forgetting, setForgetting] = useState<{ id: string; name: string } | null>(null)
   const [ref, setRef] = useState('')
+  const [pasteName, setPasteName] = useState('')
   // Said here rather than through the store's toast, which this modal covers.
   const [note, setNote] = useState<string | null>(null)
   const [shared, setShared] = useState<string | null>(null)
@@ -77,9 +78,39 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
     setNote(p.event ? `"${p.name}" is edited. This is the new event; the old one still says what it said.` : `"${p.name}" is on nostr.`)
   }
 
-  /** Read somebody's palette event and keep it under the name they gave it. */
+  /**
+   * Whether what is in the box names an event to go and fetch, rather than
+   * being the palette itself.
+   *
+   * Anything that is not a pointer is treated as the colors, which is the
+   * common case: the tools people build palettes in hand out text, not nostr
+   * references.
+   */
+  const pointer = /^(nostr:)?(nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]{20,}$/i.test(ref.trim())
+
+  /**
+   * Take in somebody else's palette, whether it is on nostr or on the clipboard.
+   *
+   * The two are one button because they are one intention. A pointer is
+   * fetched and keeps the name its author gave it; anything else is read as
+   * colors and needs a name here, because a pasted list carries none. espy's
+   * copy format names each color but never the palette.
+   */
   const bring = async (): Promise<void> => {
-    setNote(null); setShared(null); setReading(true)
+    setNote(null); setShared(null)
+
+    if (!pointer) {
+      const read = parsePaletteText(ref)
+      if ('problem' in read) { setNote(explainPasteProblem(read.problem, read.found)); return }
+      const name = pasteName.trim() || 'a pasted palette'
+      const id = w().savePalette(name, read.colors)
+      setRef(''); setPasteName('')
+      setNote(`"${name}", ${read.colors.length} colors, is in the list.`)
+      setSwitching({ id, name })
+      return
+    }
+
+    setReading(true)
     try {
       const got = await n().fetchPalette(ref)
       if (!got) { setNote(n().notice ?? 'Nothing came back.'); return }
@@ -204,19 +235,41 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
             </button>
 
             <div className="palettes__row">
-              <span className="palettes__label">FROM NOSTR</span>
-              <input
-                className="avatars__input login__input palettes__name"
+              <span className="palettes__label">BRING ONE IN</span>
+              {/* A textarea rather than an input because the thing most often
+                  pasted here is many lines of "Name - #hex", and a 256 color
+                  palette in a one line box cannot be checked before it is
+                  taken. */}
+              <textarea
+                className="avatars__input login__input palettes__paste"
                 value={ref}
                 onChange={(e) => setRef(e.target.value)}
-                placeholder="nevent1… a palette somebody published"
-                aria-label="A palette event to read"
+                rows={2}
+                placeholder={'nevent1…, or paste colors:\nTomato - #FC4755'}
+                aria-label="A palette event to read, or a list of colors"
                 spellCheck={false}
               />
               <button className="workshop__btn" disabled={!ref.trim() || reading} onClick={() => { void bring() }}>
                 <Download size={12} strokeWidth={2.25} /> BRING IT IN
               </button>
             </div>
+
+            {/* Only for pasted colors. A fetched palette keeps the name its
+                author published it under, and offering to rename it here would
+                quietly break the link between the two. */}
+            {!pointer && ref.trim() !== '' && (
+              <div className="palettes__row">
+                <span className="palettes__label">CALL IT</span>
+                <input
+                  className="avatars__input login__input palettes__name"
+                  value={pasteName}
+                  onChange={(e) => setPasteName(e.target.value)}
+                  placeholder="a name for it"
+                  aria-label="A name for the pasted palette"
+                  spellCheck={false}
+                />
+              </div>
+            )}
 
             {shared && (
               <div className="palettes__row">

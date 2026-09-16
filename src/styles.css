@@ -2322,6 +2322,16 @@ button:disabled { opacity: 0.35; cursor: default; }
 .palettes__one { display: inline-flex; align-items: center; gap: 2px; }
 .palettes__one .workshop__mode em { font-style: normal; color: var(--dim); margin-left: 5px; }
 .palettes__name { flex: 1; min-width: 120px; }
+/* The paste box. Two lines is enough to see that something arrived and which
+   form it is in; dragging it taller is for checking a long list before taking
+   it. Monospace so a column of hex codes lines up. */
+.palettes__paste {
+  flex: 1;
+  min-width: 140px;
+  resize: vertical;
+  font-family: var(--mono);
+  line-height: 1.45;
+}
 
 /* Its own line inside the wrapping footer, so the palette chips above it stay
    on one row and the reference is wide enough to read. */

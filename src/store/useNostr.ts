@@ -428,7 +428,18 @@ export const useNostr = create<NostrState>((set, get) => ({
     // versions of. An nevent can only match one event, so this is a no-op there.
     const ev = found.sort((a, b) => b.created_at - a.created_at)[0]
     if (!ev) {
-      set({ notice: 'No relay had that event.' })
+      // Which relays, because "no relay had it" is unactionable and the usual
+      // cause is that the pointer named none. An nevent with no relay hint can
+      // only be looked for where this app already goes, and a palette
+      // published on somebody else's relay is not there. Espy's palettes, for
+      // one, live on relay.ditto.pub and its nevents carry no hints at all.
+      const shown = relays.slice(0, 3).map((r) => r.replace(/^wss:\/\//, ''))
+      const rest = relays.length - shown.length
+      set({
+        notice: `No relay had that event. Looked on ${shown.join(', ')}${rest > 0 ? ` and ${rest} more` : ''}`
+          + `${hints?.length ? '' : ', and the pointer named no relay of its own'}`
+          + '. Add the relay it lives on in the menu, or paste the colors instead.',
+      })
       return null
     }
     const colors = parsePaletteEvent(ev)
