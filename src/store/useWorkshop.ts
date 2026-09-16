@@ -734,7 +734,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     rememberColor: (hex) => {
-      const snapped = snapHex(BUILT_IN, hex)
+      // Against the object's own palette when it has one. Snapping a custom
+      // palette's color to the nearest built-in entry would put a color in the
+      // recent row that the object cannot actually hold.
+      const snapped = snapHex(get().current()?.palette ?? BUILT_IN, hex)
       if (!snapped) return
       const h = snapped.toLowerCase()
       if (!HEX.test(h)) return
@@ -806,6 +809,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     colorSelected: (c) => {
       const { selection, selectedFace } = get()
       set({ color: clampColor(c) })
+      get().rememberColor(rgbToHex(clampColor(c)))
       // With no points selected, a selected face takes the color for its corners.
       const face = selection.length === 0 && selectedFace !== null ? get().current()?.faces[selectedFace] : undefined
       if (selection.length === 0 && !face) return
@@ -820,6 +824,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     colorAll: (c) => {
       set({ color: clampColor(c) })
+      get().rememberColor(rgbToHex(clampColor(c)))
       edit((s) => ({ ...s, vertices: s.vertices.map((v) => ({ ...v, c: clampColor(c) })) }))
     },
 
@@ -830,6 +835,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     colorConnected: (c) => {
       const { selection } = get()
       set({ color: clampColor(c) })
+      get().rememberColor(rgbToHex(clampColor(c)))
       if (selection.length === 0) return
       edit((s) => {
         const reach = connectedTo(s, selection)

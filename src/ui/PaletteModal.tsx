@@ -38,6 +38,8 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   const w = useWorkshop.getState
   const n = useNostr.getState
   const busy = useNostr((s) => s.publishing)
+  /** Colors this author has reached for, newest first (useWorkshop.palette). */
+  const recent = useWorkshop((s) => s.palette)
 
   const active: Palette = shard?.palette ?? BUILT_IN
   const activeName = shard?.palette ? (shard.paletteName ?? 'a palette of its own') : BUILT_IN_NAME
@@ -126,12 +128,20 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
     }
   }
 
+  /**
+   * Put a color in hand. The single place a color leaves this sheet, so the
+   * recent row and the palette itself cannot drift apart in what picking means.
+   */
+  const useColor = (hex: string): void => {
+    w().colorSelected(hexToRgbLocal(hex))
+  }
+
   const take = (index: number): void => {
     if (making) {
       setPicked((p) => (p.includes(index) ? p.filter((i) => i !== index) : p.length < 256 ? [...p, index] : p))
       return
     }
-    w().colorSelected(hexToRgbLocal(hexAt(active, index)))
+    useColor(hexAt(active, index))
   }
 
   const create = (): void => {
@@ -163,6 +173,36 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
       </div>
 
       <div className="palettes__body">
+        {/*
+          What you just used, above what you could use.
+
+          256 swatches is a lot to hunt through for the color you were working
+          in ten seconds ago, and an object is usually built out of a handful
+          of them. Hidden while building a palette, where the row would be a
+          second set of swatches meaning something different from the ones
+          below it.
+        */}
+        {!making && recent.length > 0 && (
+          <section className="palettes__band">
+            <h3 className="palettes__band-title">RECENT <span>{recent.length} colors, newest first</span></h3>
+            <div className="palettes__grid">
+              {recent.map((h) => {
+                const i = active.findIndex((_, n) => hexAt(active, n) === h)
+                return (
+                  <button
+                    key={h}
+                    className={`palettes__sw ${h === hex ? 'is-on' : ''}`}
+                    style={{ background: h }}
+                    title={i >= 0 ? `${i} · ${h}` : `${h}, not in this palette`}
+                    aria-label={`Recently used color ${h}`}
+                    aria-pressed={h === hex}
+                    onClick={() => useColor(h)}
+                  />
+                )
+              })}
+            </div>
+          </section>
+        )}
         {(making ? BANDS : [{ from: 0, to: sheet.length - 1, title: activeName.toUpperCase(), note: `${sheet.length} colors` }]).map((band) => (
           <section key={band.title + band.from} className="palettes__band">
             <h3 className="palettes__band-title">{band.title} <span>{band.note}</span></h3>

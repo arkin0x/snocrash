@@ -646,15 +646,22 @@ export function Workshop(): JSX.Element | null {
             </button>
           </div>
         )}
-        {(tool !== 'face' || selectedFace !== null) && (
-          <button
-            className="chip ws__colorchip"
-            style={{ background: hex }}
-            onClick={() => { setPickerOpen(true); if (narrow && panel === 'tools') setPanel(null) }}
-            title={`${hex}. Tap for all 256.`}
-            aria-label={`Color ${hex}, tap to open the palette`}
-          />
-        )}
+        {/*
+          Always here, including under FACE with nothing selected.
+
+          The row above it is hidden then, because those buttons apply a color
+          and there is nothing to apply one to. This does not apply anything:
+          it is the color in hand, and choosing it before picking the face to
+          put it on is the obvious order to work in. Hiding it meant selecting
+          a face you did not want yet just to reach the palette.
+        */}
+        <button
+          className="chip ws__colorchip"
+          style={{ background: hex }}
+          onClick={() => { setPickerOpen(true); if (narrow && panel === 'tools') setPanel(null) }}
+          title={`${hex}. Tap for all 256.`}
+          aria-label={`Color ${hex}, tap to open the palette`}
+        />
         {pickerOpen && <PaletteModal onClose={() => setPickerOpen(false)} />}
       </div>
       )}
