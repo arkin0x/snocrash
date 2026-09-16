@@ -57,6 +57,7 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   // Said here rather than through the store's toast, which this modal covers.
   const [note, setNote] = useState<string | null>(null)
   const [shared, setShared] = useState<string | null>(null)
+  const [reading, setReading] = useState(false)
 
   /**
    * Put a palette on nostr, or publish an edit of one already there.
@@ -68,7 +69,9 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   const share = async (p: NamedPalette): Promise<void> => {
     setNote(null); setShared(null)
     const where = await n().publishPalette(p.name, p.colors, p.event)
-    if (!where) { setNote(useNostr.getState().notice); return }
+    // The store says why it failed, and says it into a toast this modal is
+    // painted over, so it is repeated here rather than left unsaid.
+    if (!where) { setNote(n().notice ?? 'That palette did not go out.'); return }
     w().notePalettePublished(p.id, where)
     setShared(paletteNevent(where))
     setNote(p.event ? `"${p.name}" is edited. This is the new event; the old one still says what it said.` : `"${p.name}" is on nostr.`)
@@ -76,14 +79,20 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
 
   /** Read somebody's palette event and keep it under the name they gave it. */
   const bring = async (): Promise<void> => {
-    setNote(null); setShared(null)
-    const got = await n().fetchPalette(ref)
-    if (!got) { setNote(useNostr.getState().notice); return }
-    const name = got.name ?? 'a palette from nostr'
-    const id = w().savePalette(name, got.colors, got.event)
-    setRef('')
-    setNote(`"${name}", ${got.colors.length} colors, is in the list.`)
-    setSwitching({ id, name })
+    setNote(null); setShared(null); setReading(true)
+    try {
+      const got = await n().fetchPalette(ref)
+      if (!got) { setNote(n().notice ?? 'Nothing came back.'); return }
+      const name = got.name ?? 'a palette from nostr'
+      const id = w().savePalette(name, got.colors, got.event)
+      setRef('')
+      setNote(`"${name}", ${got.colors.length} colors, is in the list.`)
+      setSwitching({ id, name })
+    } finally {
+      // Released whatever happened, so a relay that never answers does not
+      // leave the button dead for the rest of the session.
+      setReading(false)
+    }
   }
 
   const take = (index: number): void => {
@@ -204,7 +213,7 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
                 aria-label="A palette event to read"
                 spellCheck={false}
               />
-              <button className="workshop__btn" disabled={!ref.trim()} onClick={() => { void bring() }}>
+              <button className="workshop__btn" disabled={!ref.trim() || reading} onClick={() => { void bring() }}>
                 <Download size={12} strokeWidth={2.25} /> BRING IT IN
               </button>
             </div>
