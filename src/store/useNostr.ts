@@ -19,7 +19,7 @@
 
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
-import { pool, queryAny, stream } from '../lib/pool'
+import { authAll, pool, queryAny, setAuthSigner, stream } from '../lib/pool'
 import { relaySet } from './useRelays'
 import {
   deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
@@ -246,6 +246,16 @@ async function signEvent(template: Parameters<Signer['signEvent']>[0]): Promise<
   }
 }
 
+/**
+ * How the pool answers a relay's NIP-42 challenge.
+ *
+ * Given to it rather than imported by it, because that module is imported here
+ * and the other direction would be a cycle. An auth event is signed by whoever
+ * is signing everything else, so an auth-gated relay sees the same identity
+ * that publishes.
+ */
+setAuthSigner(signEvent)
+
 /** Remote signatures in flight, so a wake cannot drop the sockets one is arriving on. */
 let pendingSigns = 0
 
@@ -353,6 +363,9 @@ export const useNostr = create<NostrState>((set, get) => ({
     const template = objectTemplate(shard, Math.floor(Date.now() / 1000))
     try {
       const signed = await signEvent(template)
+      // A relay that gates reads gates writes, and an unauthenticated publish
+      // is refused rather than queued.
+      await authAll(relays)
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = results.filter((r) => r.status === 'fulfilled').length
       if (took > 0) {
@@ -382,6 +395,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     set({ publishing: true, notice: null })
     try {
       const signed = await signEvent(paletteTemplate(name, colors, Math.floor(Date.now() / 1000), prev))
+      await authAll(relays)
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = relays.filter((_, i) => results[i]?.status === 'fulfilled')
       if (took.length === 0) {
