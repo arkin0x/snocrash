@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { paletteTemplate, PALETTE_KIND } from './useNostr'
-import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from '../lib/snoPalette'
+import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
 
 /** A real palette, published by espy.you, from the kind 3367 survey of 2026-09-16. */
 const ESPY = {

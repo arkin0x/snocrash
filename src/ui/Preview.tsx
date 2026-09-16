@@ -12,7 +12,7 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
 import { Group } from 'three'
 import { BG } from '../lib/palette'
-import { TICKS_PER_UNIT, centroid, ticksOf, type ShardModel } from '../lib/shards'
+import { TICKS_PER_UNIT, centroid, ticksOf, type ShardModel } from 'sno-core/shards'
 import { ShardMesh } from '../scene/ShardMesh'
 
 /** How far the object reaches from its own centre, in model units. */

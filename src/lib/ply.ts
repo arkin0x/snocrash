@@ -17,7 +17,7 @@
  * every reader expects, rather than as the floats the payload carries.
  */
 
-import { TICKS_PER_UNIT, ticksOf, type ShardModel } from './shards'
+import { TICKS_PER_UNIT, ticksOf, type ShardModel } from 'sno-core/shards'
 
 /** A colour channel as PLY writes it: 0..255, clamped, rounded. */
 function byte(c: number): number {
