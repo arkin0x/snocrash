@@ -737,3 +737,50 @@ describe('face colors and palettes', () => {
     expect(w().palettes[0].name).toBe('sunset')
   })
 })
+
+describe('pasting a shard that cannot be taken', () => {
+  // What "nothing happens" actually was. A brand new object in either client
+  // is zero vertices; copying one produces a payload the format accepts, and
+  // it used to import as a success that put nothing on the bench.
+  const EMPTY = JSON.stringify({
+    v: 2, name: 'Shard 1', unit: 0, extent: 8, mode: 'lines',
+    vertices: [], ticks: [], colors: [], faces: [],
+  })
+
+  it('refuses an empty shard instead of importing nothing', () => {
+    const before = w().shards.length
+    expect(w().importText(EMPTY)).toBeNull()
+    expect(w().shards).toHaveLength(before)
+  })
+
+  it('names the object it refused, so it is clear which copy went wrong', () => {
+    w().importText(EMPTY)
+    expect(w().notice).toContain('Shard 1')
+    expect(w().notice).toContain('empty')
+  })
+
+  it('tells the three failures apart', () => {
+    w().importText('not json at all')
+    const notJson = w().notice
+    w().importText('{"v":1,"type":"note"}')
+    const notShard = w().notice
+    w().importText(EMPTY)
+    const empty = w().notice
+    // Three distinct sentences: the caller used to get null for all three and
+    // could only guess which had happened.
+    expect(new Set([notJson, notShard, empty]).size).toBe(3)
+    for (const n of [notJson, notShard, empty]) expect((n ?? '').length).toBeGreaterThan(20)
+  })
+
+  it('still takes a shard that has something in it', () => {
+    // The empty check must not reject a real one: the guard is on vertices,
+    // and an object with no FACES is perfectly valid (POINTS and LINES modes).
+    const points = JSON.stringify({
+      v: 2, name: 'three points', unit: 0, extent: 8, mode: 'points',
+      vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], ticks: [-3], colors: [0, 1, 2], faces: [],
+    })
+    const id = w().importText(points)
+    expect(id).not.toBeNull()
+    expect(w().shards.find((s) => s.id === id)?.vertices).toHaveLength(3)
+  })
+})

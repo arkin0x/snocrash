@@ -304,8 +304,13 @@ export function Workshop(): JSX.Element | null {
   }
   const importText = (text: string): void => {
     const id = w().importText(text)
-    if (id) { setPasteOpen(false); setPasteText(''); say('Pasted as a new shard.') }
-    else say('That is not a shard.')
+    if (id) { setPasteOpen(false); setPasteText(''); say('Pasted as a new shard.'); return }
+    // The store has already said why, in a toast. Open the box holding what
+    // arrived, so a paste that failed can be looked at and corrected rather
+    // than vanishing: a clipboard read that went wrong used to leave nothing
+    // on screen at all, which is indistinguishable from the button not working.
+    setPasteOpen(true)
+    setPasteText(text)
   }
   const paste = async (): Promise<void> => {
     try {
@@ -406,7 +411,7 @@ export function Workshop(): JSX.Element | null {
           </div>
           {pasteOpen && (
             <div className="workshop__paste">
-              <textarea className="workshop__paste-box" value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder='Paste a shard here: {"v":1,"type":"shard",...}' aria-label="Shard to import" spellCheck={false} />
+              <textarea className="workshop__paste-box" value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'Paste an object here, or a shard copied from ONOSENDAI:\n{"v":2,"name":"...","vertices":[[0,0,0]],"faces":[]}'} aria-label="Shard to import" spellCheck={false} />
               <div className="workshop__list-row">
                 <button className="workshop__btn" disabled={!pasteText.trim()} onClick={() => importText(pasteText)}>IMPORT</button>
                 <button className="workshop__btn" onClick={() => { setPasteOpen(false); setPasteText('') }}>CANCEL</button>

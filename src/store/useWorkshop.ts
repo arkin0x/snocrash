@@ -1004,11 +1004,34 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return s ? JSON.stringify(toPayload(s)) : null
     },
 
+    /**
+     * Take a shard someone pasted, or say why it cannot be taken.
+     *
+     * Every refusal sets `notice`, because this used to return null three
+     * different ways and the caller could only guess between them. The one
+     * that mattered was the empty shard: a brand new object in either client
+     * is zero vertices, copying one produces a payload the format is perfectly
+     * happy with, and it imported as a success that put nothing on the bench.
+     * "Nothing happens" was the whole of the feedback, and it was accurate.
+     *
+     * An empty object is already refused when reading the feed and when
+     * publishing. This is the third door and it was the one standing open.
+     */
     importText: (text) => {
       let raw: unknown
-      try { raw = JSON.parse(text) } catch { return null }
+      try { raw = JSON.parse(text) } catch {
+        set({ notice: 'That is not JSON. Copy the whole thing, from the first { to the last }.' })
+        return null
+      }
       const s = fromPayload(raw, uuid())
-      if (!s) return null
+      if (!s) {
+        set({ notice: 'That is JSON, but not an object this can read. A shard carries v, vertices, colors and faces.' })
+        return null
+      }
+      if (s.vertices.length === 0) {
+        set({ notice: `"${s.name}" is empty: no vertices. Copy an object that has something in it.` })
+        return null
+      }
       const list = [...get().shards, s]
       set({ shards: list, currentId: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
       save(list)
