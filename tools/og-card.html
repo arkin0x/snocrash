@@ -1,0 +1,148 @@
+<!doctype html>
+<!--
+  og-card.html - the link preview, at public/og.png.
+
+  Rendered at exactly 1200x630, which is what every platform crops to. To
+  regenerate after changing this file or the master image:
+
+    node -e "const{chromium}=require('playwright');(async()=>{
+      const b=await chromium.launch({args:['--allow-file-access-from-files']});
+      const p=await b.newPage({viewport:{width:1200,height:630}});
+      await p.goto('file://'+process.cwd()+'/tools/og-card.html',{waitUntil:'networkidle'});
+      await p.evaluate(()=>document.fonts.ready);
+      await p.screenshot({path:'public/og.png'});await b.close();})()"
+
+  playwright is not a dependency of this app: this is a one-off render, and any
+  headless Chromium pointed at this file at that size produces the same card.
+  The typeface comes from Google Fonts over the network, so check the render
+  rather than assuming: a silent fallback to a system mono changes the widths
+  and the tagline stops breaking where it is meant to.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;800&display=swap" rel="stylesheet">
+<style>
+  /* SNOCRASH's own tokens, from src/styles.css. The card should look like the
+     app it links to, not like a card. */
+  :root {
+    --bg: #05070d;
+    --fg: #c8f5ff;
+    --dim: #6f8ea0;
+    --accent: #00e5ff;
+    --border: #1d3547;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    background: var(--bg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    position: relative;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The artwork, framed the way the app icon is framed: the 752 crop centred
+     on the wireframe at (472, 499) of the 1024 master, so the card and the
+     icon are the same picture. */
+  .art {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 700px;
+    background-image: url('./icon-source.png');
+    background-repeat: no-repeat;
+    background-size: 953px auto;
+    background-position: 46.1% 48.7%;
+  }
+  /* Dissolve its left edge into the ground rather than showing a seam. */
+  .art::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(to right, var(--bg) 0%, rgba(5,7,13,0.92) 26%, rgba(5,7,13,0.35) 60%, rgba(5,7,13,0) 88%);
+  }
+
+  /* The vertex colors of the object in the artwork, in the order they run
+     round it. The one ornament on the card, and it is taken from the subject. */
+  .spine {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 6px;
+    background: linear-gradient(to bottom, #4db8ff, #5ef0ff, #6bffb0, #ffe14d, #ff6b3d, #ff3b6b, #d94dff);
+  }
+
+  .plate {
+    position: absolute;
+    left: 78px; top: 0; bottom: 0;
+    width: 620px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 26px;
+    z-index: 2;
+  }
+
+  .eyebrow {
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: 0.34em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  .wordmark {
+    font-size: 116px;
+    font-weight: 800;
+    letter-spacing: 0.045em;
+    line-height: 0.92;
+    color: var(--fg);
+    /* A glow, because everything this app draws glows. Kept tight so the
+       letterforms stay sharp at feed size. */
+    text-shadow: 0 0 28px rgba(0, 229, 255, 0.42), 0 0 64px rgba(0, 229, 255, 0.16);
+  }
+
+  .tagline {
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1.52;
+    color: #9dc0d2;
+    /* 500px holds "Make, publish, browse and remix" on the first line and the
+       rest on the second, instead of orphaning "nostr." on a third. */
+    max-width: 500px;
+  }
+
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    text-transform: uppercase;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    width: max-content;
+  }
+  .meta b { color: var(--accent); font-weight: 500; }
+  .dot { color: var(--border); }
+</style>
+</head>
+<body>
+  <div class="art"></div>
+  <div class="spine"></div>
+  <div class="plate">
+    <div class="eyebrow">Simple Nostr Object</div>
+    <div class="wordmark">SNOCRASH</div>
+    <p class="tagline">Make, publish, browse and remix small 3D objects on nostr.</p>
+    <div class="meta">
+      <span>kind <b>33331</b></span>
+      <span class="dot">/</span>
+      <span>DECK-0003</span>
+      <span class="dot">/</span>
+      <span>the object is the event</span>
+    </div>
+  </div>
+</body>
+</html>
