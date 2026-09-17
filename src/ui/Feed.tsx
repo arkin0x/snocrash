@@ -12,13 +12,15 @@
  * notion of a parent.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Copy, Download, GitFork, RefreshCw } from 'lucide-react'
 import { useNostr, type FeedObject } from '../store/useNostr'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload } from 'sno-core/shards'
 import { fileNameFor, toPly } from '../lib/ply'
 import { Preview, PreviewStage } from './Preview'
+import { useRoute } from '../lib/route'
+import { objectAddress } from '../store/useNostr'
 import { ProfilePic } from './ProfilePic'
 
 function shortKey(pk: string): string {
@@ -34,7 +36,18 @@ function save(text: string, name: string, type: string): void {
   URL.revokeObjectURL(url)
 }
 
-function Tile({ o, onOpen }: { o: FeedObject; onOpen: () => void }): JSX.Element {
+/**
+ * Where the feed was scrolled to, kept across the feed being taken down.
+ *
+ * Opening an object replaces the feed with the workshop, which unmounts it and
+ * its scroll position with it. This remembers the position as it changes (not
+ * at unmount, when the element may already be gone) and whether the feed is
+ * being returned to from an object it opened, which is when the list should be
+ * exactly as it was: same objects, same order, same place.
+ */
+const kept = { scrollTop: 0, returning: false }
+
+function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView: () => void }): JSX.Element {
   const say = useNostr((s) => s.say)
   const remix = (): void => {
     // A copy with an id of its own: publishing it never touches the original.
@@ -45,7 +58,7 @@ function Tile({ o, onOpen }: { o: FeedObject; onOpen: () => void }): JSX.Element
   }
   return (
     <article className="tile">
-      <Preview shard={o.shard} />
+      <Preview shard={o.shard} onOpen={onView} />
       <div className="tile__bar">
         <ProfilePic pubkey={o.pubkey} size={28} />
         <div className="tile__who">
@@ -71,11 +84,38 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
   const loading = useNostr((s) => s.loading)
   const load = useNostr((s) => s.loadFeed)
 
-  useEffect(() => { void load() }, [load])
+  const scroller = useRef<HTMLElement>(null)
+  // Read once, as the feed mounts, and used by both effects below. It cannot
+  // be read from `kept` inside each: a layout effect runs before an ordinary
+  // one, so whichever cleared the flag first made the other see a fresh
+  // arrival, which reloaded the list, emptied it, and snapped the scroll to 0.
+  const returning = useRef(kept.returning)
+
+  // Before paint, so the list never flashes at the top first. Every tile is a
+  // fixed height, so the layout is final the moment it mounts.
+  useLayoutEffect(() => {
+    if (returning.current && scroller.current) scroller.current.scrollTop = kept.scrollTop
+  }, [])
+
+  // Coming back from an object this feed opened: the list is still in the
+  // store, so reloading it would only reshuffle what you were looking at and
+  // lose your place. Arriving any other way reads the relays fresh, as it
+  // always did. REFRESH is there either way.
+  useEffect(() => {
+    kept.returning = false
+    if (returning.current && useNostr.getState().feed.length > 0) return
+    kept.scrollTop = 0
+    void load()
+  }, [load])
+
+  const view = (o: FeedObject): void => {
+    kept.returning = true
+    useRoute.getState().go({ view: 'make', address: objectAddress(o) }, { fromFeed: true })
+  }
 
   return (
     <>
-    <section className="feed">
+    <section className="feed" ref={scroller} onScroll={(e) => { kept.scrollTop = e.currentTarget.scrollTop }}>
       <header className="feed__head">
         <h2>{loading ? 'Reading the relays' : `${feed.length} object${feed.length === 1 ? '' : 's'}`}</h2>
         <button className="btn" onClick={() => void load()} disabled={loading}>
@@ -88,7 +128,7 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
         </p>
       )}
       <div className="grid">
-        {feed.map((o) => <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} />)}
+        {feed.map((o) => <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => view(o)} />)}
       </div>
     </section>
     {/* Every preview above is drawn by this one canvas. A canvas per tile was a

@@ -105,6 +105,12 @@ interface NostrState {
   publishPalette: (name: string, colors: Palette, prev?: PublishedPalette) => Promise<PublishedPalette | null>
   /** Read somebody's palette event back, by `nevent` or `naddr`. */
   fetchPalette: (ref: string) => Promise<FetchedPalette | null>
+  /**
+   * The object an address names, newest version, or null with a notice saying
+   * why. Looks in the feed already on hand first, so opening a tile costs no
+   * round trip; a shared link arriving cold goes to the relays.
+   */
+  fetchObject: (address: string) => Promise<FeedObject | null>
   loadFeed: () => Promise<void>
   say: (note: string | null) => void
 }
@@ -181,6 +187,29 @@ export function paletteTemplate(
  */
 export function paletteNevent(event: PublishedPalette): string {
   return nip19.neventEncode({ id: event.id, relays: event.relays.slice(0, 2), kind: PALETTE_KIND })
+}
+
+/**
+ * An object's address: the naddr for its kind, author and `d`.
+ *
+ * An naddr rather than an nevent because an object is addressable: the link
+ * should open whatever the author's current version is, not the version that
+ * happened to be on screen when it was shared. Up to two relays it was actually
+ * seen on ride along as hints, so a shared link can be followed by a client
+ * whose relays never carried it.
+ */
+export function objectAddress(o: FeedObject): string {
+  const relays = [...(pool.seenOn.get(o.id) ?? [])].map((r) => r.url).slice(0, 2)
+  return nip19.naddrEncode({ kind: SNO_KIND, pubkey: o.pubkey, identifier: o.d, relays })
+}
+
+/** What an object address names, or null when it is not one: another kind, or not an naddr at all. */
+export function decodeObjectAddress(address: string): { pubkey: string; d: string; relays: string[] } | null {
+  try {
+    const decoded = nip19.decode(address.trim().replace(/^nostr:/, ''))
+    if (decoded.type !== 'naddr' || decoded.data.kind !== SNO_KIND) return null
+    return { pubkey: decoded.data.pubkey, d: decoded.data.identifier, relays: decoded.data.relays ?? [] }
+  } catch { return null }
 }
 
 /** The relays a reference names, ahead of this client's own, because the author knew where it was. */
@@ -415,6 +444,20 @@ export const useNostr = create<NostrState>((set, get) => ({
       set({ publishing: false, notice: `Could not publish: ${err instanceof Error ? err.message : String(err)}` })
       return null
     }
+  },
+
+  fetchObject: async (address) => {
+    const where = decodeObjectAddress(address)
+    if (!where) { set({ notice: 'That link does not point at an object.' }); return null }
+    const held = get().feed.find((o) => o.pubkey === where.pubkey && o.d === where.d)
+    if (held) return held
+    const found = await queryAny(withHints(where.relays), { kinds: [SNO_KIND], authors: [where.pubkey], '#d': [where.d] })
+    // Several relays may each hold a different edit; the newest is the object.
+    const ev = found.sort((a, b) => b.created_at - a.created_at)[0]
+    if (!ev) { set({ notice: 'No relay had that object. It may have been deleted, or live on a relay this app does not reach.' }); return null }
+    const o = objectFromEvent(ev)
+    if (!o) { set({ notice: 'That object could not be read.' }); return null }
+    return o
   },
 
   fetchPalette: async (ref) => {

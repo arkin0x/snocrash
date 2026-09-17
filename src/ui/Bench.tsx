@@ -365,7 +365,9 @@ function FaceHighlight(): JSX.Element | null {
  * time you tapped, which is exactly when you are looking at where to tap next.
  */
 function Aim(): null {
-  const id = useWorkshop((s) => s.currentId)
+  // Not currentId: an object opened from the feed has none until its first
+  // edit copies it, and that copy must not re-aim the camera (see aimKey).
+  const id = useWorkshop((s) => s.aimKey ?? s.currentId)
   const controls = useThree((s) => s.controls) as unknown as { target: Vector3; update: () => void } | null
   const camera = useThree((s) => s.camera)
   const scene = useThree((s) => s.scene)

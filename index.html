@@ -31,13 +31,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <!--
-      The link preview. og:image has to be absolute, so it names the production
-      host: a preview deployment therefore shows production's card, which is
-      the right trade, because a relative URL shows no card anywhere. The card
+      The link preview, identical on every route: /, /feed, /workshop and
+      /workshop/naddr1... all serve this one file (vercel.json rewrites every
+      path to it), and a crawler runs no JavaScript, so this is all it sees.
+
+      og:image has to be absolute, so it names the production host; a preview
+      deployment therefore shows production's card, which is the right trade.
+
+      There is deliberately no og:url. A fixed one would tell every platform
+      that a shared /feed or /workshop/naddr1... link IS the home page, and
+      Facebook in particular treats og:url as canonical and sends people there.
+      With none, each platform uses the URL that was actually shared. The card
       itself is generated from tools/og-card.html.
     -->
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://snocrash.art/" />
+    <meta property="og:site_name" content="SNOCRASH" />
     <meta property="og:title" content="SNOCRASH" />
     <meta property="og:description" content="Make, publish, browse and remix small 3D objects on nostr." />
     <meta property="og:image" content="https://snocrash.art/og.png" />

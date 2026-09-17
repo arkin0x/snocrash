@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Box, ClipboardPaste, Copy, Eye, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
+import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from 'sno-core/shards'
@@ -34,7 +34,8 @@ import { LoginModal } from './LoginModal'
 import { MenuOverlay } from './MenuOverlay'
 import { PaletteModal } from './PaletteModal'
 import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
-import { useNostr } from '../store/useNostr'
+import { decodeObjectAddress, useNostr } from '../store/useNostr'
+import { useRoute } from '../lib/route'
 import { fileNameFor, toPly } from '../lib/ply'
 
 /** Hand a text file to the browser: what EXPORT PLY does with an object. */
@@ -213,6 +214,55 @@ function BenchViewMenu(): JSX.Element {
 const ICON_PX = 16
 
 
+/**
+ * Put the object a /workshop/naddr1... route names on the bench, and keep the
+ * address bar honest about what is there.
+ *
+ * Your own object, still in this browser, opens as itself: a copy of it would
+ * be a second object beside the one you published. Anything else opens as a
+ * view (useWorkshop viewing), which becomes a copy in your objects the moment
+ * it is changed.
+ *
+ * The other direction: once something else is put on the bench, by picking
+ * another object or making a new one, the naddr no longer describes it, so the
+ * route quietly becomes /workshop. That is watched as a transition in the
+ * store's `address`, from set to cleared, rather than as a value, because at
+ * load it is null before the object has resolved and that must not throw the
+ * link away.
+ */
+function useOpenAddress(address: string | null): void {
+  useEffect(() => {
+    if (!address) return
+    let cancelled = false
+    void (async () => {
+      // A beat, so the app's own start-up (which selects an object) runs first
+      // and does not replace the one this link opens.
+      await Promise.resolve()
+      const n = useNostr.getState()
+      const w = useWorkshop.getState()
+      const where = decodeObjectAddress(address)
+      if (!where) {
+        n.say('That link does not point at an object.')
+        useRoute.getState().go({ view: 'make', address: null }, { replace: true })
+        return
+      }
+      const own = n.pubkey === where.pubkey
+      if (own && w.shards.some((x) => x.id === where.d)) { w.select(where.d, address); return }
+      const o = await n.fetchObject(address)
+      if (cancelled || !o) return
+      w.view(o.shard, { d: o.d, own: o.pubkey === useNostr.getState().pubkey, address })
+    })()
+    return () => { cancelled = true }
+  }, [address])
+
+  useEffect(() => useWorkshop.subscribe((next, prev) => {
+    const r = useRoute.getState().route
+    if (prev.address && !next.address && r.view === 'make' && r.address) {
+      useRoute.getState().go({ view: 'make', address: null }, { replace: true })
+    }
+  }), [])
+}
+
 export function Workshop(): JSX.Element | null {
   const open = useWorkshop((s) => s.open)
   const shard = useWorkshop((s) => s.current())
@@ -228,7 +278,14 @@ export function Workshop(): JSX.Element | null {
   const signedIn = useNostr((s) => s.signedIn)
   const publishing = useNostr((s) => s.publishing)
   const nostrNotice = useNostr((s) => s.notice)
-  const [view, setView] = useState<'make' | 'feed'>('make')
+  // Where you are is the address bar's business now (lib/route), so a link can
+  // land on the feed or on one object, and the phone's back gesture works.
+  const route = useRoute((s) => s.route)
+  const go = useRoute((s) => s.go)
+  const view: 'make' | 'feed' = route.view
+  const openedAddress = route.view === 'make' ? route.address : null
+  const setView = (v: 'make' | 'feed'): void => go(v === 'feed' ? { view: 'feed' } : { view: 'make', address: null })
+  useOpenAddress(openedAddress)
   const [loginOpen, setLoginOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const ledger = useNostr((s) => s.published)
@@ -342,6 +399,14 @@ export function Workshop(): JSX.Element | null {
         {/* The app, as against the object: who you are, and the two places you
             can be. The chips beside it stay what they are, the tools for the
             thing on the bench. */}
+        {/* Back to the feed, to the tile you left, when this object was opened
+            from an address. The same button as the menu beside it, so the two
+            read as the app's own controls rather than the object's. */}
+        {openedAddress && (
+          <button className="chip ws__icon ws__burger" aria-label="Back to the feed" title="Back to the feed, where you left it" onClick={() => useRoute.getState().back()}>
+            <ArrowLeft size={20} strokeWidth={2.25} aria-hidden />
+          </button>
+        )}
         <button className={`chip ws__icon ws__burger ${menuOpen ? 'is-on' : ''}`} aria-expanded={menuOpen} aria-label="Menu" title="Identity, feed and workshop" onClick={() => setMenuOpen(true)}>
           <span className="hamburger-icon" aria-hidden><span /><span /><span /></span>
         </button>
@@ -399,7 +464,7 @@ export function Workshop(): JSX.Element | null {
               <span className="workshop__gap" />
             </div>
             <div className="workshop__list-row">
-              <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { if (shard) void useNostr.getState().publish(shard) }} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}>{publishing ? 'PUBLISHING' : state === 'published' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
+              <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { const mine = w().adopt(); if (mine) void useNostr.getState().publish(mine) }} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}>{publishing ? 'PUBLISHING' : state === 'published' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
               <button className="workshop__btn" disabled={!buildable} onClick={() => { if (shard) saveFile(toPly(shard), fileNameFor(shard, 'ply')) }} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
             </div>
             <span className="workshop__work">{bytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES</span>
@@ -510,7 +575,7 @@ export function Workshop(): JSX.Element | null {
           <button
             className="workshop__deploy ws__publish"
             disabled={!buildable || publishing || !signedIn}
-            onClick={() => { if (shard) void useNostr.getState().publish(shard) }}
+            onClick={() => { const mine = w().adopt(); if (mine) void useNostr.getState().publish(mine) }}
             title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}
           >{publishing ? 'SENDING' : 'PUBLISH'}</button>
           <Compass3D pose={benchPose} onTap={() => setViewOpen((o) => !o)} />

@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { paletteTemplate, PALETTE_KIND } from './useNostr'
+import { decodeObjectAddress, objectAddress, paletteTemplate, PALETTE_KIND } from './useNostr'
+import { nip19 } from 'nostr-tools'
 import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
 
 /** A real palette, published by espy.you, from the kind 3367 survey of 2026-09-16. */
@@ -152,5 +153,24 @@ describe('a palette shorter than the indices in hand', () => {
     expect(moved.slice(0, 3)).toEqual(three)
     expect(moved[3]).toEqual(BUILT_IN[5])
     expect(moved[4]).toEqual(BUILT_IN[200])
+  })
+})
+
+describe('an object address', () => {
+  const pubkey = 'a'.repeat(64)
+  const o = { id: 'e'.repeat(64), pubkey, createdAt: 1, d: 'a1b2c3', shard: {} as never }
+
+  it('round-trips author and d through the naddr a feed tile links to', () => {
+    const address = objectAddress(o)
+    expect(address.startsWith('naddr1')).toBe(true)
+    expect(decodeObjectAddress(address)).toMatchObject({ pubkey, d: 'a1b2c3' })
+    // As pasted from a nostr: link, too.
+    expect(decodeObjectAddress(`nostr:${address}`)).toMatchObject({ pubkey, d: 'a1b2c3' })
+  })
+
+  it('refuses what is not an object: junk, another kind, another kind of pointer', () => {
+    expect(decodeObjectAddress('not an address')).toBeNull()
+    expect(decodeObjectAddress(nip19.naddrEncode({ kind: 30023, pubkey, identifier: 'x' }))).toBeNull()
+    expect(decodeObjectAddress(nip19.npubEncode(pubkey))).toBeNull()
   })
 })

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { TICKS_PER_UNIT as T, hexToRgb, ticksOf } from 'sno-core/shards'
+import { TICKS_PER_UNIT as T, hexToRgb, newShard, ticksOf, type ShardModel } from 'sno-core/shards'
 import { DEFAULT_PALETTE, useWorkshop } from './useWorkshop'
 import { BUILT_IN, hexAt, snapHex } from 'sno-core/snoPalette'
 
@@ -832,5 +832,116 @@ describe('a shard from the window where v2 meant triples', () => {
     // The payload's ticks are [a, b, c, -3, ...]: the -3 repeats the entry
     // before it three times. If that unpacked wrong the geometry would be flat.
     expect(s.vertices.some((v) => v.t && (v.t[0] || v.t[1] || v.t[2]))).toBe(true)
+  })
+})
+
+/**
+ * Opening an object from the feed puts it on the bench without making it
+ * yours; the first change to it does. Jumping in and out of the feed must leave
+ * nothing behind, and nothing done to an opened object may be silently lost.
+ */
+describe('an object opened from the feed', () => {
+  const feedObject = (name: string): ShardModel => {
+    const s = newShard(name)
+    return { ...s, id: `${'b'.repeat(64)}:their-d`, vertices: [{ p: [0, 0, 0], c: [1, 0, 0] }, { p: [1, 0, 0], c: [0, 1, 0] }, { p: [0, 1, 0], c: [0, 0, 1] }], faces: [[0, 1, 2]], mode: 'solid' }
+  }
+  const ADDRESS = 'naddr1example'
+
+  beforeEach(() => {
+    useWorkshop.setState({ shards: [], currentId: null, viewing: null, address: null, aimKey: null, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
+    w().select(w().create('mine'))
+  })
+
+  it('is on the bench but not in your objects', () => {
+    const before = w().shards.length
+    const theirs = feedObject('Triforce')
+    w().view(theirs, { d: 'their-d', own: false, address: ADDRESS })
+    expect(w().current()).toBe(theirs)
+    expect(w().shards).toHaveLength(before)
+    expect(w().address).toBe(ADDRESS)
+  })
+
+  it('stays not yours while it is only looked at and selected', () => {
+    const before = w().shards.length
+    w().view(feedObject('Triforce'), { d: 'their-d', own: false, address: ADDRESS })
+    w().setSelection([0, 1])
+    expect(w().shards).toHaveLength(before)
+    expect(w().viewing).not.toBeNull()
+  })
+
+  it('becomes yours on its first change, with an id of its own, and only once', () => {
+    const before = w().shards.length
+    w().view(feedObject('Triforce'), { d: 'their-d', own: false, address: ADDRESS })
+    const aimed = w().aimKey
+    w().setMode('points')
+    expect(w().shards).toHaveLength(before + 1)
+    const copy = w().current()!
+    expect(copy.mode).toBe('points')
+    expect(copy.id).not.toContain(':')
+    expect(copy.name).toBe('Triforce')
+    expect(w().viewing).toBeNull()
+    // Still the object from that address, and the camera must not re-aim.
+    expect(w().address).toBe(ADDRESS)
+    expect(w().aimKey).toBe(aimed)
+    w().setMode('lines')
+    expect(w().shards).toHaveLength(before + 1)
+  })
+
+  it('keeps the untouched copy when the first change is undone', () => {
+    const before = w().shards.length
+    w().view(feedObject('Triforce'), { d: 'their-d', own: false, address: ADDRESS })
+    w().setMode('points')
+    w().undo()
+    expect(w().shards).toHaveLength(before + 1)
+    expect(w().current()!.mode).toBe('solid')
+  })
+
+  it('is copied by a rename, the one change that does not pass through edit', () => {
+    const before = w().shards.length
+    const theirs = feedObject('Triforce')
+    w().view(theirs, { d: 'their-d', own: false, address: ADDRESS })
+    w().rename(theirs.id, 'My Triforce')
+    expect(w().shards).toHaveLength(before + 1)
+    expect(w().current()!.name).toBe('My Triforce')
+  })
+
+  it('is named apart from an object of yours with the same name', () => {
+    w().rename(w().current()!.id, 'Triforce')
+    w().view(feedObject('Triforce'), { d: 'their-d', own: false, address: ADDRESS })
+    w().setMode('points')
+    expect(w().current()!.name).toBe('Triforce copy')
+  })
+
+  it('keeps its d as its id when it is your own, so publishing replaces it in place', () => {
+    w().view(feedObject('Mine on a relay'), { d: 'my-d', own: true, address: ADDRESS })
+    w().setMode('points')
+    expect(w().current()!.id).toBe('my-d')
+  })
+
+  it('never overwrites your own object that this browser still holds', () => {
+    // Local edits since it was published must survive; the local one is changed.
+    const local = w().current()!
+    w().view(feedObject('relay version'), { d: local.id, own: true, address: ADDRESS })
+    const before = w().shards.length
+    w().setMode('points')
+    expect(w().shards).toHaveLength(before)
+    expect(w().current()!.id).toBe(local.id)
+    expect(w().current()!.name).toBe('mine')
+  })
+
+  it('leaves the bench, and its address, when another object is picked', () => {
+    const other = w().create('other')
+    w().view(feedObject('Triforce'), { d: 'their-d', own: false, address: ADDRESS })
+    w().select(other)
+    expect(w().viewing).toBeNull()
+    expect(w().address).toBeNull()
+    expect(w().current()!.id).toBe(other)
+  })
+
+  it('is what adopt hands to publish: your copy, never theirs', () => {
+    w().view(feedObject('Triforce'), { d: 'their-d', own: false, address: ADDRESS })
+    const published = w().adopt()!
+    expect(published.id).not.toContain(':')
+    expect(w().shards.some((s) => s.id === published.id)).toBe(true)
   })
 })
