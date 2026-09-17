@@ -69,7 +69,15 @@ function Turning({ shard, spin }: { shard: ShardModel; spin: boolean }): JSX.Ele
 export function PreviewStage(): JSX.Element {
   return (
     <div className="preview-stage" aria-hidden>
-      <Canvas gl={{ alpha: true, antialias: true }} dpr={[1, 2]}>
+      {/* pointerEvents on the Canvas itself, not only on the wrapper above.
+          react-three-fiber writes `pointer-events: auto` INLINE on the div it
+          wraps the canvas in, and an explicit value on a child beats one it
+          would otherwise inherit, so .preview-stage's `none` stopped at that
+          div. The stage covers the whole feed, so for as long as that held,
+          every tap on the feed landed on this canvas: the tiles, their remix,
+          copy and download buttons, and REFRESH. Canvas merges `style` into
+          that same div, which is the one place the value actually sticks. */}
+      <Canvas gl={{ alpha: true, antialias: true }} dpr={[1, 2]} style={{ pointerEvents: 'none' }}>
         <View.Port />
       </Canvas>
     </div>
