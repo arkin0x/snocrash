@@ -1565,7 +1565,19 @@ button:disabled { opacity: 0.35; cursor: default; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .tile { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel); }
 .tile:hover { border-color: rgba(0, 229, 255, 0.5); }
-.preview { width: 100%; }
+/* Each tile's own dark ground: the shared canvas above clears to transparent,
+   so what shows around an object is this, as it was when every tile had a
+   canvas of its own. */
+.preview { width: 100%; background: var(--bg); }
+/*
+ * The one canvas every feed preview is drawn by (Preview.tsx PreviewStage).
+ * Laid over the whole bench, beside the scroller rather than in it, so it stays
+ * still while the tiles move beneath. z-index 1 puts it above the tiles, whose
+ * backgrounds would otherwise hide it, and below everything at 2 and up: the
+ * chips, the toast, and the menu at 60. .workshop is the stacking context all of
+ * those share. pointer-events none so every button under it still takes a tap.
+ */
+.preview-stage { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .tile__bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
 .tile__who { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; }
 

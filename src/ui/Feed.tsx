@@ -18,7 +18,7 @@ import { useNostr, type FeedObject } from '../store/useNostr'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload } from 'sno-core/shards'
 import { fileNameFor, toPly } from '../lib/ply'
-import { Preview } from './Preview'
+import { Preview, PreviewStage } from './Preview'
 import { ProfilePic } from './ProfilePic'
 
 function shortKey(pk: string): string {
@@ -74,6 +74,7 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
   useEffect(() => { void load() }, [load])
 
   return (
+    <>
     <section className="feed">
       <header className="feed__head">
         <h2>{loading ? 'Reading the relays' : `${feed.length} object${feed.length === 1 ? '' : 's'}`}</h2>
@@ -90,5 +91,10 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
         {feed.map((o) => <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} />)}
       </div>
     </section>
+    {/* Every preview above is drawn by this one canvas. A canvas per tile was a
+        WebGL context per tile, and past the browser's cap the oldest tiles, the
+        ones at the top, went dark. See Preview.tsx. */}
+    <PreviewStage />
+    </>
   )
 }
