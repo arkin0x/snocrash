@@ -220,6 +220,36 @@ function connectedTo(s: ShardModel, selection: number[]): number[] {
 export interface WorkshopState {
   shards: ShardModel[]
   currentId: string | null
+  /**
+   * An object opened from the feed that is not yours yet.
+   *
+   * It is on the bench and can be looked at, turned, selected and exported,
+   * and none of that makes it yours. The first EDIT does: `adopt` copies it
+   * into your objects, and the edit lands on the copy. So jumping in and out
+   * of the feed leaves nothing behind, and changing anything keeps it. Every
+   * change to the object on the bench goes through `edit`, which is what makes
+   * one check there enough; `rename` is the one change that does not, and it
+   * checks for itself.
+   *
+   * `own` is whether you published it. A copy of your own object keeps its `d`
+   * as its id, so publishing the edit replaces the original in place rather
+   * than putting a second object beside it.
+   */
+  viewing: { shard: ShardModel; d: string; own: boolean } | null
+  /**
+   * The naddr the object on the bench was opened from, or null. Kept through
+   * the copy made on the first edit, because it is still that object; cleared
+   * by anything that puts a different object on the bench.
+   */
+  address: string | null
+  /**
+   * Which object the bench camera is aimed at. It re-aims only when this
+   * changes, and it deliberately does not change when an opened object is
+   * copied on its first edit: that copy is the same object, and re-aiming at
+   * the moment of the first edit is exactly the slide under your thumb that
+   * aiming on object change, not on edit, exists to avoid.
+   */
+  aimKey: string | null
   /** The workshop overlay is up. */
   open: boolean
   tool: Tool
@@ -268,7 +298,11 @@ export interface WorkshopState {
   openWorkshop: (id?: string) => void
   closeWorkshop: () => void
   create: (name?: string) => string
-  select: (id: string | null) => void
+  select: (id: string | null, address?: string | null) => void
+  /** Put an object from the feed on the bench without making it yours. See `viewing`. */
+  view: (shard: ShardModel, source: { d: string; own: boolean; address: string }) => void
+  /** Make the object on the bench yours, if it is not already, and return it. */
+  adopt: () => ShardModel | null
   rename: (id: string, name: string) => void
   duplicate: (id: string) => string
   remove: (id: string) => void
@@ -459,6 +493,8 @@ function awayFrom(s: ShardModel, f: Tri, centre: P3): Tri {
 export const useWorkshop = create<WorkshopState>((set, get) => {
   /** Apply an edit to the current shard, remember what it was, stamp it, persist. */
   const edit = (fn: (s: ShardModel) => ShardModel | null, notice: string | null = null): boolean => {
+    // An object opened from the feed becomes yours on its first change.
+    if (get().viewing) get().adopt()
     const { shards, currentId, past } = get()
     const i = shards.findIndex((s) => s.id === currentId)
     if (i < 0) return false
@@ -480,6 +516,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
   return {
     shards: load(),
     currentId: null,
+    viewing: null,
+    address: null,
+    aimKey: null,
     open: false,
     tool: 'view',
     selection: [],
@@ -505,7 +544,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     openWorkshop: (id) => {
       const { shards } = get()
       const currentId = id ?? get().currentId ?? shards[0]?.id ?? get().create()
-      set({ open: true, currentId, selection: [], selectedFace: null, facePick: [], tool: 'view', plane: FLOOR, aim: null, past: [], future: [], notice: null })
+      set({ open: true, currentId, aimKey: get().viewing ? get().aimKey : currentId, selection: [], selectedFace: null, facePick: [], tool: 'view', plane: FLOOR, aim: null, past: [], future: [], notice: null })
     },
 
     closeWorkshop: () => set({ open: false, selection: [], selectedFace: null, facePick: [], aim: null }),
@@ -513,14 +552,48 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     create: (name) => {
       const s = newShard(name ?? `Shard ${get().shards.length + 1}`)
       const list = [...get().shards, s]
-      set({ shards: list, currentId: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
+      set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
       save(list)
       return s.id
     },
 
-    select: (id) => set({ currentId: id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }),
+    select: (id, address = null) => set({ currentId: id, viewing: null, address, aimKey: id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }),
+
+    view: (shard, { d, own, address }) => set({
+      viewing: { shard, d, own }, address, aimKey: shard.id,
+      selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null,
+    }),
+
+    adopt: () => {
+      const v = get().viewing
+      if (!v) return get().current()
+      // Your own object, and this browser still has it: that is the one to
+      // change. Overwriting it with what the relay returned would throw away
+      // any edit made here since it was last published.
+      if (v.own && get().shards.some((s) => s.id === v.d)) {
+        set({ currentId: v.d, viewing: null })
+        return get().current()
+      }
+      const id = v.own ? v.d : uuid()
+      const taken = new Set(get().shards.map((s) => s.name))
+      const name = v.own || !taken.has(v.shard.name) ? v.shard.name : `${v.shard.name} copy`
+      const copy: ShardModel = {
+        ...v.shard, id, name,
+        vertices: v.shard.vertices.map(cloneVertex),
+        faces: v.shard.faces.map((f) => [...f] as [number, number, number]),
+        updatedAt: Date.now(),
+      }
+      const list = [...get().shards, copy]
+      // aimKey and address stay as they are: see their comments.
+      set({ shards: list, currentId: id, viewing: null })
+      save(list)
+      return copy
+    },
 
     rename: (id, name) => {
+      // Renaming an opened object is changing it, so it is copied first.
+      const v = get().viewing
+      if (v && v.shard.id === id) id = get().adopt()?.id ?? id
       const list = get().shards.map((s) => (s.id === id ? { ...s, name: name.slice(0, 64), updatedAt: Date.now() } : s))
       set({ shards: list }); save(list)
     },
@@ -530,14 +603,15 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (!src) return id
       const copy: ShardModel = { ...src, id: uuid(), name: `${src.name} copy`, vertices: src.vertices.map(cloneVertex), faces: src.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
       const list = [...get().shards, copy]
-      set({ shards: list, currentId: copy.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
+      set({ shards: list, currentId: copy.id, viewing: null, address: null, aimKey: copy.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
       return copy.id
     },
 
     remove: (id) => {
       const list = get().shards.filter((s) => s.id !== id)
-      const currentId = get().currentId === id ? (list[0]?.id ?? null) : get().currentId
-      set({ shards: list, currentId, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
+      const wasCurrent = get().currentId === id
+      const currentId = wasCurrent ? (list[0]?.id ?? null) : get().currentId
+      set({ shards: list, currentId, ...(wasCurrent ? { aimKey: currentId, address: null } : {}), selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
     },
 
     setMode: (mode) => edit((s) => ({ ...s, mode })),
@@ -1033,7 +1107,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         return null
       }
       const list = [...get().shards, s]
-      set({ shards: list, currentId: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
+      set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
       save(list)
       return s.id
     },
@@ -1047,7 +1121,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return copy.id
     },
 
-    current: () => get().shards.find((s) => s.id === get().currentId) ?? null,
+    current: () => get().viewing?.shard ?? get().shards.find((s) => s.id === get().currentId) ?? null,
   }
 })
 

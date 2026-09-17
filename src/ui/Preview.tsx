@@ -69,19 +69,45 @@ function Turning({ shard, spin }: { shard: ShardModel; spin: boolean }): JSX.Ele
 export function PreviewStage(): JSX.Element {
   return (
     <div className="preview-stage" aria-hidden>
-      <Canvas gl={{ alpha: true, antialias: true }} dpr={[1, 2]}>
+      {/* pointerEvents on the Canvas itself, not only on the wrapper above.
+          react-three-fiber writes `pointer-events: auto` INLINE on the div it
+          wraps the canvas in, and an explicit value on a child beats one it
+          would otherwise inherit, so .preview-stage's `none` stopped at that
+          div. The stage covers the whole feed, so for as long as that held,
+          every tap on the feed landed on this canvas: the tiles, their remix,
+          copy and download buttons, and REFRESH. Canvas merges `style` into
+          that same div, which is the one place the value actually sticks. */}
+      <Canvas gl={{ alpha: true, antialias: true }} dpr={[1, 2]} style={{ pointerEvents: 'none' }}>
         <View.Port />
       </Canvas>
     </div>
   )
 }
 
-export function Preview({ shard, spin = true, height = 160 }: { shard: ShardModel; spin?: boolean; height?: number }): JSX.Element {
+export function Preview({ shard, spin = true, height = 160, onOpen }: {
+  shard: ShardModel
+  spin?: boolean
+  height?: number
+  /** When given, the preview is a button that opens the object. */
+  onOpen?: () => void
+}): JSX.Element {
   const far = reach(shard)
   // Far enough that the whole object is in the tile at a 45 degree lens.
   const d = Math.max(2, far * 3.2)
+  // The View is a real div in the page (the shared canvas above it ignores the
+  // pointer), so it can be the button itself: the whole picture is the target.
+  const open = onOpen
+    ? {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': `Open ${shard.name} in the workshop`,
+        title: `Open ${shard.name}`,
+        onClick: onOpen,
+        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } },
+      }
+    : {}
   return (
-    <View className="preview" style={{ height }}>
+    <View className={`preview${onOpen ? ' preview--open' : ''}`} style={{ height }} {...open}>
       {/* Each tile has its own camera: a default one belongs to the shared
           canvas and would frame every object from the same distance. Pointed
           at the origin by hand, because a camera made here is not aimed the

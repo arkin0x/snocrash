@@ -1569,6 +1569,10 @@ button:disabled { opacity: 0.35; cursor: default; }
    so what shows around an object is this, as it was when every tile had a
    canvas of its own. */
 .preview { width: 100%; background: var(--bg); }
+/* A preview that opens its object in the workshop: the whole picture is the
+   target, and a keyboard focus ring shows where it is. */
+.preview--open { cursor: pointer; }
+.preview--open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /*
  * The one canvas every feed preview is drawn by (Preview.tsx PreviewStage).
  * Laid over the whole bench, beside the scroller rather than in it, so it stays
