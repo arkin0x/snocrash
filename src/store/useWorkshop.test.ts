@@ -546,12 +546,12 @@ describe('workshop', () => {
     expect(w().shards.find((x) => x.id === found)!.name).toBe(`${s.name} copy`)
   })
 
-  it('stamps that cannot fit leave a notice and the shard alone', () => {
+  it('stamps past 512 vertices: the format sets no ceiling (DECK-0003 §1.8, 2026-09-24)', () => {
     w().setStampSize(4)
     for (let i = 0; i < 70; i++) w().placeStamp([(i % 5) * 3 - 6, 0, (Math.floor(i / 5) % 5) * 3 - 6])
     const n = w().current()!.vertices.length
-    expect(n).toBeLessThanOrEqual(512)
-    expect(w().notice).toMatch(/No room/)
+    expect(n).toBeGreaterThan(512)
+    expect(w().notice ?? '').not.toMatch(/No room/)
   })
 })
 

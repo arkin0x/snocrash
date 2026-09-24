@@ -33,8 +33,6 @@ import {
   MAX_EXTENT,
   MIN_EXTENT,
   neededExtent,
-  MAX_FACES,
-  MAX_VERTICES,
   clampColor,
   clampUnit,
   fromPayload,
@@ -652,7 +650,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const s = get().current()
       if (!s || !validPoint(at, s.extent)) return
       const res = stamp(s, stampKind, stampSize, stampFacing, at, color, plane)
-      if (!res) { set({ notice: `No room: a shard holds up to ${MAX_VERTICES} vertices and ${MAX_FACES} faces.` }); return }
+      if (!res) { set({ notice: 'That stamp could not be placed here.' }); return }
       const { mode, notice } = solidIfFirstFaces(s, res.shard)
       edit(() => ({ ...res.shard, mode }), notice)
       set({ selection: [], selectedFace: null, facePick: [] })
