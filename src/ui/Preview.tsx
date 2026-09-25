@@ -33,6 +33,7 @@ import { useMemo, useRef } from 'react'
 import { Group } from 'three'
 import { TICKS_PER_UNIT, centroid, ticksOf, type ShardModel } from 'sno-core/shards'
 import { ShardMesh } from '../scene/ShardMesh'
+import { useBounds } from '../lib/parts'
 
 /** How far the object reaches from its own centre, in model units. */
 function reach(shard: ShardModel): number {
@@ -45,14 +46,14 @@ function reach(shard: ShardModel): number {
   return far
 }
 
-function Turning({ shard, spin }: { shard: ShardModel; spin: boolean }): JSX.Element {
+function Turning({ shard, spin, centre }: { shard: ShardModel; spin: boolean; centre: [number, number, number] | null }): JSX.Element {
   const g = useRef<Group>(null)
   const c = useMemo(() => centroid(shard), [shard])
   useFrame((_, dt) => { if (g.current && spin) g.current.rotation.y += dt * 0.45 })
   return (
     <group ref={g}>
       {/* Centred on the object's own middle, so it turns about itself. */}
-      <group position={[-c[0] / TICKS_PER_UNIT, -c[1] / TICKS_PER_UNIT, c[2] / TICKS_PER_UNIT]}>
+      <group position={centre ? [-centre[0], -centre[1], -centre[2]] : [-c[0] / TICKS_PER_UNIT, -c[1] / TICKS_PER_UNIT, c[2] / TICKS_PER_UNIT]}>
         <ShardMesh shard={shard} lit />
       </group>
     </group>
@@ -91,7 +92,12 @@ export function Preview({ shard, spin = true, height = 160, onOpen }: {
   /** When given, the preview is a button that opens the object. */
   onOpen?: () => void
 }): JSX.Element {
-  const far = reach(shard)
+  // With placed objects, the box they all fill together, once they are fetched;
+  // without, the object's own points, as always.
+  const box = useBounds(shard)
+  const placed = (shard.parts?.length ?? 0) > 0 && box
+  const centre: [number, number, number] | null = placed ? [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2] : null
+  const far = placed ? Math.max(0.5, ...[0, 1, 2].map((k) => (box.max[k] - box.min[k]) / 2)) : reach(shard)
   // Far enough that the whole object is in the tile at a 45 degree lens.
   const d = Math.max(2, far * 3.2)
   // The View is a real div in the page (the shared canvas above it ignores the
@@ -122,7 +128,7 @@ export function Preview({ shard, spin = true, height = 160, onOpen }: {
       />
       <ambientLight intensity={0.85} />
       <directionalLight position={[6, 8, 6]} intensity={1.1} />
-      <Turning shard={shard} spin={spin} />
+      <Turning shard={shard} spin={spin} centre={centre} />
     </View>
   )
 }

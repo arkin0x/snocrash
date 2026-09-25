@@ -14,7 +14,7 @@
  * with an ease-out, jittering less as they land. Decryption made visible.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import {
   AddEquation,
@@ -27,9 +27,15 @@ import {
   Float32BufferAttribute,
   Line,
   LineBasicMaterial,
+  BoxGeometry,
+  EdgesGeometry,
+  Matrix4,
 } from 'three'
 import { easeOutCubic, hash01, scrambleOffset, seedOf, SHARD_DECODE_MS } from '../lib/decode'
-import { expandFaceColors, flatten, ticksOf, toRender, type ShardModel } from 'sno-core/shards'
+import { MAX_UNIT, expandFaceColors, flatten, ticksOf, toRender, type Part, type Ref, type ShardModel } from 'sno-core/shards'
+import { partMatrix, placedBounds, refKey, type Placed } from 'sno-core/parts'
+import { useResolved, type Resolved } from '../lib/parts'
+import { ACCENT, WARN } from '../lib/palette'
 import { boxContains, clipMesh, clipPoints, type Box } from 'sno-core/clip'
 import { orientShard } from 'sno-core/orient'
 import { faceEdges } from 'sno-core/outline'
@@ -67,6 +73,19 @@ interface Props {
    * bench leaves out the faces buried in a join.
    */
   onFaceClick?: (e: ThreeEvent<MouseEvent>, face: number) => void
+  /**
+   * Drawn as a placed object inside another (DECK-0003 §1.10): its own parts
+   * already resolved by the object at the top, which resolves the whole tree
+   * once so the depth and loop rules hold. A placed object's faces are not
+   * the workshop's to pick, so they carry no face map.
+   */
+  nested?: Placed[]
+  /** This object's own address, when it is published, so placing itself reads as the loop it is. */
+  self?: Ref
+  /** A tap on a placed object, with its index in `parts`: the workshop's SELECT. */
+  onPartClick?: (e: ThreeEvent<MouseEvent>, part: number) => void
+  /** Placements drawn with the selection's box around them. */
+  selectedParts?: number[]
   /**
    * The region the shard is sealed to, in this frame (lib/clip.ts regionBox).
    * What lies outside it is not drawn: faces are cut at the walls and points
@@ -107,7 +126,10 @@ export function faceOfHit(i: { object: { userData: { faceOf?: number[] } }; face
  */
 const TAG_BLEND = { blending: CustomBlending, blendEquation: AddEquation, blendSrc: OneFactor, blendDst: ZeroFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: ZeroFactor } as const
 
-export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip }: Props): JSX.Element | null {
+export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip, nested, self, onPartClick, selectedParts }: Props): JSX.Element | null {
+  // The object at the top resolves every reference in the tree once; a placed
+  // object is handed its own parts already resolved.
+  const byRef = useResolved(nested ? null : given, self)
   // A face that carries its own colour needs three corners of its own, or the
   // colour would bleed across every edge it shares. Expanded here and nowhere
   // else, so the rest of this file never learns about face colours.
@@ -256,13 +278,18 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
     if (t >= 1) done.current = true
   })
 
-  if (shard.vertices.length === 0) return null
+  const placements = (
+    <Placements shard={given} byRef={byRef} nested={nested} lit={lit} ghost={ghost} world={world} onPartClick={onPartClick} selected={selectedParts} />
+  )
+  if (shard.vertices.length === 0) return (given.parts?.length ?? 0) > 0 ? <group scale={scale}>{placements}</group> : null
   const opacity = ghost ? 0.45 : 1
-  // The nearest hit is on whichever side faces the tap; it answers and stops it there.
-  const pick = { userData: { faceOf: drawn }, ...(onFaceClick ? { onClick: (e: ThreeEvent<MouseEvent>) => { const f = faceOfHit(e); if (f !== null) onFaceClick(e, f) } } : {}) }
+  // The nearest hit is on whichever side faces the tap; it answers and stops it
+  // there. A placed object's faces carry no map: they are not the workshop's.
+  const pick = nested ? {} : { userData: { faceOf: drawn }, ...(onFaceClick ? { onClick: (e: ThreeEvent<MouseEvent>) => { const f = faceOfHit(e); if (f !== null) onFaceClick(e, f) } } : {}) }
 
   return (
     <group scale={scale}>
+      {placements}
       {shard.mode === 'solid' && index.length > 0 && (
         <group>
           <mesh name="shard-faces" geometry={indexed} frustumCulled={false} {...pick}>
@@ -290,5 +317,57 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
         <points geometry={plain} material={pointMaterial} frustumCulled={false} />
       )}
     </group>
+  )
+}
+
+/** A unit cube's twelve edges, centred on the origin: the placeholder, and the box a selection draws. */
+const CUBE_EDGES = new EdgesGeometry(new BoxGeometry(1, 1, 1))
+
+/**
+ * Each placed object where its placement stands, or a placeholder there
+ * (§1.10): a wireframe cube one unit on a side, in the accent, for anything
+ * not fetched, not valid, too deep, a loop, or scaled out of range. Nothing is
+ * drawn for a reference still being fetched, so opening an object does not
+ * flash cubes before its parts arrive.
+ */
+function Placements({ shard, byRef, nested, lit, ghost, world, onPartClick, selected }: {
+  shard: ShardModel
+  byRef: Map<string, Resolved>
+  nested?: Placed[]
+  lit: boolean
+  ghost: boolean
+  world: boolean
+  onPartClick?: (e: ThreeEvent<MouseEvent>, part: number) => void
+  selected?: number[]
+}): JSX.Element | null {
+  const list: Array<{ part: Part; r: Resolved | undefined }> = nested
+    ? nested.map((p) => ({ part: p.part, r: p }))
+    : (shard.parts ?? []).map((part) => ({ part, r: shard.refs?.[part.ref] ? byRef.get(refKey(shard.refs[part.ref])) : undefined }))
+  if (list.length === 0) return null
+  return (
+    <>
+      {list.map(({ part, r }, i) => {
+        if (!r) return null
+        const model = r.model && r.model.unit + part.step >= 0 && r.model.unit + part.step <= MAX_UNIT ? r.model : null
+        const matrix = new Matrix4().fromArray(partMatrix(part, shard.unit, model ? model.unit : shard.unit))
+        const box = selected?.includes(i) ? (model ? placedBounds(model, r.children) : null) ?? { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] } : null
+        let body: ReactNode = <lineSegments geometry={CUBE_EDGES}><lineBasicMaterial color={ACCENT} toneMapped={false} transparent opacity={ghost ? 0.45 : 0.8} /></lineSegments>
+        if (model) body = <ShardMesh shard={model} nested={r.children} lit={lit} ghost={ghost} world={world} />
+        return (
+          <group key={i} matrix={matrix} matrixAutoUpdate={false} {...(onPartClick ? { onClick: (e: ThreeEvent<MouseEvent>) => onPartClick(e, i) } : {})}>
+            {body}
+            {box && (
+              <lineSegments
+                geometry={CUBE_EDGES}
+                position={[(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2]}
+                scale={[Math.max(box.max[0] - box.min[0], 0.05) + 0.1, Math.max(box.max[1] - box.min[1], 0.05) + 0.1, Math.max(box.max[2] - box.min[2], 0.05) + 0.1]}
+              >
+                <lineBasicMaterial color={WARN} toneMapped={false} />
+              </lineSegments>
+            )}
+          </group>
+        )
+      })}
+    </>
   )
 }

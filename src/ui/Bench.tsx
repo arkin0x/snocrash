@@ -18,7 +18,9 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useEffect, useMemo, useRef } from 'react'
-import { AdditiveBlending, BufferGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Line, LineBasicMaterial, PerspectiveCamera, Vector3 } from 'three'
+import { AdditiveBlending, BufferGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Line, LineBasicMaterial, Matrix4, PerspectiveCamera, Vector3 } from 'three'
+import { partMatrix } from 'sno-core/parts'
+import { useNostr } from '../store/useNostr'
 import { ACCENT, BG, WARN } from '../lib/palette'
 import { glowTexture } from '../lib/glow'
 import { GRID_HALF, TICKS_PER_UNIT, centroid, pointKey, rgbToHex, ticksOf, toRender } from 'sno-core/shards'
@@ -115,7 +117,7 @@ function Grid(): JSX.Element {
     // re-rendered yet.
     const w = useWorkshop.getState()
     const at = snap(e.point, w.level, w.step(), w.plane)
-    if (w.tool === 'stamp') w.placeStamp(at)
+    if (w.tool === 'stamp') { if (w.stampMode === 'object') w.placeObject(at); else w.placeStamp(at) }
     else w.addVertex(at)
   }
 
@@ -166,11 +168,25 @@ function Ghost(): JSX.Element | null {
   const facing = useWorkshop((s) => s.stampFacing)
   const color = useWorkshop((s) => s.color)
   const plane = useWorkshop((s) => s.plane)
+  const mode = useWorkshop((s) => s.stampMode)
+  const object = useWorkshop((s) => s.stampObject)
+  const unit = useWorkshop((s) => s.current()?.unit ?? 0)
   // Built once per shape, color and plane; the aim only moves it. Built per cell, the
   // ghost cost a fresh geometry every time the pointer crossed a grid line.
-  const model = useMemo(() => (tool === 'stamp' ? preview(kind, size, facing, color, plane) : null), [tool, kind, size, facing, color, plane])
+  const model = useMemo(() => (tool === 'stamp' && mode === 'shape' ? preview(kind, size, facing, color, plane) : null), [tool, mode, kind, size, facing, color, plane])
   const extent = useWorkshop((s) => s.current()?.extent ?? GRID_HALF)
   if (!aim) return null
+  if (tool === 'stamp' && mode === 'object') {
+    if (!object) return null
+    // Through the same placement a tap would make (store placeObject), so the
+    // ghost is exactly where and how the object will stand.
+    const m = new Matrix4().fromArray(partMatrix({ ref: 0, at: aim, turn: [0, (90 * facing) % 360, 0], step: 0 }, unit, object.shard.unit))
+    return (
+      <group matrix={m} matrixAutoUpdate={false}>
+        <ShardMesh shard={object.shard} ghost />
+      </group>
+    )
+  }
   if (tool === 'add') {
     return (
       <mesh position={UP(aim)}>
@@ -426,19 +442,25 @@ function Marquee(): null {
       if (!shard) return []
       const r = canvas.getBoundingClientRect()
       const out: number[] = []
-      shard.vertices.forEach((vert, i) => {
-        v.set(...UP(ticksOf(vert))).project(camera)
-        if (v.z > 1) return
+      const on = (p: P3): boolean => {
+        v.set(...UP(p)).project(camera)
+        if (v.z > 1) return false
         const px = ((v.x + 1) / 2) * r.width
         const py = ((1 - v.y) / 2) * r.height
-        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) out.push(i)
-      })
+        return px >= x0 && px <= x1 && py >= y0 && py <= y1
+      }
+      shard.vertices.forEach((vert, i) => { if (on(ticksOf(vert))) out.push(i) })
+      // A placed object is in the box when where it stands is: it is taken
+      // whole, never by its own points, which are not this object's.
+      partsIn = (shard.parts ?? []).map((q, i) => (on(q.at) ? i : -1)).filter((i) => i >= 0)
       return out
     }
+    let partsIn: number[] = []
+    let baseParts: number[] = []
     const cancel = (): void => {
       // A second finger has landed: this is a pan, not a box. Put the
       // selection back as it was when the first finger touched.
-      if (start && active) useWorkshop.getState().setSelection(base)
+      if (start && active) { useWorkshop.getState().setSelection(base); useWorkshop.getState().setPartSelection(baseParts) }
       start = null
       active = false
       box.hidden = true
@@ -448,6 +470,7 @@ function Marquee(): null {
       if (e.button !== 0) return
       start = local(e)
       base = useWorkshop.getState().selection
+      baseParts = useWorkshop.getState().partSel
       shift = e.shiftKey
       active = false
     }
@@ -459,7 +482,9 @@ function Marquee(): null {
       const x0 = Math.min(start.x, x), y0 = Math.min(start.y, y), x1 = Math.max(start.x, x), y1 = Math.max(start.y, y)
       box.hidden = false
       box.style.left = `${x0}px`; box.style.top = `${y0}px`; box.style.width = `${x1 - x0}px`; box.style.height = `${y1 - y0}px`
-      useWorkshop.getState().setSelection([...(shift ? base : []), ...inside(x0, y0, x1, y1)])
+      const pts = inside(x0, y0, x1, y1)
+      useWorkshop.getState().setSelection([...(shift ? base : []), ...pts])
+      useWorkshop.getState().setPartSelection([...(shift ? baseParts : []), ...partsIn])
     }
     const up = (): void => { start = null; if (active) { active = false; box.hidden = true } }
     canvas.addEventListener('pointerdown', down)
@@ -508,7 +533,7 @@ function Keys(): null {
       if (nudge[e.code]) { e.preventDefault(); const n = nudgeFor(benchAxes(camera), nudge[e.code]); w.moveSelected(n.axis, n.delta * w.step()); return }
       if (e.code === 'Delete' || e.code === 'Backspace') { e.preventDefault(); if (w.selectedFace !== null) w.deleteSelectedFace(); else w.deleteSelected(); return }
       if (e.code === 'Enter') { e.preventDefault(); if (w.facePick.length >= 3) w.fill(); else if (w.selection.length >= 3) w.fillSelection(); return }
-      if (e.code === 'Escape') { e.preventDefault(); if (w.selection.length || w.selectedFace !== null || w.facePick.length) { w.selectVertex(null); w.clearFacePick() } else w.closeWorkshop(); return }
+      if (e.code === 'Escape') { e.preventDefault(); if (w.selection.length || w.partSel.length || w.selectedFace !== null || w.facePick.length) { w.selectVertex(null); w.clearFacePick() } else w.closeWorkshop(); return }
       if (e.code === 'KeyC') { w.selectConnected(); return }
       if (e.code === 'Digit1') w.setTool('view')
       if (e.code === 'Digit2') w.setTool('stamp')
@@ -516,8 +541,8 @@ function Keys(): null {
       if (e.code === 'Digit4') w.setTool('select')
       if (e.code === 'Digit5') w.setTool('face')
       // Q and E turn the selection a quarter turn while SELECT holds one; Q turns the stamp otherwise.
-      if (e.code === 'KeyQ') { if (w.tool === 'select' && w.selection.length) w.rotateSelected(-1); else w.turnStamp() }
-      if (e.code === 'KeyE') { if (w.tool === 'select' && w.selection.length) w.rotateSelected(1) }
+      if (e.code === 'KeyQ') { if (w.tool === 'select' && (w.selection.length || w.partSel.length)) w.rotateSelected(-1); else w.turnStamp() }
+      if (e.code === 'KeyE') { if (w.tool === 'select' && (w.selection.length || w.partSel.length)) w.rotateSelected(1) }
       if (e.code === 'BracketRight') w.setLevel(w.level + w.step())
       if (e.code === 'BracketLeft') w.setLevel(w.level - w.step())
     }
@@ -559,6 +584,8 @@ export function Bench(): JSX.Element {
   const tool = useWorkshop((s) => s.tool)
   const extent = shard?.extent ?? GRID_HALF
   const showAvatar = useWorkshop((s) => s.showAvatar)
+  const partSel = useWorkshop((s) => s.partSel)
+  const me = useNostr((s) => s.pubkey)
   const first = useRef(true)
   useEffect(() => { first.current = false }, [])
 
@@ -568,6 +595,16 @@ export function Bench(): JSX.Element {
     if (e.delta > TAP_SLOP) return
     e.stopPropagation()
     useWorkshop.getState().selectFace(face)
+  }
+
+  // A placed object is one whole thing (DECK-0003 §1.10). In SELECT a tap puts
+  // it in or out of the selection; in FACE it is caught here, so a tap on it
+  // never selects a face of this object hidden behind it. In the placing
+  // tools it lets the tap through, to the grid it stands on.
+  const onPart = (e: ThreeEvent<MouseEvent>, part: number): void => {
+    if (e.delta > TAP_SLOP) return
+    e.stopPropagation()
+    if (useWorkshop.getState().tool === 'select') useWorkshop.getState().togglePart(part)
   }
 
   return (
@@ -583,7 +620,7 @@ export function Bench(): JSX.Element {
       onPointerMissed={(e) => {
         if ((e as PointerEvent).button !== 0) return
         const w = useWorkshop.getState()
-        if (w.selection.length || w.selectedFace !== null || w.facePick.length) { w.selectVertex(null); w.clearFacePick() }
+        if (w.selection.length || w.partSel.length || w.selectedFace !== null || w.facePick.length) { w.selectVertex(null); w.clearFacePick() }
       }}
     >
       {/* A key light high and to one side, a dim fill from behind: faces read by
@@ -605,7 +642,16 @@ export function Bench(): JSX.Element {
       <BenchAxes reach={extent + 1} />
       <Grid />
       {showAvatar && <ScaleAvatar />}
-      {shard && <ShardMesh shard={shard} lit onFaceClick={tool === 'face' ? onFace : undefined} />}
+      {shard && (
+        <ShardMesh
+          shard={shard}
+          lit
+          onFaceClick={tool === 'face' ? onFace : undefined}
+          onPartClick={tool === 'select' || tool === 'face' ? onPart : undefined}
+          selectedParts={partSel}
+          self={me ? ['a', `33331:${me}:${shard.id}`] : undefined}
+        />
+      )}
       <Ghost />
       <PickLoop />
       <FaceHighlight />

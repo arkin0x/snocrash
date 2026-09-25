@@ -103,7 +103,9 @@ function Toast(): JSX.Element | null {
  * right now), the corners CONNECT and DELETE, the hub counts the points and
  * clears them.
  */
-function ControlsPad({ points }: { points: number }): JSX.Element {
+function ControlsPad({ points, objects = 0 }: { points: number; objects?: number }): JSX.Element {
+  // Points and placed objects move, turn, cut and copy together.
+  const held = points + objects
   const axes = useBenchView((s) => s.axes)
   const bind = useRepeatable()
   const w = useWorkshop.getState
@@ -123,7 +125,7 @@ function ControlsPad({ points }: { points: number }): JSX.Element {
   ]
   return (
     <div className="benchpad" role="group" aria-label="Move the selected points">
-      {points > 0 && (<>
+      {held > 0 && (<>
       {arrows.map((a) => (
         <button key={a.cell} className={`touchpad__key touchpad__key--${a.cell}`} title={`${a.name} (${a.key}): ${sub(a.name)}`} aria-label={`Move ${a.name}, ${sub(a.name)}`} {...bind(move(a.name))}>
           {a.glyph}
@@ -138,15 +140,15 @@ function ControlsPad({ points }: { points: number }): JSX.Element {
         <Trash2 size={14} strokeWidth={2.25} aria-hidden />
         <span className="touchpad__sub">DELETE</span>
       </button>
-      <button className="touchpad__hub" title="Clear the selection (Esc)" aria-label={`${points} points selected. Tap to clear.`} {...noCallout} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); w().selectVertex(null) }}>
-        {points} {points === 1 ? 'PT' : 'PTS'}
+      <button className="touchpad__hub" title="Clear the selection (Esc)" aria-label={`${points} points and ${objects} objects selected. Tap to clear.`} {...noCallout} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); w().selectVertex(null) }}>
+        {objects === 0 ? `${points} ${points === 1 ? 'PT' : 'PTS'}` : points === 0 ? `${objects} OBJ` : `${points}+${objects}`}
       </button>
     </>)}
 
       {/* The clipboard, on the end of the row DELETE sits in: with points in
           hand, take them or copy them; with nothing in hand, put back what is
           held, in the cell CUT had. */}
-      {points > 0 ? (
+      {held > 0 ? (
         <>
           <button className="touchpad__key touchpad__key--cut" title="Cut the selected points, and their faces, to the clipboard" aria-label="Cut the selection" {...noCallout} onClick={() => w().cutSelection()}>
             <Scissors size={15} strokeWidth={2.25} aria-hidden />
@@ -348,6 +350,9 @@ export function Workshop(): JSX.Element | null {
   const openedAddress = route.view === 'make' ? route.address : null
   const setView = (v: 'make' | 'feed'): void => go(v === 'feed' ? { view: 'feed' } : { view: 'make', address: null })
   useOpenAddress(openedAddress)
+  // Choosing an object for OBJECT lasts only while the feed is open for it:
+  // back on the bench by any road, a later tap on a tile opens it again.
+  useEffect(() => { if (view === 'make' && useWorkshop.getState().picking) useWorkshop.getState().setPicking(false) }, [view])
   const [loginOpen, setLoginOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const ledger = useNostr((s) => s.published)
@@ -357,7 +362,8 @@ export function Workshop(): JSX.Element | null {
   useEffect(() => {
     if (nostrNotice) { useWorkshop.setState({ notice: nostrNotice }); useNostr.getState().say(null) }
   }, [nostrNotice])
-  const buildable = shard !== null && shard.vertices.length > 0
+  // An object may be nothing but the arrangement of others (DECK-0003 §1.9 rule 13).
+  const buildable = shard !== null && (shard.vertices.length > 0 || (shard.parts?.length ?? 0) > 0)
   const bytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(toPayload(shard))).length : 0), [shard])
   // Where this object stands with the relays. The bench cannot show it: a
   // published object and one that has never left the browser look the same.
@@ -367,6 +373,9 @@ export function Workshop(): JSX.Element | null {
   )
   const color = useWorkshop((s) => s.color)
   const stampKind = useWorkshop((s) => s.stampKind)
+  const stampMode = useWorkshop((s) => s.stampMode)
+  const stampObject = useWorkshop((s) => s.stampObject)
+  const partSel = useWorkshop((s) => s.partSel)
   const stampSize = useWorkshop((s) => s.stampSize)
   const stampFacing = useWorkshop((s) => s.stampFacing)
   const clip = useWorkshop((s) => s.clip)
@@ -499,7 +508,7 @@ export function Workshop(): JSX.Element | null {
         <div className="ws__panel" role="region" aria-label="Menu">
           <input className="workshop__name" value={shard.name} onChange={(e) => w().rename(shard.id, e.target.value)} aria-label="Shard name" spellCheck={false} />
           <div className="ws__stats">
-            {shard.vertices.length} vertices · {shard.faces.length} faces
+            {shard.vertices.length} vertices · {shard.faces.length} faces{shard.parts?.length ? ` · ${shard.parts.length} placed objects` : ''}
             {shard.mode !== 'solid' && shard.faces.length > 0 && <> · faces draw in SOLID</>}
             {shard.facecolors && <> · <button className="workshop__link" onClick={() => w().clearFaceColors()} title="Give every face back to its corners, so colors blend across them again">{shard.facecolors.length} face colors, clear</button></>}
           </div>
@@ -526,9 +535,9 @@ export function Workshop(): JSX.Element | null {
             </div>
             <div className="workshop__list-row">
               <button className="workshop__btn workshop__btn--warn" disabled={!buildable || publishing || !signedIn} onClick={() => { const mine = w().adopt(); if (mine) void useNostr.getState().publish(mine) }} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[state]}>{publishing ? 'PUBLISHING' : state === 'published' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
-              <button className="workshop__btn" disabled={!buildable} onClick={() => { if (shard) saveFile(toPly(shard), fileNameFor(shard, 'ply')) }} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
+              <button className="workshop__btn" disabled={!shard || shard.vertices.length === 0} onClick={() => { if (shard) saveFile(toPly(shard), fileNameFor(shard, 'ply')) }} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
             </div>
-            <span className="workshop__work">{bytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES</span>
+            <span className="workshop__work">{bytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES{shard.parts?.length ? ` + ${shard.parts.length} PLACED` : ''}</span>
           </div>
           <div className="ws__panel-title">OBJECTS ({shards.length})</div>
           <div className="workshop__list-row">
@@ -549,7 +558,7 @@ export function Workshop(): JSX.Element | null {
               <li key={s.id} className={s.id === shard.id ? 'is-current' : ''}>
                 <button className="workshop__pick" onClick={() => w().select(s.id)}>
                   <span className="workshop__pick-name">{s.name}</span>
-                  <span className="workshop__pick-meta">{s.vertices.length} v · {s.faces.length} f · {s.mode}</span>
+                  <span className="workshop__pick-meta">{s.vertices.length} v · {s.faces.length} f{s.parts?.length ? ` · ${s.parts.length} obj` : ''} · {s.mode}</span>
                 </button>
                 <button className="workshop__mini" title="Duplicate" onClick={() => w().duplicate(s.id)}>⧉</button>
                 <button className="workshop__mini workshop__mini--wide" title="Copy to the clipboard" onClick={() => copy(s.id)}>COPY</button>
@@ -558,7 +567,7 @@ export function Workshop(): JSX.Element | null {
             ))}
           </ul>
           <div className="workshop__row">
-            <button className="workshop__btn workshop__btn--danger" disabled={shard.vertices.length === 0} onClick={() => { if (window.confirm('Delete all vertices and faces in the scene?')) w().clearShard() }} title="Empty this scene (undoable)">CLEAR THIS SCENE</button>
+            <button className="workshop__btn workshop__btn--danger" disabled={shard.vertices.length === 0 && !shard.parts?.length} onClick={() => { if (window.confirm('Delete all vertices, faces and placed objects in the scene?')) w().clearShard() }} title="Empty this scene (undoable)">CLEAR THIS SCENE</button>
             <span className="workshop__gap" />
             <Explanation>
               An object is colored points on a grid of whole units, drawn SOLID (faces, colors blending
@@ -649,7 +658,7 @@ export function Workshop(): JSX.Element | null {
       {making && (
       <div className="ws__tools">
         {tool === 'face' && <FaceRow face={selectedFace} picks={facePick.length} faces={shard?.faces.length ?? 0} />}
-        {selection.length > 0 && (
+        {(selection.length > 0 || partSel.length > 0) && (
           <div className="benchturn" role="group" aria-label="Turn the selection">
             <button className="touchpad__key" title="A quarter turn left, in the working plane (Q)" aria-label="Turn left" {...noCallout} onClick={() => w().rotateSelected(-1)}>
               <RotateCcw size={18} strokeWidth={2.25} aria-hidden />
@@ -661,7 +670,7 @@ export function Workshop(): JSX.Element | null {
             </button>
           </div>
         )}
-        {(selection.length > 0 || (tool === 'select' && clip !== null)) && <ControlsPad points={selectedPoints} />}
+        {(selection.length > 0 || partSel.length > 0 || (tool === 'select' && clip !== null)) && <ControlsPad points={selectedPoints} objects={partSel.length} />}
       {panel === 'tools' && (
         <div className="ws__panel ws__panel--up" role="region" aria-label="Tools">
           <div className="workshop__row" role="group" aria-label="Tool">
@@ -681,16 +690,37 @@ export function Workshop(): JSX.Element | null {
                 <span className="workshop__label">SHAPE</span>
                 <div className="workshop__shapes">
                   {STAMPS.map((k: StampKind) => (
-                    <button key={k} className={`workshop__tool ${stampKind === k ? 'is-on' : ''}`} aria-pressed={stampKind === k} onClick={() => w().setStampKind(k)} title={STAMP_HELP[k]}>{k.toUpperCase()}</button>
+                    <button key={k} className={`workshop__tool ${stampMode === 'shape' && stampKind === k ? 'is-on' : ''}`} aria-pressed={stampMode === 'shape' && stampKind === k} onClick={() => w().setStampKind(k)} title={STAMP_HELP[k]}>{k.toUpperCase()}</button>
                   ))}
+                  {/* Another object, placed by reference (DECK-0003 §1.10): it
+                      stays that object, and follows it when its author edits it. */}
+                  <button className={`workshop__tool ${stampMode === 'object' ? 'is-on' : ''}`} aria-pressed={stampMode === 'object'} onClick={() => w().setStampMode('object')} title="Stamp a published object, placed by reference: one whole object that follows its author's edits">
+                    <Box size={12} strokeWidth={2.25} aria-hidden />OBJECT
+                  </button>
                 </div>
               </div>
+              {stampMode === 'object' && (
+                <div className="workshop__row" role="group" aria-label="Object to stamp">
+                  <span className="workshop__label">OBJECT</span>
+                  <button
+                    className={`ws__slot ${stampObject ? 'is-full' : ''}`}
+                    onClick={() => { w().setPicking(true); setPanel(null); useRoute.getState().go({ view: 'feed' }) }}
+                    title={stampObject ? 'Choose another object from the feed' : 'Choose an object from the feed'}
+                  >
+                    {stampObject ? <><span className="ws__slot-name">{stampObject.name}</span><span className="ws__slot-meta">{stampObject.shard.vertices.length} v · {stampObject.shard.faces.length} f{stampObject.shard.parts?.length ? ` · ${stampObject.shard.parts.length} obj` : ''} · CHANGE</span></> : <span className="ws__slot-meta">EMPTY · tap to choose from the feed</span>}
+                  </button>
+                </div>
+              )}
               <div className="workshop__row">
-                <span className="workshop__label">SIZE</span>
-                <button className="workshop__btn" {...bind(() => w().setStampSize(w().stampSize - 1))} disabled={stampSize <= MIN_SIZE} aria-label="Smaller">−</button>
-                <span className="workshop__value">{stampSize}</span>
-                <button className="workshop__btn" {...bind(() => w().setStampSize(w().stampSize + 1))} disabled={stampSize >= MAX_SIZE} aria-label="Larger">+</button>
-                {FACED[stampKind] && (
+                {stampMode === 'shape' && (
+                  <>
+                    <span className="workshop__label">SIZE</span>
+                    <button className="workshop__btn" {...bind(() => w().setStampSize(w().stampSize - 1))} disabled={stampSize <= MIN_SIZE} aria-label="Smaller">−</button>
+                    <span className="workshop__value">{stampSize}</span>
+                    <button className="workshop__btn" {...bind(() => w().setStampSize(w().stampSize + 1))} disabled={stampSize >= MAX_SIZE} aria-label="Larger">+</button>
+                  </>
+                )}
+                {(stampMode === 'object' || FACED[stampKind]) && (
                   <>
                     <span className="workshop__label workshop__label--gap">FACING</span>
                     <button className="workshop__btn" onClick={() => w().turnStamp()} title="Turn a quarter (Q)">{FACING_LABEL[stampFacing]} ↻</button>
