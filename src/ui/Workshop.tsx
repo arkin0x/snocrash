@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, FlipVertical2, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
+import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, FlipVertical2, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from 'sno-core/shards'
@@ -59,7 +59,7 @@ const TOOL_HELP: Partial<Record<Tool, string>> = {
   view: 'Look around: one finger orbits, two pan, pinch zooms. The compass turns the view a quarter at a time. Pick a tool to build.',
   stamp: 'Tap the grid to place the shape where the ghost shows. Q turns it.',
   add: 'Tap the grid to place a vertex at the current level.',
-  face: 'Tap corners in order, then the first again or FILL. Tap a face to select it; DELETE FACE removes it. A dark face shows its back: FLIP turns it round.',
+  face: 'Tap corners in order, then the first again or FILL. Tap a face to select it. A dark face shows its back: FLIP turns it round, AUTO turns every face outward.',
 }
 
 type Panel = 'menu' | 'tools' | 'grid'
@@ -177,28 +177,60 @@ function ControlsPad({ points }: { points: number }): JSX.Element {
 
 
 /**
- * FLIP, for the FACE tool. Which way a face looks is its winding (DECK-0003
- * §1.4), and this is how an author turns it. It asks how much before it
- * turns anything, the way PASTE asks where: the face in hand, its whole
- * surface, or every face by the bench's outward guess. AUTO needs no face.
+ * The FACE tool's row, at the top of the bottom-left column in the keys
+ * TURN uses (arkinox, 2026-09-25). AUTO always, since it needs no face:
+ * every face in the object turned to look outward by the bench's guess.
+ * FLIP, SEAM and DELETE while a face is in hand; FLIP asks how much before
+ * it turns anything, the way PASTE asks where. FILL once corners are
+ * picked. No CANCEL: a tap on empty space lets go of the face and the
+ * picks, as it does everywhere on the bench, and so does Esc.
  */
-function FlipKey({ face }: { face: number | null }): JSX.Element {
+function FaceRow({ face, picks, faces }: { face: number | null; picks: number; faces: number }): JSX.Element | null {
   const w = useWorkshop.getState
   const [asking, setAsking] = useState(false)
-  const pick = (fn: () => void) => (): void => { setAsking(false); fn() }
+  useEffect(() => { if (face === null) setAsking(false) }, [face])
+  if (faces === 0 && picks === 0) return null
+  const choose = (fn: () => void) => (): void => { setAsking(false); fn() }
   return (
-    <div className="benchflip">
-      <button className="workshop__btn" aria-haspopup="menu" aria-expanded={asking} onClick={() => setAsking((o) => !o)} title="Turn faces round: which side is the front">
-        <FlipVertical2 size={12} strokeWidth={2.25} aria-hidden /> FLIP
-      </button>
-      {asking && (
+    <div className="benchface" role="group" aria-label="Faces">
+      {faces > 0 && (
+        <button className="touchpad__key" title="Every face in the object turned to look outward, by the bench's best guess" aria-label="Turn every face outward" {...noCallout} onClick={() => w().autoWind()}>
+          <WandSparkles size={15} strokeWidth={2.25} aria-hidden />
+          <span className="touchpad__sub">AUTO</span>
+        </button>
+      )}
+      {picks > 0 && (
+        <button className="touchpad__key" disabled={picks < 3} title="Join the corners into a face (Enter)" aria-label={`Fill the ${picks} corners`} {...noCallout} onClick={() => w().fill()}>
+          <Triangle size={15} strokeWidth={2.25} aria-hidden />
+          <span className="touchpad__sub">FILL</span>
+        </button>
+      )}
+      {face !== null && (
+        <>
+          <button className="touchpad__key" title="Turn this face round: which side is its front" aria-label="Flip" aria-haspopup="menu" aria-expanded={asking} {...noCallout} onClick={() => setAsking((o) => !o)}>
+            <FlipVertical2 size={15} strokeWidth={2.25} aria-hidden />
+            <span className="touchpad__sub">FLIP</span>
+          </button>
+          {/* A hard colour, which colouring the corners cannot give: a corner
+              belongs to every face touching it, so that bleeds across the
+              shared edges. This stops at the edge. */}
+          <button className="touchpad__key" title="Give this face the current color as a hard seam, not blended from its corners" aria-label="Seam" {...noCallout} onClick={() => w().colorFace(face, w().color)}>
+            <PaintBucket size={15} strokeWidth={2.25} aria-hidden />
+            <span className="touchpad__sub">SEAM</span>
+          </button>
+          <button className="touchpad__key touchpad__key--danger" title="Remove this face (Del)" aria-label="Delete the face" {...noCallout} onClick={() => w().deleteSelectedFace()}>
+            <Trash2 size={15} strokeWidth={2.25} aria-hidden />
+            <span className="touchpad__sub">DELETE</span>
+          </button>
+        </>
+      )}
+      {asking && face !== null && (
         <>
           {/* Anywhere else puts the question away and turns nothing. */}
           <div className="benchpaste__away" onPointerDown={() => setAsking(false)} />
-          <div className="benchpaste benchpaste--flip" role="menu" aria-label="What to flip">
-            <button className="workshop__btn" role="menuitem" disabled={face === null} title="This face turned round, its back to the front" onClick={pick(() => w().flipSelectedFace())}>FLIP FACE</button>
-            <button className="workshop__btn" role="menuitem" disabled={face === null} title="This face turned round, and every face joined to it by an edge turned to agree" onClick={pick(() => w().flipSelectedSurface())}>FLIP SURFACE</button>
-            <button className="workshop__btn" role="menuitem" title="Every face in the object turned to look outward, by the bench's best guess" onClick={pick(() => w().autoWind())}>AUTO</button>
+          <div className="benchpaste" role="menu" aria-label="What to flip">
+            <button className="workshop__btn" role="menuitem" title="This face turned round, its back to the front" onClick={choose(() => w().flipSelectedFace())}>FLIP FACE</button>
+            <button className="workshop__btn" role="menuitem" title="This face turned round, and every face joined to it by an edge turned to agree" onClick={choose(() => w().flipSelectedSurface())}>FLIP SURFACE</button>
           </div>
         </>
       )}
@@ -407,7 +439,6 @@ export function Workshop(): JSX.Element | null {
     setPasteOpen(true)
   }
 
-  const facing = tool === 'face' && selection.length === 0 && (selectedFace !== null || facePick.length > 0)
   const ToolIcon = TOOL_ICON[tool]
   const making = view === 'make'
 
@@ -617,6 +648,7 @@ export function Workshop(): JSX.Element | null {
           its panel, which opens upward over the chip. */}
       {making && (
       <div className="ws__tools">
+        {tool === 'face' && <FaceRow face={selectedFace} picks={facePick.length} faces={shard?.faces.length ?? 0} />}
         {selection.length > 0 && (
           <div className="benchturn" role="group" aria-label="Turn the selection">
             <button className="touchpad__key" title="A quarter turn left, in the working plane (Q)" aria-label="Turn left" {...noCallout} onClick={() => w().rotateSelected(-1)}>
@@ -692,8 +724,8 @@ export function Workshop(): JSX.Element | null {
       </div>
       )}
 
-      {/* Bottom right: FILL for a set of points, face actions while a face is in
-          hand, the color column under either. */}
+      {/* Bottom right: FILL for a set of points, the color column under it.
+          The FACE tool's actions are on their own row at the bottom left. */}
       {making && (
       <div className="ws__corner">
         {selectedPoints >= 3 && (
@@ -701,35 +733,6 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn" onClick={() => w().fillSelection()} title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)">
               <Triangle size={12} strokeWidth={2.25} aria-hidden /> FILL
             </button>
-          </div>
-        )}
-        {facing && selectedFace !== null && (
-          <div className="benchops" role="group" aria-label="Selected face">
-            <span className="workshop__value workshop__value--wide">face {selectedFace + 1} of {shard?.faces.length ?? 0}</span>
-            <FlipKey face={selectedFace} />
-            {/* A hard colour, which colouring the corners cannot give: a corner
-                belongs to every face touching it, so that bleeds across the
-                shared edges. This stops at the edge. */}
-            <button className="workshop__btn" onClick={() => w().colorFace(selectedFace, w().color)} title="Give this face the current color as a hard seam, not blended from its corners">
-              <PaintBucket size={12} strokeWidth={2.25} aria-hidden /> SEAM
-            </button>
-            <button className="workshop__btn workshop__btn--danger" onClick={() => w().deleteSelectedFace()} title="Remove this face (Del)">DELETE FACE</button>
-            <button className="workshop__btn" onClick={() => w().selectFace(null)} title="Keep it (Esc)">CANCEL</button>
-          </div>
-        )}
-        {/* FACE in hand and nothing picked: FLIP alone, so AUTO is always
-            reachable; FLIP FACE and FLIP SURFACE wait for a face. */}
-        {tool === 'face' && !facing && selection.length === 0 && (shard?.faces.length ?? 0) > 0 && (
-          <div className="benchops" role="group" aria-label="Flip">
-            <FlipKey face={null} />
-          </div>
-        )}
-        {facing && selectedFace === null && (
-          <div className="benchops" role="group" aria-label="Face corners">
-            <span className="workshop__value workshop__value--wide">{facePick.length} corner{facePick.length === 1 ? '' : 's'}</span>
-            <button className="workshop__btn" disabled={facePick.length < 3} onClick={() => w().fill()} title="Join the corners into a face (Enter)">FILL</button>
-            <button className="workshop__btn" onClick={() => w().clearFacePick()} title="Drop the picks (Esc)">CANCEL</button>
-            <FlipKey face={null} />
           </div>
         )}
         {/* What an action reaches, a column over the chip, widest at the top:
