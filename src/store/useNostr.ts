@@ -29,6 +29,8 @@ import {
 import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
 import { fromPayload, toPayload, type ShardModel } from 'sno-core/shards'
+import { refTags } from 'sno-core/parts'
+import { forgetRef } from '../lib/parts'
 import { hexAt, parsePaletteEvent, type Palette } from 'sno-core/snoPalette'
 import type { PublishedPalette } from './useWorkshop'
 
@@ -53,6 +55,12 @@ export interface FetchedPalette {
   event: PublishedPalette
 }
 
+/** MINE or GLOBAL, the switch over the feed. */
+export type FeedScope = 'global' | 'mine'
+
+/** Which read of the feed is current: a switch mid-read must not let the old one paint over the new. */
+let feedGen = 0
+
 /** An object someone published, with the event it came from. */
 export interface FeedObject {
   id: string
@@ -73,6 +81,8 @@ interface NostrState {
   pubkey: string | null
   signer: SignerKind
   feed: FeedObject[]
+  /** Whose objects the feed shows: everyone's, or only this key's. */
+  scope: FeedScope
   loading: boolean
   publishing: boolean
   notice: string | null
@@ -112,6 +122,8 @@ interface NostrState {
    */
   fetchObject: (address: string) => Promise<FeedObject | null>
   loadFeed: () => Promise<void>
+  /** Show everyone's objects, or only your own, and read the relays for them. */
+  setScope: (scope: FeedScope) => void
   say: (note: string | null) => void
 }
 
@@ -126,7 +138,11 @@ export function objectTemplate(shard: ShardModel, createdAt: number): { kind: nu
       ['d', shard.id],
       ['name', shard.name],
       // What a client that cannot draw it should say instead (NIP-31).
-      ['alt', `a 3D object: ${shard.name}, ${shard.vertices.length} vertices`],
+      ['alt', `a 3D object: ${shard.name}, ${shard.vertices.length} vertices${shard.parts?.length ? `, ${shard.parts.length} placed objects` : ''}`],
+      // Each object it places, as the payload names it (DECK-0003 §1.10), so
+      // a relay can answer "what places this object". Readers take the
+      // placements from the payload, never from these.
+      ...refTags(shard),
     ],
     content: JSON.stringify(payload),
   }
@@ -224,7 +240,8 @@ export function objectFromEvent(ev: Event): FeedObject | null {
   if (!d) return null
   let shard: ShardModel | null = null
   try { shard = fromPayload(JSON.parse(ev.content), `${ev.pubkey}:${d}`) } catch { return null }
-  if (!shard || shard.vertices.length === 0) return null
+  // An object may be nothing but the arrangement of others (§1.9 rule 13).
+  if (!shard || (shard.vertices.length === 0 && !shard.parts?.length)) return null
   return { id: ev.id, pubkey: ev.pubkey, createdAt: ev.created_at, d, shard }
 }
 
@@ -315,6 +332,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   published: loadLedger(),
   loginError: null,
   feed: [],
+  scope: 'global',
   loading: false,
   publishing: false,
   notice: null,
@@ -387,7 +405,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   publish: async (shard) => {
     const relays = relaySet()
     if (!signer) { set({ notice: 'Pick a key first.' }); return false }
-    if (shard.vertices.length === 0) { set({ notice: 'An empty object has nothing to publish.' }); return false }
+    if (shard.vertices.length === 0 && !shard.parts?.length) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
     const template = objectTemplate(shard, Math.floor(Date.now() / 1000))
     try {
@@ -404,6 +422,8 @@ export const useNostr = create<NostrState>((set, get) => ({
         const ledger = noteSent(get().published, shard.id, fingerprint(template.content), signed.pubkey, signed.created_at)
         saveLedger(ledger)
         set({ published: ledger })
+        // Every object placing this one shows the new version at once.
+        forgetRef(['a', `${SNO_KIND}:${signed.pubkey}:${shard.id}`])
       }
       set({
         publishing: false,
@@ -520,7 +540,11 @@ export const useNostr = create<NostrState>((set, get) => ({
     // Objects appear as they arrive rather than when the last relay finishes.
     // Waiting for all of them meant the whole read cost whatever the slowest
     // one cost, and one of four is always slow (lib/pool).
+    const gen = ++feedGen
+    const mineOnly = get().scope === 'mine'
+    const me = get().pubkey
     set({ loading: true, feed: [] })
+    if (mineOnly && !me) { set({ loading: false, notice: 'Choose a key in the menu to see your own objects.' }); return }
     // Addressable: one object per (pubkey, d), the newest of them. Relays
     // repeat each other, so the same event arrives more than once and an older
     // edit can arrive after a newer one; the map settles both.
@@ -528,6 +552,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     let paint: number | undefined
     const show = (): void => {
       paint = undefined
+      if (gen !== feedGen) return
       set({
         feed: [...newest.values()]
           .map(objectFromEvent)
@@ -536,7 +561,7 @@ export const useNostr = create<NostrState>((set, get) => ({
       })
     }
     try {
-      await stream(relaySet(), { kinds: [SNO_KIND], limit: 100 }, (ev) => {
+      await stream(relaySet(), mineOnly && me ? { kinds: [SNO_KIND], authors: [me], limit: 100 } : { kinds: [SNO_KIND], limit: 100 }, (ev) => {
         const d = ev.tags.find((t) => t[0] === 'd')?.[1]
         if (!d) return
         const key = `${ev.pubkey}:${d}`
@@ -563,7 +588,13 @@ export const useNostr = create<NostrState>((set, get) => ({
       for (const o of get().feed) if (o.pubkey === mine) ledger = noteSeen(ledger, o.d, mine, o.createdAt)
       if (ledger !== get().published) { saveLedger(ledger); set({ published: ledger }) }
     }
-    set({ loading: false })
+    if (gen === feedGen) set({ loading: false })
+  },
+
+  setScope: (scope) => {
+    if (scope === get().scope) return
+    set({ scope })
+    void get().loadFeed()
   },
 
   say: (note) => set({ notice: note }),

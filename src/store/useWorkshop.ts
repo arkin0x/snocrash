@@ -43,7 +43,7 @@ import {
   validPoint,
   type ShardMode,
   type ShardModel,
-  type ShardVertex, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
+  type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
 import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from 'sno-core/snoPalette'
 
 /**
@@ -98,6 +98,8 @@ function savePalettes(list: NamedPalette[]): void {
 import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
 import { newell, triangulate } from 'sno-core/triangulate'
 import { flipFace, flipSurface, windAdded, windOutward } from 'sno-core/winding'
+import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
+import { useNostr } from './useNostr'
 import { Vector3 } from 'three'
 import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
 
@@ -173,25 +175,48 @@ export type PastePlace = 'exact' | 'floor'
 export interface ClipPoints {
   points: Array<{ at: P3; c: [number, number, number] }>
   faces: Array<[number, number, number]>
+  /** Placed objects in hand, each with the reference it names rather than an index into refs, so it pastes into any object. */
+  parts: Array<Omit<Part, 'ref'> & { ref: Ref }>
 }
 
-/** The selected points, exactly where they are, with the faces wholly among them. */
-function clipOf(s: ShardModel, selection: number[]): ClipPoints | null {
+/**
+ * An object chosen to stamp with OBJECT: the reference each placement will
+ * name, and the object as it was when chosen, which is what the ghost draws.
+ */
+export interface StampObject {
+  ref: Ref
+  name: string
+  shard: ShardModel
+}
+
+/** The selected points, exactly where they are, with the faces wholly among them, and the selected placed objects. */
+function clipOf(s: ShardModel, selection: number[], partSel: number[] = []): ClipPoints | null {
   const taken = [...new Set(selection.filter((i) => s.vertices[i]))].sort((a, b) => a - b)
-  if (taken.length === 0) return null
+  const placed = [...new Set(partSel.filter((i) => s.parts?.[i]))].sort((a, b) => a - b)
+  if (taken.length === 0 && placed.length === 0) return null
   const local = new Map(taken.map((i, k) => [i, k]))
   return {
     points: taken.map((i) => ({ at: ticksOf(s.vertices[i]), c: [...s.vertices[i].c] as [number, number, number] })),
     faces: s.faces
       .filter((f) => f.every((i) => local.has(i)))
       .map((f) => f.map((i) => local.get(i) as number) as [number, number, number]),
+    parts: placed.map((i) => { const q = s.parts![i]; return { ...q, at: [...q.at] as P3, turn: [...q.turn] as [number, number, number], ref: s.refs![q.ref] } }),
   }
 }
 
-/** "1 point" or "7 points", with its faces when it has any. */
+/** "1 point" or "7 points", with its faces and placed objects when it has any. */
 function countLabel(clip: ClipPoints): string {
-  const pts = `${clip.points.length} point${clip.points.length === 1 ? '' : 's'}`
-  return clip.faces.length === 0 ? pts : `${pts} and ${clip.faces.length} face${clip.faces.length === 1 ? '' : 's'}`
+  const bits: string[] = []
+  if (clip.points.length) bits.push(`${clip.points.length} point${clip.points.length === 1 ? '' : 's'}`)
+  if (clip.faces.length) bits.push(`${clip.faces.length} face${clip.faces.length === 1 ? '' : 's'}`)
+  if (clip.parts.length) bits.push(`${clip.parts.length} object${clip.parts.length === 1 ? '' : 's'}`)
+  return bits.length > 1 ? `${bits.slice(0, -1).join(', ')} and ${bits[bits.length - 1]}` : bits[0] ?? 'nothing'
+}
+
+/** The address this object would have if this key published it: an object placing that would place itself. */
+function selfAddress(s: ShardModel): string | null {
+  const pk = useNostr.getState().pubkey
+  return pk ? `33331:${pk}:${s.id}` : null
 }
 
 /**
@@ -258,6 +283,14 @@ export interface WorkshopState {
    * bench, or CONNECTED.
    */
   selection: number[]
+  /** Selected placed objects (DECK-0003 §1.10), indices into the shard's parts. Each is one whole thing: selected or not. */
+  partSel: number[]
+  /** STAMP stamps a built-in shape, or an object chosen from the feed. */
+  stampMode: 'shape' | 'object'
+  /** The object OBJECT stamps, or none chosen yet. */
+  stampObject: StampObject | null
+  /** The feed is open to choose that object: a tap on a tile picks it rather than opening it. */
+  picking: boolean
   /** Corners picked so far for the next face, in order. */
   facePick: number[]
   /** The face tapped in FACE mode, an index into the shard's faces, so DELETE can take it. */
@@ -295,6 +328,16 @@ export interface WorkshopState {
 
   openWorkshop: (id?: string) => void
   closeWorkshop: () => void
+  setStampMode: (mode: 'shape' | 'object') => void
+  setStampObject: (o: StampObject | null) => void
+  setPicking: (on: boolean) => void
+  /** Place the chosen object with its origin at `at`, turned by FACING: a reference, not a copy. */
+  placeObject: (at: P3) => void
+  /** One placed object alone, or none. */
+  selectPart: (index: number | null) => void
+  /** A placed object in or out of the selection, the points untouched. */
+  togglePart: (index: number) => void
+  setPartSelection: (indices: number[]) => void
   create: (name?: string) => string
   select: (id: string | null, address?: string | null) => void
   /** Put an object from the feed on the bench without making it yours. See `viewing`. */
@@ -498,7 +541,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     if (!next) return false
     const list = shards.slice()
     list[i] = { ...next, updatedAt: Date.now() }
-    set({ shards: list, past: [...past.slice(-(HISTORY - 1)), shards[i]], future: [], notice, turnPivot: null })
+    // A placement that no longer exists cannot stay selected.
+    const partSel = get().partSel.filter((k) => k < (next.parts?.length ?? 0))
+    set({ shards: list, past: [...past.slice(-(HISTORY - 1)), shards[i]], future: [], notice, turnPivot: null, partSel })
     save(list)
     return true
   }
@@ -518,6 +563,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     open: false,
     tool: 'view',
     selection: [],
+    partSel: [],
+    stampMode: 'shape',
+    stampObject: null,
+    picking: false,
     facePick: [],
     selectedFace: null,
     clip: null,
@@ -540,24 +589,24 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     openWorkshop: (id) => {
       const { shards } = get()
       const currentId = id ?? get().currentId ?? shards[0]?.id ?? get().create()
-      set({ open: true, currentId, aimKey: get().viewing ? get().aimKey : currentId, selection: [], selectedFace: null, facePick: [], tool: 'view', plane: FLOOR, aim: null, past: [], future: [], notice: null })
+      set({ open: true, currentId, aimKey: get().viewing ? get().aimKey : currentId, selection: [], partSel: [], selectedFace: null, facePick: [], tool: 'view', plane: FLOOR, aim: null, past: [], future: [], notice: null })
     },
 
-    closeWorkshop: () => set({ open: false, selection: [], selectedFace: null, facePick: [], aim: null }),
+    closeWorkshop: () => set({ open: false, selection: [], partSel: [], selectedFace: null, facePick: [], aim: null }),
 
     create: (name) => {
       const s = newShard(name ?? `Shard ${get().shards.length + 1}`)
       const list = [...get().shards, s]
-      set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
+      set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
       save(list)
       return s.id
     },
 
-    select: (id, address = null) => set({ currentId: id, viewing: null, address, aimKey: id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }),
+    select: (id, address = null) => set({ currentId: id, viewing: null, address, aimKey: id, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }),
 
     view: (shard, { d, own, address }) => set({
       viewing: { shard, d, own }, address, aimKey: shard.id,
-      selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null,
+      selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null,
     }),
 
     adopt: () => {
@@ -599,7 +648,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (!src) return id
       const copy: ShardModel = { ...src, id: uuid(), name: `${src.name} copy`, vertices: src.vertices.map(cloneVertex), faces: src.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
       const list = [...get().shards, copy]
-      set({ shards: list, currentId: copy.id, viewing: null, address: null, aimKey: copy.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
+      set({ shards: list, currentId: copy.id, viewing: null, address: null, aimKey: copy.id, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
       return copy.id
     },
 
@@ -607,7 +656,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const list = get().shards.filter((s) => s.id !== id)
       const wasCurrent = get().currentId === id
       const currentId = wasCurrent ? (list[0]?.id ?? null) : get().currentId
-      set({ shards: list, currentId, ...(wasCurrent ? { aimKey: currentId, address: null } : {}), selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
+      set({ shards: list, currentId, ...(wasCurrent ? { aimKey: currentId, address: null } : {}), selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
     },
 
     setMode: (mode) => edit((s) => ({ ...s, mode })),
@@ -615,7 +664,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     // FACE works on corners it picks itself, and its panel only appears with
     // nothing else selected, so a point still held from SELECT hid FILL behind
     // it and the tool looked broken. Taking the tool clears the selection.
-    setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, ...(tool === 'face' ? { selection: [] } : {}) }),
+    setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
     setExtent: (extent) => {
       const s = get().current()
       if (!s) return
@@ -633,7 +682,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setShowAvatar: (on) => { set({ showAvatar: on }); try { localStorage.setItem(AVATAR_KEY, on ? '1' : '0') } catch { /* private mode */ } },
     step: () => TICKS_PER_UNIT / get().division,
     setColor: (c) => set({ color: clampColor(c) }),
-    setStampKind: (stampKind) => set({ stampKind }),
+    setStampKind: (stampKind) => set({ stampKind, stampMode: 'shape' }),
     setStampSize: (size) => set({ stampSize: Math.max(MIN_SIZE, Math.min(MAX_SIZE, Math.round(size))) }),
     turnStamp: () => set({ stampFacing: ((get().stampFacing + 1) % 4) as Facing }),
 
@@ -641,6 +690,23 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const a = get().aim
       if (a === p || (a && p && a[0] === p[0] && a[1] === p[1] && a[2] === p[2])) return
       set({ aim: p })
+    },
+
+    setStampMode: (stampMode) => set({ stampMode }),
+    setStampObject: (stampObject) => set({ stampObject, stampMode: 'object' }),
+    setPicking: (picking) => set({ picking }),
+
+    placeObject: (at) => {
+      const { stampObject, stampFacing } = get()
+      const s = get().current()
+      if (!s || !validPoint(at, s.extent)) return
+      if (!stampObject) { set({ notice: 'Choose an object to stamp first: tap the empty slot under OBJECT.' }); return }
+      // An object placing itself is a loop every reader draws as a placeholder
+      // (§1.10); better never to make one.
+      if (stampObject.ref[1] === selfAddress(s)) { set({ notice: 'An object cannot place itself.' }); return }
+      const { shard } = addPart(s, stampObject.ref, { at: [...at] as P3, turn: [0, (90 * stampFacing) % 360, 0], step: 0 })
+      edit(() => shard, `"${stampObject.name}" placed. It is one object: SELECT it to move, turn or copy it.`)
+      set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
     placeStamp: (at) => {
@@ -651,7 +717,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (!res) { set({ notice: 'That stamp could not be placed here.' }); return }
       const { mode, notice } = solidIfFirstFaces(s, res.shard)
       edit(() => ({ ...res.shard, mode }), notice)
-      set({ selection: [], selectedFace: null, facePick: [] })
+      set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
     addVertex: (p) => {
@@ -669,7 +735,24 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     selectVertex: (index) => {
       const s = get().current()
-      set({ selection: index === null || !s ? [] : group(s, index), selectedFace: null })
+      set({ selection: index === null || !s ? [] : group(s, index), partSel: [], selectedFace: null })
+    },
+
+    selectPart: (index) => {
+      const s = get().current()
+      set({ partSel: index === null || !s?.parts?.[index] ? [] : [index], selection: [], selectedFace: null })
+    },
+
+    togglePart: (index) => {
+      const s = get().current()
+      if (!s?.parts?.[index]) return
+      const has = get().partSel.includes(index)
+      set({ partSel: has ? get().partSel.filter((i) => i !== index) : [...get().partSel, index].sort((a, b) => a - b), selectedFace: null })
+    },
+
+    setPartSelection: (indices) => {
+      const s = get().current()
+      set({ partSel: [...new Set(indices.filter((i) => s?.parts?.[i]))].sort((a, b) => a - b) })
     },
 
     toggleVertex: (index) => {
@@ -821,13 +904,14 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     moveSelected: (axis, delta) => {
-      const { selection } = get()
-      if (selection.length === 0) return
+      const { selection, partSel } = get()
+      if (selection.length === 0 && partSel.length === 0) return
       edit((s) => {
-        // Every selected point moves the same unit; if any would leave the
-        // grid the whole move is refused, so a shape never tears.
+        // Every selected point and placed object moves the same unit; if any
+        // would leave the grid the whole move is refused, so a shape never tears.
         const chosen = new Set(selection.filter((i) => s.vertices[i]))
-        if (chosen.size === 0) return null
+        const placed = new Set(partSel.filter((i) => s.parts?.[i]))
+        if (chosen.size === 0 && placed.size === 0) return null
         const vertices = s.vertices.slice()
         for (const i of chosen) {
           const p = ticksOf(vertices[i])
@@ -835,24 +919,34 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
           if (!validPoint(p, s.extent)) return null
           vertices[i] = vertexAt(p, vertices[i].c)
         }
-        return { ...s, vertices }
+        const parts = (s.parts ?? []).slice()
+        for (const i of placed) {
+          const at = [...parts[i].at] as P3
+          at[axis] += delta
+          if (!validPoint(at, s.extent)) return null
+          parts[i] = { ...parts[i], at }
+        }
+        return placed.size ? { ...s, vertices, parts } : { ...s, vertices }
       })
     },
 
     rotateSelected: (turns) => {
-      const { selection, turnPivot, plane } = get()
+      const { selection, partSel, turnPivot, plane } = get()
       const s = get().current()
-      if (!s || selection.length === 0) return
+      if (!s || (selection.length === 0 && partSel.length === 0)) return
       const step = get().step()
       const chosen = [...new Set(selection.filter((i) => s.vertices[i]))]
-      if (chosen.length === 0) return
-      const pts = chosen.map((i) => ticksOf(s.vertices[i]))
+      const placed = [...new Set(partSel.filter((i) => s.parts?.[i]))]
+      if (chosen.length === 0 && placed.length === 0) return
+      // A placed object turns about the same pivot as the points, from where it
+      // stands: its origin counts toward the pivot like a point does.
+      const pts = [...chosen.map((i) => ticksOf(s.vertices[i])), ...placed.map((i) => [...s.parts![i].at] as P3)]
       // The same selection turned again turns about the same point; any other
       // edit forgets it (edit() clears it), and so does a change of DIVISION.
       // The plane is part of the key: turning, tipping the grid on its side and
       // turning again are two different turns about two different axes.
       const axes = turnAxes(plane)
-      const key = `${step}:${plane}:${[...chosen].sort((a, b) => a - b).join(',')}`
+      const key = `${step}:${plane}:${[...chosen].sort((a, b) => a - b).join(',')}:${placed.join(',')}`
       const at = turnPivot?.key === key ? turnPivot.at : turnPivotFor(pts, step, axes)
       const [ca, cb] = at
       const [ax, bx] = axes
@@ -870,9 +964,17 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
           if (!validPoint(p, m.extent)) refused = true
           vertices[i] = vertexAt(p, vertices[i].c)
         })
-        return refused ? null : { ...m, vertices }
+        // Each placed object swings about the pivot and takes the same quarter
+        // turn itself (sno-core quarterTurnPart), so it turns with the points.
+        const parts = (m.parts ?? []).slice()
+        for (const i of placed) {
+          const q = turns === 1 ? quarterTurnPart(parts[i], ax, bx, [ca, cb]) : quarterTurnPart(parts[i], bx, ax, [cb, ca])
+          if (!q || !validPoint(q.at, m.extent)) { refused = true; continue }
+          parts[i] = q
+        }
+        return refused ? null : placed.length ? { ...m, vertices, parts } : { ...m, vertices }
       })
-      if (refused) set({ notice: 'That turn would carry a point off the grid.' })
+      if (refused) set({ notice: 'That turn would carry a point or an object off the grid.' })
       else set({ turnPivot: { key, at } })
     },
 
@@ -917,12 +1019,14 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     deleteSelected: () => {
-      const { selection } = get()
-      if (selection.length === 0) return
-      edit((s) => {
+      const { selection, partSel } = get()
+      if (selection.length === 0 && partSel.length === 0) return
+      edit((before) => {
+        // Selected placed objects go first; references nothing places any more go with them.
+        const s = partSel.length ? removeParts(before, partSel) : before
         // Every selected vertex goes; faces that used any of them go; the rest renumber.
         const gone = new Set(selection.filter((i) => s.vertices[i]))
-        if (gone.size === 0) return null
+        if (gone.size === 0) return s === before ? null : s
         const remap = new Map<number, number>()
         s.vertices.forEach((_, i) => { if (!gone.has(i)) remap.set(i, remap.size) })
         const faces = s.faces
@@ -930,12 +1034,12 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
           .map((f) => f.map((i) => remap.get(i) as number) as [number, number, number])
         return { ...s, vertices: s.vertices.filter((_, i) => !gone.has(i)), faces }
       })
-      set({ selection: [], selectedFace: null, facePick: [] })
+      set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
     cutSelection: () => {
       const s = get().current()
-      const clip = s ? clipOf(s, get().selection) : null
+      const clip = s ? clipOf(s, get().selection, get().partSel) : null
       if (!clip) return
       set({ clip })
       get().deleteSelected()
@@ -944,7 +1048,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     duplicateSelection: () => {
       const s = get().current()
-      const clip = s ? clipOf(s, get().selection) : null
+      const clip = s ? clipOf(s, get().selection, get().partSel) : null
       if (!clip) return
       set({ clip })
       get().pasteClip('exact')
@@ -953,34 +1057,41 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     pasteClip: (where = 'exact') => {
       const { clip, plane, level } = get()
       const s = get().current()
-      if (!clip || !s || clip.points.length === 0) return
+      if (!clip || !s || (clip.points.length === 0 && clip.parts.length === 0)) return
       // Where they came from, to the tick, which is what a copy is for: the
       // shape returns to the place you took it from and the nudges carry it
       // off from there. FLOOR is the other answer: the same shape, slid along
       // the working plane's normal until its lowest point rests on the level
       // the grid is at. Neither one flattens anything.
-      const low = Math.min(...clip.points.map((q) => q.at[plane]))
+      const low = Math.min(...clip.points.map((q) => q.at[plane]), ...clip.parts.map((q) => q.at[plane]))
       const shift = where === 'floor' ? level - low : 0
-      const placed = clip.points.map((q) => {
-        const at = [...q.at] as P3
-        at[plane] = at[plane] + shift
-        return { at, c: q.c }
-      })
-      if (placed.some((q) => !validPoint(q.at, s.extent))) {
-        set({ notice: 'Those points would land off the grid. Move the level, or grow the grid.' })
+      const slide = (p: P3): P3 => { const at = [...p] as P3; at[plane] = at[plane] + shift; return at }
+      const placed = clip.points.map((q) => ({ at: slide(q.at), c: q.c }))
+      const objects = clip.parts.map((q) => ({ ...q, at: slide(q.at) }))
+      if (placed.some((q) => !validPoint(q.at, s.extent)) || objects.some((q) => !validPoint(q.at, s.extent))) {
+        set({ notice: 'Those would land off the grid. Move the level, or grow the grid.' })
         return
       }
+      // A copy of this object pasted into itself would place itself.
+      const self = selfAddress(s)
+      if (objects.some((q) => q.ref[1] === self)) { set({ notice: 'An object cannot place itself.' }); return }
       const base = s.vertices.length
-      const added = edit((m) => ({
-        ...m,
-        vertices: [...m.vertices, ...placed.map((q) => vertexAt(q.at, q.c))],
-        faces: [...m.faces, ...clip.faces.map((f) => f.map((i) => base + i) as [number, number, number])],
-      }), `${countLabel(clip)} pasted ${where === 'floor' ? 'on the working plane' : 'where they were taken from'}, selected: move ${clip.points.length === 1 ? 'it' : 'them'} into place.`)
+      const firstPart = s.parts?.length ?? 0
+      const many = clip.points.length + clip.parts.length > 1
+      const added = edit((m) => {
+        let next: ShardModel = {
+          ...m,
+          vertices: [...m.vertices, ...placed.map((q) => vertexAt(q.at, q.c))],
+          faces: [...m.faces, ...clip.faces.map((f) => f.map((i) => base + i) as [number, number, number])],
+        }
+        for (const { ref, ...place } of objects) next = addPart(next, ref, place).shard
+        return next
+      }, `${countLabel(clip)} pasted ${where === 'floor' ? 'on the working plane' : 'where they were taken from'}, selected: move ${many ? 'them' : 'it'} into place.`)
       // The selection is set here rather than through setSelection, which
       // widens to every vertex sharing a point: pasted exactly, the copy sits
       // on its original and widening would take both, so the nudges could
       // never carry the copy off alone.
-      if (added) set({ selection: placed.map((_, k) => base + k), selectedFace: null, facePick: [] })
+      if (added) set({ selection: placed.map((_, k) => base + k), partSel: objects.map((_, k) => firstPart + k), selectedFace: null, facePick: [] })
     },
 
     pickForFace: (index) => {
@@ -1064,7 +1175,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     removeFace: (index) => edit((s) => (s.faces[index] ? { ...s, faces: s.faces.filter((_, i) => i !== index) } : null)),
 
-    clearShard: () => { edit((s) => ({ ...s, vertices: [], faces: [] })); set({ selection: [], selectedFace: null, facePick: [] }) },
+    clearShard: () => { edit((s) => { const { refs: _r, parts: _p, facecolors: _f, ...rest } = s; return { ...rest, vertices: [], faces: [] } }); set({ selection: [], partSel: [], selectedFace: null, facePick: [] }) },
 
     undo: () => {
       const { past, shards, currentId } = get()
@@ -1072,7 +1183,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (i < 0 || !past.length) return
       const list = shards.slice()
       list[i] = past[past.length - 1]
-      set({ shards: list, past: past.slice(0, -1), future: [...get().future, shards[i]], selection: [], selectedFace: null, facePick: [], notice: null })
+      set({ shards: list, past: past.slice(0, -1), future: [...get().future, shards[i]], selection: [], partSel: [], selectedFace: null, facePick: [], notice: null })
       save(list)
     },
 
@@ -1082,7 +1193,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (i < 0 || !future.length) return
       const list = shards.slice()
       list[i] = future[future.length - 1]
-      set({ shards: list, future: future.slice(0, -1), past: [...get().past, shards[i]], selection: [], selectedFace: null, facePick: [], notice: null })
+      set({ shards: list, future: future.slice(0, -1), past: [...get().past, shards[i]], selection: [], partSel: [], selectedFace: null, facePick: [], notice: null })
       save(list)
     },
 
@@ -1115,12 +1226,13 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         set({ notice: 'That is JSON, but not an object this can read. A shard carries v, vertices, colors and faces.' })
         return null
       }
-      if (s.vertices.length === 0) {
-        set({ notice: `"${s.name}" is empty: no vertices. Copy an object that has something in it.` })
+      // An object of nothing but placed others is not empty (DECK-0003 §1.9 rule 13).
+      if (s.vertices.length === 0 && !s.parts?.length) {
+        set({ notice: `"${s.name}" is empty: no vertices and nothing placed. Copy an object that has something in it.` })
         return null
       }
       const list = [...get().shards, s]
-      set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
+      set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
       save(list)
       return s.id
     },

@@ -256,7 +256,7 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
                   <li key={s.id} className={s.id === currentId ? 'is-current' : ''}>
                     <button className="menu__pick" onClick={() => open(s.id)} title={STATE_HELP[state]}>
                       <span className="menu__pick-name">{s.name}</span>
-                      <span className="menu__pick-meta">{s.vertices.length} v · {s.faces.length} f · {s.mode}</span>
+                      <span className="menu__pick-meta">{s.vertices.length} v · {s.faces.length} f{s.parts?.length ? ` · ${s.parts.length} obj` : ''} · {s.mode}</span>
                     </button>
                     <span className={`tag ${STATE_TAG[state]} menu__state`} title={STATE_HELP[state]}>{STATE_LABEL[state]}</span>
                   </li>

@@ -16,7 +16,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Copy, Download, GitFork, RefreshCw } from 'lucide-react'
 import { useNostr, type FeedObject } from '../store/useNostr'
 import { useWorkshop } from '../store/useWorkshop'
-import { toPayload } from 'sno-core/shards'
+import { toPayload, type ShardModel } from 'sno-core/shards'
 import { fileNameFor, toPly } from '../lib/ply'
 import { Preview, PreviewStage } from './Preview'
 import { useRoute } from '../lib/route'
@@ -47,6 +47,35 @@ function save(text: string, name: string, type: string): void {
  */
 const kept = { scrollTop: 0, returning: false }
 
+/**
+ * Choose an object for OBJECT to stamp, and go back to the bench exactly as it
+ * was: the feed was pushed on top of it, so back is where it is.
+ */
+function choose(o: FeedObject): void {
+  const w = useWorkshop.getState()
+  const me = useNostr.getState().pubkey
+  if (o.pubkey === me && o.d === w.current()?.id) { useNostr.getState().say('An object cannot place itself. Choose another.'); return }
+  w.setStampObject({ ref: ['a', `33331:${o.pubkey}:${o.d}`], name: o.shard.name, shard: o.shard })
+  w.setPicking(false)
+  w.setTool('stamp')
+  window.history.back()
+}
+
+/** One of your objects that has never been published: shown under MINE, but nothing can place it until it is. */
+function DraftTile({ shard, picking }: { shard: ShardModel; picking: boolean }): JSX.Element {
+  return (
+    <article className="tile tile--draft" title="Not published yet: publish it from the workshop, and it can be placed">
+      <Preview shard={shard} />
+      <div className="tile__bar">
+        <div className="tile__who">
+          <span className="tile__name">{shard.name}</span>
+          <span className="tile__meta">{picking ? 'PUBLISH FIRST' : 'DRAFT · not published'}</span>
+        </div>
+      </div>
+    </article>
+  )
+}
+
 function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView: () => void }): JSX.Element {
   const say = useNostr((s) => s.say)
   const remix = (): void => {
@@ -63,7 +92,7 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
         <ProfilePic pubkey={o.pubkey} size={28} />
         <div className="tile__who">
           <span className="tile__name">{o.shard.name}</span>
-          <span className="tile__meta">{o.shard.vertices.length} v · {o.shard.faces.length} f · {shortKey(o.pubkey)}</span>
+          <span className="tile__meta">{o.shard.vertices.length} v · {o.shard.faces.length} f{o.shard.parts?.length ? ` · ${o.shard.parts.length} obj` : ''} · {shortKey(o.pubkey)}</span>
         </div>
         <div className="tile__acts">
           <button className="icon" title="Open a copy in the editor" aria-label={`Remix ${o.shard.name}`} onClick={remix}><GitFork size={16} strokeWidth={2.25} /></button>
@@ -83,6 +112,12 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
   const feed = useNostr((s) => s.feed)
   const loading = useNostr((s) => s.loading)
   const load = useNostr((s) => s.loadFeed)
+  const scope = useNostr((s) => s.scope)
+  const setScope = useNostr((s) => s.setScope)
+  const picking = useWorkshop((s) => s.picking)
+  const shards = useWorkshop((s) => s.shards)
+  // Under MINE, the objects of yours no relay has: they cannot be placed until published.
+  const drafts = scope === 'mine' && !loading ? shards.filter((sh) => (sh.vertices.length > 0 || (sh.parts?.length ?? 0) > 0) && !feed.some((o) => o.d === sh.id)) : []
 
   const scroller = useRef<HTMLElement>(null)
   // Read once, as the feed mounts, and used by both effects below. It cannot
@@ -116,7 +151,17 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
   return (
     <>
     <section className="feed" ref={scroller} onScroll={(e) => { kept.scrollTop = e.currentTarget.scrollTop }}>
+      {picking && (
+        <div className="feed__picking" role="status">
+          <span>Tap an object to stamp it. It is placed by reference: one whole object that follows its author's edits.</span>
+          <button className="btn" onClick={() => { useWorkshop.getState().setPicking(false); window.history.back() }}>CANCEL</button>
+        </div>
+      )}
       <header className="feed__head">
+        <div className="workshop__modes feed__scope" role="group" aria-label="Whose objects">
+          <button className={`workshop__mode ${scope === 'mine' ? 'is-on' : ''}`} aria-pressed={scope === 'mine'} onClick={() => setScope('mine')}>MINE</button>
+          <button className={`workshop__mode ${scope === 'global' ? 'is-on' : ''}`} aria-pressed={scope === 'global'} onClick={() => setScope('global')}>GLOBAL</button>
+        </div>
         <h2>{loading ? 'Reading the relays' : `${feed.length} object${feed.length === 1 ? '' : 's'}`}</h2>
         <button className="btn" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={16} strokeWidth={2.25} /> REFRESH
@@ -128,7 +173,8 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
         </p>
       )}
       <div className="grid">
-        {feed.map((o) => <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => view(o)} />)}
+        {feed.map((o) => <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => (picking ? choose(o) : view(o))} />)}
+        {drafts.map((sh) => <DraftTile key={`draft:${sh.id}`} shard={sh} picking={picking} />)}
       </div>
     </section>
     {/* Every preview above is drawn by this one canvas. A canvas per tile was a
