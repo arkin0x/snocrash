@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
+import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, FlipVertical2, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, Waypoints, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from 'sno-core/shards'
@@ -59,7 +59,7 @@ const TOOL_HELP: Partial<Record<Tool, string>> = {
   view: 'Look around: one finger orbits, two pan, pinch zooms. The compass turns the view a quarter at a time. Pick a tool to build.',
   stamp: 'Tap the grid to place the shape where the ghost shows. Q turns it.',
   add: 'Tap the grid to place a vertex at the current level.',
-  face: 'Tap corners in order, then the first again or FILL. Tap a face to select it; DELETE FACE removes it.',
+  face: 'Tap corners in order, then the first again or FILL. Tap a face to select it; DELETE FACE removes it. A dark face shows its back: FLIP turns it round.',
 }
 
 type Panel = 'menu' | 'tools' | 'grid'
@@ -175,6 +175,36 @@ function ControlsPad({ points }: { points: number }): JSX.Element {
   )
 }
 
+
+/**
+ * FLIP, for the FACE tool. Which way a face looks is its winding (DECK-0003
+ * §1.4), and this is how an author turns it. It asks how much before it
+ * turns anything, the way PASTE asks where: the face in hand, its whole
+ * surface, or every face by the bench's outward guess. AUTO needs no face.
+ */
+function FlipKey({ face }: { face: number | null }): JSX.Element {
+  const w = useWorkshop.getState
+  const [asking, setAsking] = useState(false)
+  const pick = (fn: () => void) => (): void => { setAsking(false); fn() }
+  return (
+    <div className="benchflip">
+      <button className="workshop__btn" aria-haspopup="menu" aria-expanded={asking} onClick={() => setAsking((o) => !o)} title="Turn faces round: which side is the front">
+        <FlipVertical2 size={12} strokeWidth={2.25} aria-hidden /> FLIP
+      </button>
+      {asking && (
+        <>
+          {/* Anywhere else puts the question away and turns nothing. */}
+          <div className="benchpaste__away" onPointerDown={() => setAsking(false)} />
+          <div className="benchpaste benchpaste--flip" role="menu" aria-label="What to flip">
+            <button className="workshop__btn" role="menuitem" disabled={face === null} title="This face turned round, its back to the front" onClick={pick(() => w().flipSelectedFace())}>FLIP FACE</button>
+            <button className="workshop__btn" role="menuitem" disabled={face === null} title="This face turned round, and every face joined to it by an edge turned to agree" onClick={pick(() => w().flipSelectedSurface())}>FLIP SURFACE</button>
+            <button className="workshop__btn" role="menuitem" title="Every face in the object turned to look outward, by the bench's best guess" onClick={pick(() => w().autoWind())}>AUTO</button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 /**
  * The view pad, for the bench: the arrows turn the working grid a quarter
@@ -676,6 +706,7 @@ export function Workshop(): JSX.Element | null {
         {facing && selectedFace !== null && (
           <div className="benchops" role="group" aria-label="Selected face">
             <span className="workshop__value workshop__value--wide">face {selectedFace + 1} of {shard?.faces.length ?? 0}</span>
+            <FlipKey face={selectedFace} />
             {/* A hard colour, which colouring the corners cannot give: a corner
                 belongs to every face touching it, so that bleeds across the
                 shared edges. This stops at the edge. */}
@@ -686,34 +717,43 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn" onClick={() => w().selectFace(null)} title="Keep it (Esc)">CANCEL</button>
           </div>
         )}
+        {/* FACE in hand and nothing picked: FLIP alone, so AUTO is always
+            reachable; FLIP FACE and FLIP SURFACE wait for a face. */}
+        {tool === 'face' && !facing && selection.length === 0 && (shard?.faces.length ?? 0) > 0 && (
+          <div className="benchops" role="group" aria-label="Flip">
+            <FlipKey face={null} />
+          </div>
+        )}
         {facing && selectedFace === null && (
           <div className="benchops" role="group" aria-label="Face corners">
             <span className="workshop__value workshop__value--wide">{facePick.length} corner{facePick.length === 1 ? '' : 's'}</span>
             <button className="workshop__btn" disabled={facePick.length < 3} onClick={() => w().fill()} title="Join the corners into a face (Enter)">FILL</button>
             <button className="workshop__btn" onClick={() => w().clearFacePick()} title="Drop the picks (Esc)">CANCEL</button>
+            <FlipKey face={null} />
           </div>
         )}
-        {/* What an action reaches, widening downward: the points in hand, the
-            piece they are joined to, the whole object. These used to sit inside
+        {/* What an action reaches, a column over the chip, widest at the top:
+            the whole object, the piece the points in hand are joined to, the
+            points themselves, nearest the chip (arkinox, 2026-09-24). These used to sit inside
             a column the chip unfolded into, along with eight remembered
             swatches and a second way to open the palette. The palette modal
             replaced all three of those, so the column was a worse copy of it
             wrapped around the only part worth keeping. */}
         {(tool !== 'face' || selectedFace !== null) && (
           <div className="ws__acts" role="group" aria-label="Apply the color">
-            {selection.length > 0 && (
-              <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" {...noCallout}>
-                <PaintBucket size={17} strokeWidth={2.25} aria-hidden />
-              </button>
-            )}
+            <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" {...noCallout}>
+              <Globe size={17} strokeWidth={2.25} aria-hidden />
+            </button>
             {selection.length > 0 && (
               <button className="workshop__color ws__act" onClick={() => w().colorConnected(w().color)} title="The color onto these points and everything joined to them by faces" aria-label="Color the connected piece" {...noCallout}>
                 <Waypoints size={17} strokeWidth={2.25} aria-hidden />
               </button>
             )}
-            <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" {...noCallout}>
-              <Globe size={17} strokeWidth={2.25} aria-hidden />
-            </button>
+            {selection.length > 0 && (
+              <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" {...noCallout}>
+                <PaintBucket size={17} strokeWidth={2.25} aria-hidden />
+              </button>
+            )}
           </div>
         )}
         {/*

@@ -42,10 +42,11 @@ interface Props {
   /** Dimmed, for a preview that is not yet real. */
   ghost?: boolean
   /**
-   * Lit, as on the bench: faces shaded flat by the scene's lights, wound
-   * consistently outward (lib/orient.ts) and their backs painted dark, so an
-   * open shape shows its inside and a missing face is plain to see. The
-   * world draws unlit under its bloom instead.
+   * Lit, as on the bench: faces shaded flat by the scene's lights, each one's
+   * front as its winding gives it (DECK-0003 §1.4) and its back painted dark,
+   * so a face that looks the wrong way is plain to see and FLIP can turn it.
+   * Nothing is guessed here: the winding is the author's. The world draws
+   * unlit under its bloom instead.
    */
   lit?: boolean
   /**
@@ -60,8 +61,12 @@ interface Props {
   world?: boolean
   /** performance.now() when this client opened the shard; runs the decode. */
   birth?: number
-  /** A tap on a SOLID face (its index is `e.faceIndex`); the workshop's FACE tool. */
-  onFaceClick?: (e: ThreeEvent<MouseEvent>) => void
+  /**
+   * A tap on a SOLID face, with the shard's own index for it; the workshop's
+   * FACE tool. Not `e.faceIndex`, which counts the triangles drawn, and the
+   * bench leaves out the faces buried in a join.
+   */
+  onFaceClick?: (e: ThreeEvent<MouseEvent>, face: number) => void
   /**
    * The region the shard is sealed to, in this frame (lib/clip.ts regionBox).
    * What lies outside it is not drawn: faces are cut at the walls and points
@@ -91,25 +96,26 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
   // colour would bleed across every edge it shares. Expanded here and nowhere
   // else, so the rest of this file never learns about face colours.
   const shard = useMemo(() => expandFaceColors(given), [given])
-  const { positions, colors, index, faces } = useMemo(() => {
+  const { positions, colors, index, faces, drawn } = useMemo(() => {
     const f = flatten(shard)
-    const oriented = lit
-      // Wound outward, and without the faces buried inside a join, which would
-      // only fight the face they sit against (orient.ts).
-      ? (() => { const o = orientShard(shard.vertices.map((v) => toRender(ticksOf(v))), shard.faces); return { ...f, index: o.faces.filter((_, i) => !o.interior[i]).flat() } })()
-      : f
-    if (!clip || boxContains(clip, oriented.positions)) return { ...oriented, faces: shard.faces as number[][] }
+    // On the bench, without the faces buried inside a join, which would only
+    // fight the face they sit against (orient.ts). Their winding is kept: it
+    // is the author's, and it is the face's front (DECK-0003 §1.4).
+    const buried = lit ? orientShard(shard.vertices.map((v) => toRender(ticksOf(v))), shard.faces).interior : null
+    const drawn = shard.faces.map((_, i) => i).filter((i) => !buried?.[i])
+    const oriented = buried ? { ...f, index: drawn.flatMap((i) => shard.faces[i]) } : f
+    if (!clip || boxContains(clip, oriented.positions)) return { ...oriented, faces: shard.faces as number[][], drawn }
     // Cropped to its region: the faces cut at the walls, and the points that
     // are left are the vertices of the cut faces, or, for a shard with no
     // faces, its own points inside the walls.
     if (shard.faces.length === 0) {
       const pts = clipPoints(oriented.positions, oriented.colors, clip)
-      return { positions: pts.positions, colors: pts.colors, index: [] as number[], faces: [] as number[][] }
+      return { positions: pts.positions, colors: pts.colors, index: [] as number[], faces: [] as number[][], drawn: [] as number[] }
     }
     const cut = clipMesh(oriented, clip)
     const faces: number[][] = []
     for (let t = 0; t + 2 < cut.index.length; t += 3) faces.push([cut.index[t], cut.index[t + 1], cut.index[t + 2]])
-    return { ...cut, faces }
+    return { ...cut, faces, drawn: faces.map((_, i) => i) }
   }, [shard.vertices, shard.faces, lit, clip])
 
   // Live copies: the decode writes into these, the targets stay untouched.
@@ -241,7 +247,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
     <group scale={scale}>
       {shard.mode === 'solid' && index.length > 0 && (
         <group>
-          <mesh name="shard-faces" geometry={indexed} frustumCulled={false} {...(onFaceClick ? { onClick: onFaceClick } : {})}>
+          <mesh name="shard-faces" geometry={indexed} frustumCulled={false} {...(onFaceClick ? { onClick: (e: ThreeEvent<MouseEvent>) => { const k = e.faceIndex; if (k != null && drawn[k] !== undefined) onFaceClick(e, drawn[k]) } } : {})}>
             {lit
               ? <meshLambertMaterial vertexColors flatShading side={FrontSide} transparent opacity={opacity} />
               : <meshBasicMaterial vertexColors side={DoubleSide} toneMapped={false} transparent opacity={opacity} {...(world && !ghost ? TAG_BLEND : {})} />}
