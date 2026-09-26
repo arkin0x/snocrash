@@ -2426,3 +2426,14 @@ button:disabled { opacity: 0.35; cursor: default; }
   .palettes__grid { grid-template-columns: repeat(16, 1fr); }
   .palettes__sw { min-height: 34px; }
 }
+
+/* The box a SELECT drag draws (Bench Marquee). The bench made and sized it
+   all along but nothing styled it, so it was an invisible div; this is
+   ONOSENDAI's rule, so the two workshops look the same while you drag. */
+.bench__marquee {
+  position: absolute;
+  border: 1px solid var(--accent, #00e5ff);
+  background: rgba(0, 229, 255, 0.08);
+  pointer-events: none;
+  z-index: 5;
+}
