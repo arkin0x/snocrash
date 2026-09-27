@@ -153,18 +153,26 @@ function ControlsPad({ points, objects = 0 }: { points: number; objects?: number
  * left end the same evening, out of the right-hand corner. PASTE asks where
  * before it puts anything down, since the answer is not obvious: back where
  * it came from, or on the plane you are working on. CLEAR lets the held
- * points go, and PASTE with them.
+ * points go, and PASTE with them. VERTS leads the row under SELECT: every
+ * point in the object in hand at once (arkinox, 2026-09-27); `verts` is how
+ * many there are, 0 off SELECT.
  */
-function ClipRow({ points, objects = 0 }: { points: number; objects?: number }): JSX.Element | null {
+function ClipRow({ points, objects = 0, verts = 0 }: { points: number; objects?: number; verts?: number }): JSX.Element | null {
   const inHand = points + objects
   const w = useWorkshop.getState
   const clip = useWorkshop((s) => s.clip)
   const [asking, setAsking] = useState(false)
   useEffect(() => { if (clip === null) setAsking(false) }, [clip])
-  if (inHand === 0 && clip === null) return null
+  if (inHand === 0 && clip === null && verts === 0) return null
   const held = clip ? [clip.points.length ? `${clip.points.length} point${clip.points.length === 1 ? '' : 's'}` : '', clip.parts.length ? `${clip.parts.length} object${clip.parts.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ') : ''
   return (
     <div className="benchclip" role="group" aria-label="Clipboard">
+      {verts > 0 && (
+        <button className="touchpad__key" title={`Select all ${verts} points`} aria-label="Select every point" {...noCallout} onClick={() => { useWorkshop.setState({ partSel: [] }); w().setSelection([...Array(verts).keys()]) }}>
+          <Waypoints size={15} strokeWidth={2.25} aria-hidden />
+          <span className="touchpad__sub">VERTS</span>
+        </button>
+      )}
       {points >= 3 && (
         <button className="touchpad__key" title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)" aria-label="Fill the selection" {...noCallout} onClick={() => w().fillSelection()}>
           <Triangle size={15} strokeWidth={2.25} aria-hidden />
@@ -683,7 +691,7 @@ export function Workshop(): JSX.Element | null {
       {making && (
       <div className="ws__tools">
         {tool === 'face' && <FaceRow face={selectedFace} picks={facePick.length} faces={shard?.faces.length ?? 0} />}
-        <ClipRow points={selectedPoints} objects={partSel.length} />
+        <ClipRow points={selectedPoints} objects={partSel.length} verts={tool === 'select' ? shard?.vertices.length ?? 0 : 0} />
         {/* Where the one selected point is, over the turn keys: beside TOOLS it
             met the dropper on a phone (arkinox, 2026-09-27). A readout, so taps
             go through to the bench. */}
