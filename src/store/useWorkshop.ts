@@ -111,9 +111,8 @@ const PALETTE_STORAGE = 'onosendai:palette'
 const AVATAR_KEY = 'onosendai:workshop-avatar'
 /** Undo depth per shard. */
 const HISTORY = 64
-/** The swatches every workshop starts with. */
 /**
- * The swatches a new workshop starts with, taken from the built-in palette by
+ * The swatches older builds seeded the recent row with, taken from the built-in palette by
  * index rather than written as hex, so every one of them is a colour an object
  * can actually carry (lib/snoPalette).
  *
@@ -387,6 +386,13 @@ export interface WorkshopState {
   clearFaceColors: () => void
   /** Put a color at the front of the palette (moving it there if it is already in). */
   rememberColor: (hex: string) => void
+  /**
+   * The dropper: the color of the one selected point, or of the selected
+   * face (its hard color when it has one, else the average of its corners),
+   * snapped onto the object's palette,
+   * put in hand and at the front of the recent row.
+   */
+  sampleColor: () => void
   forgetColor: (hex: string) => void
   moveSelected: (axis: 0 | 1 | 2, delta: number) => void
   /**
@@ -420,6 +426,10 @@ export interface WorkshopState {
   /** Take the selected points out of the shard and hold them for PASTE. */
   cutSelection: () => void
   /** Hold a copy of the selected points and put one down at once: copy and paste in a step. */
+  /** Hold a copy of the selected points; they stay where they are. */
+  copySelection: () => void
+  /** Let the held points go; PASTE goes with them. */
+  clearClip: () => void
   duplicateSelection: () => void
   /**
    * Put the held points down, selected and ready to be moved: `exact` where
@@ -460,12 +470,32 @@ function save(shards: ShardModel[]): void {
   try { localStorage.setItem(STORAGE, JSON.stringify(shards)) } catch { /* quota or private mode */ }
 }
 
+/**
+ * The recent row without the starter swatches nobody picked.
+ *
+ * The row is colors you have reached for, so it starts empty (arkinox,
+ * 2026-09-27). Older builds seeded it with DEFAULT_PALETTE, and a remembered
+ * color goes to the front, so the seeds never picked are still at the tail in
+ * their seeded order: that run comes off, and anything picked stays.
+ */
+export function unseeded(list: string[]): string[] {
+  let end = list.length
+  let next = DEFAULT_PALETTE.length
+  while (end > 0) {
+    const k = DEFAULT_PALETTE.indexOf(list[end - 1])
+    if (k < 0 || k >= next) break
+    next = k
+    end--
+  }
+  return list.slice(0, end)
+}
+
 function loadPalette(): string[] {
   try {
     const raw = localStorage.getItem(PALETTE_STORAGE)
     const list: unknown = raw ? JSON.parse(raw) : null
-    return Array.isArray(list) && list.every((h) => typeof h === 'string' && HEX.test(h)) ? list : DEFAULT_PALETTE
-  } catch { return DEFAULT_PALETTE }
+    return Array.isArray(list) && list.every((h) => typeof h === 'string' && HEX.test(h)) ? unseeded(list) : []
+  } catch { return [] }
 }
 
 function loadShowAvatar(): boolean {
@@ -898,6 +928,24 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       set({ palette }); savePalette(palette)
     },
 
+    sampleColor: () => {
+      const { selection, selectedFace } = get()
+      const s = get().current()
+      if (!s) return
+      const corners = selection.length === 1 ? selection : selection.length === 0 && selectedFace !== null ? s.faces[selectedFace] ?? [] : []
+      // A face with a hard color (SEAM) shows that color, so that is what the
+      // dropper takes. Face colors are all or none (sno-core shards): once one
+      // face has a seam, every face carries its own.
+      const seam = selection.length === 0 && selectedFace !== null && s.facecolors?.length === s.faces.length ? s.facecolors[selectedFace] : undefined
+      const cs = seam ? [seam] : corners.map((i) => s.vertices[i]?.c).filter((c): c is P3 => !!c)
+      if (cs.length === 0) return
+      const mean = [0, 1, 2].map((k) => cs.reduce((t, c) => t + c[k], 0) / cs.length) as P3
+      const hex = snapHex(s.palette ?? BUILT_IN, rgbToHex(clampColor(mean)))
+      if (!hex) return
+      set({ color: hexToRgb(hex) })
+      get().rememberColor(hex)
+    },
+
     forgetColor: (hex) => {
       const palette = get().palette.filter((x) => x !== hex.toLowerCase())
       set({ palette }); savePalette(palette)
@@ -1045,6 +1093,15 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       get().deleteSelected()
       set({ notice: `${countLabel(clip)} cut. PASTE asks where to put ${clip.points.length === 1 ? 'it' : 'them'} back.` })
     },
+
+    copySelection: () => {
+      const s = get().current()
+      const clip = s ? clipOf(s, get().selection, get().partSel) : null
+      if (!clip) return
+      set({ clip, notice: `${countLabel(clip)} copied. PASTE puts ${clip.points.length === 1 ? 'it' : 'them'} down, on any tool.` })
+    },
+
+    clearClip: () => set({ clip: null }),
 
     duplicateSelection: () => {
       const s = get().current()
