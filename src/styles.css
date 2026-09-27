@@ -989,35 +989,55 @@ button:disabled { opacity: 0.35; cursor: default; }
 }
 
 /* The main pad's nine cells, for the selection: CONNECT and DELETE take the
- * corners the scale keys have out there. */
-/* Two cells on the end of the row DELETE sits in: CUT then DUPLICATE, or,
-   with nothing selected, PASTE in the cell CUT had. The container lets taps
-   through, since with nothing selected every cell but that one is empty and
-   the bench is underneath. */
+ * corners the scale keys have out there. The container lets taps through to
+ * the bench underneath. */
 .benchpad {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, 48px);
+  grid-template-columns: repeat(3, 48px);
   grid-template-rows: repeat(3, 48px);
   gap: 4px;
   pointer-events: none;
   grid-template-areas:
-    "away    up   toward .   ."
-    "left    hub  right  .   ."
-    "connect down delete cut dup";
+    "away    up   toward"
+    "left    hub  right"
+    "connect down delete";
 }
 
 .benchpad > * { pointer-events: auto; }
 
-.benchpad .touchpad__key--cut { grid-area: cut; }
+/* The clipboard row: first in the bottom-left column, so the pad, TURN and
+   the color column in the other corner never stand on it. The FACE tool's
+   row wears the same keys (ported from ONOSENDAI, 2026-09-27). */
+.benchclip {
+  position: relative;
+  display: flex;
+  gap: 4px;
+}
+.benchclip .touchpad__key { width: 48px; height: 48px; flex-direction: column; gap: 2px; font-size: 17px; }
+.benchclip .touchpad__sub { font-size: 8px; }
+.benchclip .touchpad__key--danger { color: var(--danger); }
+/* A key that asks before it acts (PASTE where, FLIP how much) carries a dot
+   in its top right corner, so it reads as two steps before it is pressed.
+   The dot lights while its question is open (arkinox, 2026-09-27). */
+.touchpad__key--two { position: relative; }
+.touchpad__key--two::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+.touchpad__key--two[aria-expanded='true']::after { background: var(--accent); }
 
-.benchpad .touchpad__key--dup { grid-area: dup; }
-
-/* Where to put the held points. It stands over the two keys, and anything
-   outside it is a tap that pastes nothing. */
+/* Where to put the held points. It opens above the clipboard row, and
+   anything outside it is a tap that pastes nothing. */
 .benchpaste {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: 52px;
   z-index: 2;
   display: flex;
@@ -1042,13 +1062,6 @@ button:disabled { opacity: 0.35; cursor: default; }
   inset: 0;
   z-index: 1;
 }
-/* The FACE tool's row: TURN's keys, and FLIP's question opening above the
-   row from its left end. */
-.benchface { position: relative; display: flex; gap: 4px; }
-.benchface .touchpad__key { width: 48px; height: 48px; flex-direction: column; gap: 2px; font-size: 17px; }
-.benchface .touchpad__sub { font-size: 8px; }
-.benchface .touchpad__key--danger { color: var(--danger); }
-.benchface .benchpaste { left: 0; right: auto; }
 
 .benchpad .touchpad__key--connect { grid-area: connect; color: var(--accent); }
 
@@ -2148,11 +2161,11 @@ button:disabled { opacity: 0.35; cursor: default; }
 .touchpad__hub:hover { background: rgba(0, 229, 255, 0.16); }
 .touchpad__hub:active { background: rgba(0, 229, 255, 0.3); border-color: var(--accent); }
 
-/* The selected point's coordinate, on the end of the TOOLS row so it follows
-   that chip rather than guessing its width, which changes with the tool's name.
-   The corner it lives in is capped short of the colour column, and the readout
-   is the part that gives way, so the two never meet. It takes no taps: the
-   bench is underneath. */
+/* The selected point's coordinate, over the turn keys in the bottom-left
+   column (it stood on the end of the TOOLS row until the dropper beside the
+   colour chip needed that width on a phone). The corner is capped short of
+   the colour column, and the readout is the part that gives way, so the two
+   never meet. It takes no taps: the bench is underneath. */
 .ws__tools { max-width: calc(100% - 128px); }
 .ws__toolchips { min-width: 0; }
 .ws__at {
@@ -2299,6 +2312,15 @@ button:disabled { opacity: 0.35; cursor: default; }
   height: 34px;
   padding: 0;
   border-radius: 9px;
+}
+/* The chip and, to its left while one point or face is in hand, the dropper.
+   The reaches above set their dashed edge to the color in hand inline, so
+   the edge says what a press puts down; the dropper keeps the white edge,
+   since it takes a color rather than applying one. */
+.ws__chiprow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* The Explanation well, and two more the port left bare. */

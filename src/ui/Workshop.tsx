@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, FlipVertical2, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, Wrench, X } from 'lucide-react'
+import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, FlipVertical2, Globe, Grid3x3, Link, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, Wrench, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from 'sno-core/shards'
@@ -109,10 +109,6 @@ function ControlsPad({ points, objects = 0 }: { points: number; objects?: number
   const axes = useBenchView((s) => s.axes)
   const bind = useRepeatable()
   const w = useWorkshop.getState
-  const clip = useWorkshop((s) => s.clip)
-  // PASTE asks where before it puts anything down, since the answer is not
-  // obvious: back where it came from, or on the plane you are working on.
-  const [asking, setAsking] = useState(false)
   const move = (name: NudgeName) => () => { const n = nudgeFor(useBenchView.getState().axes, name); w().moveSelected(n.axis, n.delta * w().step()) }
   const sub = (name: NudgeName): string => nudgeLabel(nudgeFor(axes, name))
   const arrows: Array<{ cell: string; glyph: string; name: NudgeName; key: string }> = [
@@ -141,42 +137,72 @@ function ControlsPad({ points, objects = 0 }: { points: number; objects?: number
         <span className="touchpad__sub">DELETE</span>
       </button>
       <button className="touchpad__hub" title="Clear the selection (Esc)" aria-label={`${points} points and ${objects} objects selected. Tap to clear.`} {...noCallout} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); w().selectVertex(null) }}>
-        {objects === 0 ? `${points} ${points === 1 ? 'PT' : 'PTS'}` : points === 0 ? `${objects} OBJ` : `${points}+${objects}`}
+        {points > 0 && `${points} ${points === 1 ? 'PT' : 'PTS'}`}{points > 0 && objects > 0 && ' · '}{objects > 0 && `${objects} OBJ`}
       </button>
     </>)}
 
-      {/* The clipboard, on the end of the row DELETE sits in: with points in
-          hand, take them or copy them; with nothing in hand, put back what is
-          held, in the cell CUT had. */}
-      {held > 0 ? (
-        <>
-          <button className="touchpad__key touchpad__key--cut" title="Cut the selected points, and their faces, to the clipboard" aria-label="Cut the selection" {...noCallout} onClick={() => w().cutSelection()}>
-            <Scissors size={15} strokeWidth={2.25} aria-hidden />
-          </button>
-          <button className="touchpad__key touchpad__key--dup" title="Duplicate the selected points where they stand, ready to be moved" aria-label="Duplicate the selection" {...noCallout} onClick={() => w().duplicateSelection()}>
-            <Copy size={15} strokeWidth={2.25} aria-hidden />
-          </button>
-        </>
-      ) : clip !== null && (
-        <button className="touchpad__key touchpad__key--cut" title={`Paste the ${clip.points.length} held point${clip.points.length === 1 ? '' : 's'}`} aria-label="Paste the held points" aria-haspopup="menu" aria-expanded={asking} {...noCallout} onClick={() => setAsking(true)}>
-          <ClipboardPaste size={15} strokeWidth={2.25} aria-hidden />
+    </div>
+  )
+}
+
+/**
+ * The clipboard row: FILL while three or more points are in hand, CUT and
+ * COPY while any are, PASTE whenever something is held, on every tool. It
+ * stands first in the bottom-left column so nothing else there or in the
+ * color column ever covers it (arkinox, 2026-09-24); FILL joined it at its
+ * left end the same evening, out of the right-hand corner. PASTE asks where
+ * before it puts anything down, since the answer is not obvious: back where
+ * it came from, or on the plane you are working on. CLEAR lets the held
+ * points go, and PASTE with them.
+ */
+function ClipRow({ points, objects = 0 }: { points: number; objects?: number }): JSX.Element | null {
+  const inHand = points + objects
+  const w = useWorkshop.getState
+  const clip = useWorkshop((s) => s.clip)
+  const [asking, setAsking] = useState(false)
+  useEffect(() => { if (clip === null) setAsking(false) }, [clip])
+  if (inHand === 0 && clip === null) return null
+  const held = clip ? [clip.points.length ? `${clip.points.length} point${clip.points.length === 1 ? '' : 's'}` : '', clip.parts.length ? `${clip.parts.length} object${clip.parts.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ') : ''
+  return (
+    <div className="benchclip" role="group" aria-label="Clipboard">
+      {points >= 3 && (
+        <button className="touchpad__key" title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)" aria-label="Fill the selection" {...noCallout} onClick={() => w().fillSelection()}>
+          <Triangle size={15} strokeWidth={2.25} aria-hidden />
+          <span className="touchpad__sub">FILL</span>
         </button>
       )}
-
-      {asking && (
+      {inHand > 0 && (
+        <>
+          <button className="touchpad__key" title="Cut the selected points, and their faces, to the clipboard" aria-label="Cut the selection" {...noCallout} onClick={() => w().cutSelection()}>
+            <Scissors size={15} strokeWidth={2.25} aria-hidden />
+            <span className="touchpad__sub">CUT</span>
+          </button>
+          <button className="touchpad__key" title="Copy the selected points, and their faces, to the clipboard; they stay where they are" aria-label="Copy the selection" {...noCallout} onClick={() => w().copySelection()}>
+            <Copy size={15} strokeWidth={2.25} aria-hidden />
+            <span className="touchpad__sub">COPY</span>
+          </button>
+        </>
+      )}
+      {clip !== null && (
+        <button className="touchpad__key touchpad__key--two" title={`Paste the ${held} held`} aria-label={`Paste the ${held} held`} aria-haspopup="menu" aria-expanded={asking} {...noCallout} onClick={() => setAsking((o) => !o)}>
+          <ClipboardPaste size={15} strokeWidth={2.25} aria-hidden />
+          <span className="touchpad__sub">PASTE</span>
+        </button>
+      )}
+      {asking && clip !== null && (
         <>
           {/* Anywhere else puts the question away and pastes nothing. */}
           <div className="benchpaste__away" onPointerDown={() => setAsking(false)} />
           <div className="benchpaste" role="menu" aria-label="Where to paste">
             <button className="workshop__btn" role="menuitem" title="Back on the exact points they were taken from" onClick={() => { setAsking(false); w().pasteClip('exact') }}>PASTE</button>
             <button className="workshop__btn" role="menuitem" title="Resting on the plane you are working on, keeping its shape" onClick={() => { setAsking(false); w().pasteClip('floor') }}>PASTE FLOOR</button>
+            <button className="workshop__btn workshop__btn--danger" role="menuitem" title={`Let the ${held} go; PASTE goes with them`} onClick={() => { setAsking(false); w().clearClip() }}>CLEAR CLIPBOARD</button>
           </div>
         </>
       )}
     </div>
   )
 }
-
 
 /**
  * The FACE tool's row, at the top of the bottom-left column in the keys
@@ -194,7 +220,7 @@ function FaceRow({ face, picks, faces }: { face: number | null; picks: number; f
   if (faces === 0 && picks === 0) return null
   const choose = (fn: () => void) => (): void => { setAsking(false); fn() }
   return (
-    <div className="benchface" role="group" aria-label="Faces">
+    <div className="benchclip" role="group" aria-label="Faces">
       {faces > 0 && (
         <button className="touchpad__key" title="Every face in the object turned to look outward, by the bench's best guess" aria-label="Turn every face outward" {...noCallout} onClick={() => w().autoWind()}>
           <WandSparkles size={15} strokeWidth={2.25} aria-hidden />
@@ -209,7 +235,7 @@ function FaceRow({ face, picks, faces }: { face: number | null; picks: number; f
       )}
       {face !== null && (
         <>
-          <button className="touchpad__key" title="Turn this face round: which side is its front" aria-label="Flip" aria-haspopup="menu" aria-expanded={asking} {...noCallout} onClick={() => setAsking((o) => !o)}>
+          <button className="touchpad__key touchpad__key--two" title="Turn this face round: which side is its front" aria-label="Flip" aria-haspopup="menu" aria-expanded={asking} {...noCallout} onClick={() => setAsking((o) => !o)}>
             <FlipVertical2 size={15} strokeWidth={2.25} aria-hidden />
             <span className="touchpad__sub">FLIP</span>
           </button>
@@ -378,7 +404,6 @@ export function Workshop(): JSX.Element | null {
   const partSel = useWorkshop((s) => s.partSel)
   const stampSize = useWorkshop((s) => s.stampSize)
   const stampFacing = useWorkshop((s) => s.stampFacing)
-  const clip = useWorkshop((s) => s.clip)
   const canUndo = useWorkshop((s) => s.past.length > 0)
   const canRedo = useWorkshop((s) => s.future.length > 0)
   const [panel, setPanel] = useState<Panel | null>(null)
@@ -658,6 +683,15 @@ export function Workshop(): JSX.Element | null {
       {making && (
       <div className="ws__tools">
         {tool === 'face' && <FaceRow face={selectedFace} picks={facePick.length} faces={shard?.faces.length ?? 0} />}
+        <ClipRow points={selectedPoints} objects={partSel.length} />
+        {/* Where the one selected point is, over the turn keys: beside TOOLS it
+            met the dropper on a phone (arkinox, 2026-09-27). A readout, so taps
+            go through to the bench. */}
+        {one && (
+          <span className="ws__at" role="status" aria-label="Selected point">
+            at ({publishedFrame(ticksOf(one)).map(unitsLabel).join(', ')})
+          </span>
+        )}
         {(selection.length > 0 || partSel.length > 0) && (
           <div className="benchturn" role="group" aria-label="Turn the selection">
             <button className="touchpad__key" title="A quarter turn left, in the working plane (Q)" aria-label="Turn left" {...noCallout} onClick={() => w().rotateSelected(-1)}>
@@ -670,7 +704,7 @@ export function Workshop(): JSX.Element | null {
             </button>
           </div>
         )}
-        {(selection.length > 0 || partSel.length > 0 || (tool === 'select' && clip !== null)) && <ControlsPad points={selectedPoints} objects={partSel.length} />}
+        {(selection.length > 0 || partSel.length > 0) && <ControlsPad points={selectedPoints} objects={partSel.length} />}
       {panel === 'tools' && (
         <div className="ws__panel ws__panel--up" role="region" aria-label="Tools">
           <div className="workshop__row" role="group" aria-label="Tool">
@@ -743,28 +777,14 @@ export function Workshop(): JSX.Element | null {
               <X size={13} strokeWidth={2.25} aria-hidden />
             </button>
           )}
-          {/* Where the one selected point is, in the gap this row leaves before
-              the colour chip. A readout, so taps go through to the bench. */}
-          {one && (
-            <span className="ws__at" role="status" aria-label="Selected point">
-              at ({publishedFrame(ticksOf(one)).map(unitsLabel).join(', ')})
-            </span>
-          )}
         </div>
       </div>
       )}
 
-      {/* Bottom right: FILL for a set of points, the color column under it.
-          The FACE tool's actions are on their own row at the bottom left. */}
+      {/* Bottom right: the color column. FILL for a set of points is on the
+          clipboard row, and the FACE tool's actions on their own row there. */}
       {making && (
       <div className="ws__corner">
-        {selectedPoints >= 3 && (
-          <div className="benchops" role="group" aria-label="Fill the selection">
-            <button className="workshop__btn" onClick={() => w().fillSelection()} title="Faces across these points: a flat set becomes one face, a solid set its hull (Enter)">
-              <Triangle size={12} strokeWidth={2.25} aria-hidden /> FILL
-            </button>
-          </div>
-        )}
         {/* What an action reaches, a column over the chip, widest at the top:
             the whole object, the piece the points in hand are joined to, the
             points themselves, nearest the chip (arkinox, 2026-09-24). These used to sit inside
@@ -774,16 +794,16 @@ export function Workshop(): JSX.Element | null {
             wrapped around the only part worth keeping. */}
         {(tool !== 'face' || selectedFace !== null) && (
           <div className="ws__acts" role="group" aria-label="Apply the color">
-            <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" {...noCallout}>
+            <button className="workshop__color ws__act" disabled={!shard || shard.vertices.length === 0} onClick={() => w().colorAll(w().color)} title="The color onto every vertex in the object" aria-label="Color everything" style={{ borderColor: hex }} {...noCallout}>
               <Globe size={17} strokeWidth={2.25} aria-hidden />
             </button>
             {selection.length > 0 && (
-              <button className="workshop__color ws__act" onClick={() => w().colorConnected(w().color)} title="The color onto these points and everything joined to them by faces" aria-label="Color the connected piece" {...noCallout}>
+              <button className="workshop__color ws__act" onClick={() => w().colorConnected(w().color)} title="The color onto these points and everything joined to them by faces" aria-label="Color the connected piece" style={{ borderColor: hex }} {...noCallout}>
                 <Waypoints size={17} strokeWidth={2.25} aria-hidden />
               </button>
             )}
             {selection.length > 0 && (
-              <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" {...noCallout}>
+              <button className="workshop__color ws__act" onClick={() => w().colorSelected(w().color)} title="The color onto the points in hand" aria-label="Color the selected points" style={{ borderColor: hex }} {...noCallout}>
                 <PaintBucket size={17} strokeWidth={2.25} aria-hidden />
               </button>
             )}
@@ -798,6 +818,15 @@ export function Workshop(): JSX.Element | null {
           put it on is the obvious order to work in. Hiding it meant selecting
           a face you did not want yet just to reach the palette.
         */}
+        {/* The dropper, left of the chip while one point or one face is in
+            hand: that color, a face's as the average of its corners, into the
+            chip and onto the front of the recent row (arkinox, 2026-09-27). */}
+        <div className="ws__chiprow">
+        {(selection.length === 1 || (selection.length === 0 && selectedFace !== null)) && (
+          <button className="workshop__color ws__act" onClick={() => w().sampleColor()} title={selection.length === 1 ? 'Take this point\'s color' : 'Take this face\'s color, the average of its corners'} aria-label="Take the selected color" {...noCallout}>
+            <Pipette size={17} strokeWidth={2.25} aria-hidden />
+          </button>
+        )}
         <button
           className="chip ws__colorchip"
           style={{ background: hex }}
@@ -805,6 +834,7 @@ export function Workshop(): JSX.Element | null {
           title={`${hex}. Tap for all 256.`}
           aria-label={`Color ${hex}, tap to open the palette`}
         />
+        </div>
         {pickerOpen && <PaletteModal onClose={() => setPickerOpen(false)} />}
       </div>
       )}
