@@ -18,12 +18,19 @@ import { create } from 'zustand'
  * Where a new arrival reads from, until they say otherwise.
  *
  * cyberspace.nostr1.com is where the objects this format was written for
- * already live, so it goes first; primal and nos.lol are general relays, and
- * they are what makes somebody's first published object findable by people who
- * have never heard of any of this.
+ * already live, so it goes first; the others are general relays, and they are
+ * what makes somebody's first published object findable by people who have
+ * never heard of any of this.
+ *
+ * relay.damus.io keeps kind 33331 and is the second relay that actually does
+ * (measured 2026-09-28). relay.primal.net answers but returned no kind 33331
+ * at all, not even an author's own, and nos.lol hung on connect; they stay
+ * because they may recover, and a relay that has nothing costs a read
+ * nothing now that each relay is read on its own (lib/pool stream).
  */
 export const DEFAULT_RELAYS = [
   'wss://cyberspace.nostr1.com',
+  'wss://relay.damus.io',
   'wss://relay.primal.net',
   'wss://nos.lol',
 ]
