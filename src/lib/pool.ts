@@ -93,21 +93,47 @@ const noChallenge = new Set<string>()
  * or that this app has no key for is left exactly as it was: unauthenticated
  * and still readable if it allows that.
  */
-async function authRelay(url: string): Promise<void> {
-  if (noChallenge.has(url)) return
+/**
+ * How long a relay gets to open its socket before a read goes on without it.
+ *
+ * A relay that is down usually refuses at once, but one that hangs neither
+ * opens nor fails (nos.lol, 2026-09-28), and every read used to wait on it:
+ * the feed asked no relay anything until all of them had answered the auth
+ * step, so one hung socket left the whole feed empty until the read gave up.
+ */
+export const CONNECT_DEADLINE_MS = 3000
+
+/** Open a relay, or null once the deadline passes without it. */
+async function reach(url: string): Promise<AuthRelay | null> {
+  let timer: number | undefined
+  const late = new Promise<null>((resolve) => { timer = window.setTimeout(() => resolve(null), CONNECT_DEADLINE_MS) })
   try {
-    const relay = (await pool.ensureRelay(url)) as unknown as AuthRelay
+    return (await Promise.race([pool.ensureRelay(url) as unknown as Promise<AuthRelay>, late]))
+  } catch {
+    return null
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+/** Authenticate one relay if it asks. False when it could not be reached in time: read without it. */
+async function authRelay(url: string): Promise<boolean> {
+  if (noChallenge.has(url)) return true
+  const relay = await reach(url)
+  if (!relay) return false
+  try {
     // The challenge arrives on its own just after the socket opens, so this
     // waits for it rather than asking. Ten turns of 40ms: long enough for a
     // relay that challenges, short enough that three that do not cost the
     // first read of the session about a tenth of a second each, once.
     for (let i = 0; i < 10 && !relay.challenge; i++) await new Promise((r) => setTimeout(r, 40))
-    if (!relay.challenge) { noChallenge.add(url); return }
+    if (!relay.challenge) { noChallenge.add(url); return true }
     if (authedFor.get(url) !== relay.challenge) {
       await relay.auth(authSign)
       authedFor.set(url, relay.challenge)
     }
-  } catch { /* down, or wants no auth, or there is no key to sign with */ }
+  } catch { /* wants no auth, or there is no key to sign with */ }
+  return true
 }
 
 /** Authenticate wherever it is needed, in parallel, before touching any of them. */
@@ -138,33 +164,39 @@ export function stream(
   let finished = false
   let settle: () => void = () => {}
   const done = new Promise<void>((resolve) => { settle = resolve })
-  let sub: { close: () => void } | null = null
+  const subs: Array<{ close: () => void }> = []
 
   const stop = (): void => {
     if (finished) return
     finished = true
     window.clearTimeout(timer)
-    try { sub?.close() } catch { /* already closed */ }
+    for (const sub of subs) { try { sub.close() } catch { /* already closed */ } }
     settle()
   }
 
   const timer = window.setTimeout(stop, deadline)
 
-  // Authenticate first, then ask. Subscribing before the challenge is answered
-  // is what gets the REQ closed on an auth-gated relay, and the pool does not
-  // retry a closed REQ. The handle is returned now rather than awaited, so a
-  // caller can still give up during the handshake; `stop` closes whatever
-  // exists by then, and the subscription below checks before opening.
-  void authAll(relays).then(() => {
-    if (finished) return
-    sub = pool.subscribeMany(relays, filter, {
-      onevent,
-      // Every relay has said it has nothing further. Whatever else is out there
-      // is not on these relays, so waiting longer buys nothing.
-      oneose: stop,
-      onclose: stop,
+  // Every relay has said it has nothing further, or cannot be reached: whatever
+  // else is out there is not on these relays, so waiting longer buys nothing.
+  let open = relays.length
+  if (open === 0) stop()
+  const over = (): void => { if (--open <= 0) stop() }
+
+  // Each relay on its own: authenticate it, then ask it. Subscribing before the
+  // challenge is answered is what gets the REQ closed on an auth-gated relay,
+  // and the pool does not retry a closed REQ. On its own, because waiting for
+  // every relay's handshake before asking any of them let one hung socket
+  // starve the rest: the feed came up empty with cyberspace.nostr1.com
+  // authenticated and ready (2026-09-28). The first relay to answer paints.
+  for (const url of relays) {
+    void authRelay(url).then((reached) => {
+      if (finished) return
+      if (!reached) { over(); return }
+      let ended = false
+      const end = (): void => { if (!ended) { ended = true; over() } }
+      subs.push(pool.subscribeMany([url], filter, { onevent, oneose: end, onclose: end }))
     })
-  })
+  }
 
   return { done, close: stop }
 }

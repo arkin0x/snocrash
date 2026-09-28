@@ -300,7 +300,14 @@ async function signEvent(template: Parameters<Signer['signEvent']>[0]): Promise<
  * is signing everything else, so an auth-gated relay sees the same identity
  * that publishes.
  */
-setAuthSigner(signEvent)
+setAuthSigner(async (template) => {
+  // The first read of a visit can reach a relay's challenge before the
+  // identity is restored: a page's effects run child first, so the feed asks
+  // before App's init() has set the signer. Wait for it, briefly, rather than
+  // fail the challenge and have the relay close the read.
+  for (let i = 0; i < 60 && !signer; i++) await new Promise((r) => setTimeout(r, 50))
+  return signEvent(template)
+})
 
 /** Remote signatures in flight, so a wake cannot drop the sockets one is arriving on. */
 let pendingSigns = 0
