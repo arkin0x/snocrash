@@ -108,7 +108,7 @@ describe('writing a palette event', () => {
     expect(tagsOf(ev, 'name')).toEqual([['name', 'traffic']])
     expect(tagsOf(ev, 'alt')[0][1]).toContain('traffic')
     expect(tagsOf(ev, 'alt')[0][1]).toContain('#ff0000')
-    expect(tagsOf(ev, 'client')).toEqual([['client', 'snocrash']])
+    expect(tagsOf(ev, 'client')).toEqual([['client', 'SNOcrash.art']])
     expect(tagsOf(ev, 'layout')).toEqual([['layout', 'horizontal']])
   })
 

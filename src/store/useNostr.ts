@@ -33,6 +33,7 @@ import { refTags } from 'sno-core/parts'
 import { forgetRef } from '../lib/parts'
 import { hexAt, parsePaletteEvent, type Palette } from 'sno-core/snoPalette'
 import type { PublishedPalette } from './useWorkshop'
+import { CLIENT_TAG } from '../lib/client'
 
 /** DECK-0003 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
 export const SNO_KIND = 33331
@@ -180,7 +181,7 @@ export function paletteTemplate(
       ['layout', 'horizontal'],
       // What a client that cannot render it should say instead (NIP-31).
       ['alt', `Color palette "${name}": ${hexes.length} colors, ${shown}${rest > 0 ? `, and ${rest} more` : ''}`],
-      ['client', 'snocrash'],
+      [...CLIENT_TAG],
       ...(prev ? [['e', prev.id, prev.relays[0] ?? '', 'previous']] : []),
       // Only when it says something `previous` does not: the first edit's
       // previous IS the genesis, and one hop back finds it.
