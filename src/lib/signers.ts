@@ -32,6 +32,7 @@ import { nip19, type EventTemplate, type Event as NostrEvent } from 'nostr-tools
 import * as nip46 from 'nostr-tools/nip46'
 import * as nip49 from 'nostr-tools/nip49'
 import { pool } from './pool'
+import { attributed } from './client'
 
 export type SignerKind = 'local' | 'nip07' | 'nip46'
 export { SIGN_PATIENCE_MS, SignerTimeout, signWithin } from './signWithin'
@@ -68,7 +69,7 @@ export function localSigner(secretKey: Uint8Array): Signer {
     kind: 'local',
     pubkey: getPublicKey(secretKey),
     secretKey,
-    signEvent: (template) => Promise.resolve(finalizeEvent(template, secretKey) as NostrEvent),
+    signEvent: (template) => Promise.resolve(finalizeEvent(attributed(template), secretKey) as NostrEvent),
   }
 }
 
@@ -99,7 +100,7 @@ export async function nip07Signer(): Promise<Signer> {
   const ext = windowNostr()
   if (!ext) throw new Error('No nostr extension found in this browser.')
   const pubkey = await ext.getPublicKey()
-  return { kind: 'nip07', pubkey, signEvent: (t) => ext.signEvent(t) }
+  return { kind: 'nip07', pubkey, signEvent: (t) => ext.signEvent(attributed(t)) }
 }
 
 /**
@@ -122,7 +123,7 @@ export async function nip46Signer(bunkerUri: string, clientSecretKey?: Uint8Arra
     pubkey,
     bunkerUri,
     clientSecretKey: clientSk,
-    signEvent: (t) => bunker.signEvent(t) as Promise<NostrEvent>,
+    signEvent: (t) => bunker.signEvent(attributed(t)) as Promise<NostrEvent>,
     close: () => bunker.close(),
     // A phone that suspends the tab leaves its relay sockets half-open: the
     // browser still calls them connected, so the pool reuses them and a
