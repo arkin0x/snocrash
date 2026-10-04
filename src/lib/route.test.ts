@@ -14,10 +14,30 @@ describe('routes', () => {
     expect(parseRoute('/workshop/naddr1abc')).toEqual({ view: 'make', address: 'naddr1abc' })
   })
 
-  it('treats / and anything unknown as the workshop, which is what / always was', () => {
-    // An old link, or a typo, still lands somewhere useful rather than nowhere.
-    expect(parseRoute('/')).toEqual({ view: 'make', address: null })
-    expect(parseRoute('/nonsense')).toEqual({ view: 'make', address: null })
+  it('opens / on the feed on a first visit, with nothing remembered', () => {
+    expect(parseRoute('/')).toEqual({ view: 'feed' })
+    expect(parseRoute('/', null)).toEqual({ view: 'feed' })
+  })
+
+  it('opens / where the last visit left off', () => {
+    expect(parseRoute('/', '/workshop')).toEqual({ view: 'make', address: null })
+    expect(parseRoute('/', '/workshop/naddr1abc')).toEqual({ view: 'make', address: 'naddr1abc' })
+    expect(parseRoute('/', '/feed')).toEqual({ view: 'feed' })
+  })
+
+  it('treats anything unknown as /, so an old link or a typo still lands somewhere useful', () => {
+    expect(parseRoute('/nonsense')).toEqual({ view: 'feed' })
+    expect(parseRoute('/nonsense', '/workshop')).toEqual({ view: 'make', address: null })
+  })
+
+  it('honors a link that names a place over where the last visit was', () => {
+    expect(parseRoute('/feed', '/workshop/naddr1abc')).toEqual({ view: 'feed' })
+    expect(parseRoute('/workshop/naddr1xyz', '/feed')).toEqual({ view: 'make', address: 'naddr1xyz' })
+  })
+
+  it('ignores a remembered path that names no place', () => {
+    expect(parseRoute('/', '/')).toEqual({ view: 'feed' })
+    expect(parseRoute('/', 'garbage')).toEqual({ view: 'feed' })
   })
 
   it('writes a route back to the same path it was read from', () => {
