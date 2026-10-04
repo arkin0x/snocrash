@@ -7,7 +7,13 @@
  *   /workshop             your own, on the bench
  *   /workshop/naddr1...   one object from the feed, on the bench
  *
- * `/` is the workshop, as it always was, so an old link still lands somewhere.
+ * `/` names no place. Arriving there (the address typed, the installed app's
+ * start, an old link) picks up where the last visit left off: the path you
+ * were on is remembered in localStorage on every move, and the address bar is
+ * set to it. A first visit has nothing remembered and opens on the feed, so a
+ * newcomer sees what people have made before the bench (arkinox, 2026-10-04).
+ * A link that names a place is honored as it is, because a shared link means
+ * "look at this", and it becomes the place remembered.
  *
  * No router library. There are three routes and no nesting, and what a router
  * would add over history.pushState and one popstate listener is mostly the
@@ -24,12 +30,21 @@ import { create } from 'zustand'
 
 export type Route = { view: 'feed' } | { view: 'make'; address: string | null }
 
-/** A path, read as a route. Anything unrecognised is the workshop, which is what `/` has always been. */
-export function parseRoute(pathname: string): Route {
+/** The place a path names, or null for `/` and anything unrecognised. */
+export function namedRoute(pathname: string): Route | null {
   const parts = pathname.split('/').filter(Boolean)
   if (parts[0] === 'feed') return { view: 'feed' }
-  if (parts[0] === 'workshop' && parts[1]) return { view: 'make', address: decodeURIComponent(parts[1]) }
-  return { view: 'make', address: null }
+  if (parts[0] === 'workshop') return { view: 'make', address: parts[1] ? decodeURIComponent(parts[1]) : null }
+  return null
+}
+
+/**
+ * A path, read as a route: the place it names, or, for `/` and anything
+ * unrecognised, the place the last visit left off (`last`, a remembered path),
+ * and the feed when there is none.
+ */
+export function parseRoute(pathname: string, last: string | null = null): Route {
+  return namedRoute(pathname) ?? (last ? namedRoute(last) : null) ?? { view: 'feed' }
 }
 
 /** The path a route is written as. */
@@ -54,10 +69,35 @@ interface RouteState {
   back: () => void
 }
 
-const here = (): Route => (typeof window === 'undefined' ? { view: 'make', address: null } : parseRoute(window.location.pathname))
+/** Where the last visit was: the path of the route on screen, kept on every move. */
+const WHERE_KEY = 'snocrash:where'
+
+function recall(): string | null {
+  try { return localStorage.getItem(WHERE_KEY) } catch { return null }
+}
+
+function remember(route: Route): void {
+  try { localStorage.setItem(WHERE_KEY, pathFor(route)) } catch { /* private mode: this visit only */ }
+}
+
+/**
+ * The route on arrival. When the path named no place, the address bar is
+ * corrected to the place chosen, so that it says where you are and the
+ * history entry behind the next move is a real place.
+ */
+function arrive(): Route {
+  if (typeof window === 'undefined') return { view: 'feed' }
+  const route = parseRoute(window.location.pathname, recall())
+  const path = pathFor(route)
+  if (window.location.pathname !== path) window.history.replaceState(null, '', path + window.location.search + window.location.hash)
+  remember(route)
+  return route
+}
+
+const here = (): Route => (typeof window === 'undefined' ? { view: 'feed' } : parseRoute(window.location.pathname, recall()))
 
 export const useRoute = create<RouteState>((set, get) => ({
-  route: here(),
+  route: arrive(),
   openedFromFeed: false,
   go: (route, opts = {}) => {
     const path = pathFor(route)
@@ -66,6 +106,7 @@ export const useRoute = create<RouteState>((set, get) => ({
       else window.history.pushState(null, '', path)
     }
     set({ route, openedFromFeed: opts.fromFeed ?? (opts.replace ? get().openedFromFeed : false) })
+    remember(route)
   },
   back: () => {
     if (get().openedFromFeed && typeof window !== 'undefined') { window.history.back(); return }
@@ -79,5 +120,6 @@ if (typeof window !== 'undefined') {
     // Leaving the object that was opened from the feed spends that fact.
     const route = here()
     useRoute.setState({ route, openedFromFeed: route.view === 'make' && route.address !== null && useRoute.getState().openedFromFeed })
+    remember(route)
   })
 }

@@ -109,6 +109,12 @@ export type Tool = 'view' | 'stamp' | 'add' | 'select' | 'face'
 const STORAGE = 'onosendai:shards'
 const PALETTE_STORAGE = 'onosendai:palette'
 const AVATAR_KEY = 'onosendai:workshop-avatar'
+/**
+ * The model last on the bench, so returning to the workshop returns to it
+ * rather than to the first in the list (arkinox, 2026-10-04). Only the id:
+ * the model itself is in STORAGE with the rest.
+ */
+const CURRENT_KEY = 'snocrash:current'
 /** Undo depth per shard. */
 const HISTORY = 64
 /**
@@ -464,6 +470,14 @@ function load(): ShardModel[] {
       ? list.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.vertices)).map((s) => normalizeStored(s)).map((s) => ({ ...s, extent: Number.isInteger(s.extent) ? s.extent : Math.max(GRID_HALF, neededExtent(s)) }))
       : []
   } catch { return [] }
+}
+
+/** The model last on the bench, when it is still one of yours. */
+export function lastOnBench(shards: ShardModel[]): string | null {
+  try {
+    const id = localStorage.getItem(CURRENT_KEY)
+    return id && shards.some((s) => s.id === id) ? id : null
+  } catch { return null }
 }
 
 function save(shards: ShardModel[]): void {
@@ -1304,6 +1318,13 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     current: () => get().viewing?.shard ?? get().shards.find((s) => s.id === get().currentId) ?? null,
+  }
+})
+
+// Remember the model on the bench whenever it changes.
+useWorkshop.subscribe((next, prev) => {
+  if (next.currentId && next.currentId !== prev.currentId) {
+    try { localStorage.setItem(CURRENT_KEY, next.currentId) } catch { /* private mode: this visit only */ }
   }
 })
 
