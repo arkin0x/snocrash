@@ -19,7 +19,7 @@
 
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
-import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, pool, prepareRelay, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
+import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRelay, pool, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
 import { SNO_KIND, createFeed, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
@@ -553,7 +553,9 @@ export const useNostr = create<NostrState>((set, get) => ({
       subscribe: (url, filter, handlers) => subscribeOne(url, { ...filter }, handlers),
       authors: mineOnly && me ? [me] : undefined,
       pageSize: 100,
-      read: { prepare: prepareRelay, connectMs: CONNECT_DEADLINE_MS, deadlineMs: READ_DEADLINE_MS },
+      // The connect bounded on its own, the auth on its own allowance (a
+      // signer may be a person approving it): sno-core/feed ReadOptions.
+      read: { connect: connectRelay, auth: authForRead, connectMs: CONNECT_DEADLINE_MS, deadlineMs: READ_DEADLINE_MS },
       onChange: (st) => { if (gen === feedGen) set({ feed: st.objects }) },
     })
     currentFeed = feed

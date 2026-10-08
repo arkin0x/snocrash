@@ -122,19 +122,41 @@ async function authRelay(url: string): Promise<boolean> {
   if (noChallenge.has(url)) return true
   const relay = await reach(url)
   if (!relay) return false
+  await answerChallenge(relay, url)
+  return true
+}
+
+/**
+ * Answer an open relay's challenge, if it sends one. No deadline of its own:
+ * a reader gives it one (sno-core/feed `authMs`), separate from the connect,
+ * because an extension or a bunker may be a person approving the signature,
+ * and the connect's three seconds were not enough for that (review of #26).
+ */
+async function answerChallenge(relay: AuthRelay, url: string): Promise<void> {
   try {
     // The challenge arrives on its own just after the socket opens, so this
     // waits for it rather than asking. Ten turns of 40ms: long enough for a
     // relay that challenges, short enough that three that do not cost the
     // first read of the session about a tenth of a second each, once.
     for (let i = 0; i < 10 && !relay.challenge; i++) await new Promise((r) => setTimeout(r, 40))
-    if (!relay.challenge) { noChallenge.add(url); return true }
+    if (!relay.challenge) { noChallenge.add(url); return }
     if (authedFor.get(url) !== relay.challenge) {
       await relay.auth(authSign)
       authedFor.set(url, relay.challenge)
     }
   } catch { /* wants no auth, or there is no key to sign with */ }
-  return true
+}
+
+/** Open one relay for a read, within the connect deadline; false when it cannot be reached. */
+export async function connectRelay(url: string): Promise<boolean> {
+  return (await reach(url)) !== null
+}
+
+/** Answer one relay's challenge for a read (already open), on the reader's own auth allowance. */
+export async function authForRead(url: string): Promise<void> {
+  if (noChallenge.has(url)) return
+  const relay = await reach(url)
+  if (relay) await answerChallenge(relay, url)
 }
 
 /** Authenticate wherever it is needed, in parallel, before touching any of them. */
@@ -158,8 +180,6 @@ export function subscribeOne(url: string, filter: Filter, handlers: { onevent: (
   return pool.subscribeMany([url], filter, { onevent: handlers.onevent, oneose: handlers.oneose, onclose: (reasons) => handlers.onclose(reasons?.[0]?.reason) })
 }
 
-/** Ready one relay for a read: open it and answer its challenge; false when it cannot be reached in time. */
-export const prepareRelay = authRelay
 
 /**
  * Read from several relays at once, handing each event over as it lands.
@@ -180,7 +200,7 @@ export function stream(
   onevent: (ev: Event) => void,
   deadline: number = READ_DEADLINE_MS,
 ): StreamHandle {
-  const handle = readEach<Filter>(relays, filter, subscribeOne, (ev) => onevent(ev as Event), { deadlineMs: deadline, connectMs: CONNECT_DEADLINE_MS, prepare: prepareRelay })
+  const handle = readEach<Filter>(relays, filter, subscribeOne, (ev) => onevent(ev as Event), { deadlineMs: deadline, connectMs: CONNECT_DEADLINE_MS, connect: connectRelay, auth: authForRead })
   return { done: handle.done.then(() => undefined), close: handle.close }
 }
 

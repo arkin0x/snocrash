@@ -39,4 +39,18 @@ describe('stream, on sno-core readEach', () => {
     await vi.advanceTimersByTimeAsync(CONNECT_DEADLINE_MS)
     expect(finished).toBe(true)
   })
+
+  it('gives a slow signer its own allowance: an auth slower than the connect deadline still gets the relay read', async () => {
+    // The relay challenges, and the signature takes twice the connect deadline.
+    vi.spyOn(pool, 'ensureRelay').mockImplementation((() => Promise.resolve({ challenge: 'c', auth: () => new Promise((r) => setTimeout(r, CONNECT_DEADLINE_MS * 2)) })) as never)
+    vi.spyOn(pool, 'subscribeMany').mockImplementation(((_urls: string[], _filter: unknown, h: { onevent: (e: Event) => void; oneose: () => void }) => {
+      setTimeout(() => { h.onevent(EV); h.oneose() }, 10)
+      return { close: () => {} }
+    }) as never)
+    const got: string[] = []
+    const handle = stream(['wss://gated.test'], { kinds: [33331], limit: 10 }, (e) => got.push(e.id))
+    await vi.advanceTimersByTimeAsync(CONNECT_DEADLINE_MS * 2 + 100)
+    expect(got).toEqual([EV.id])
+    await handle.done
+  })
 })
