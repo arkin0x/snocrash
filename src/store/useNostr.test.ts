@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { decodeObjectAddress, objectAddress, objectFromEvent, paletteTemplate, PALETTE_KIND } from './useNostr'
+import { decodeObjectAddress, objectAddress, objectFromEvent, objectTemplate, paletteTemplate, PALETTE_KIND } from './useNostr'
+import { withCredit } from 'sno-core/feed'
 import { nip19 } from 'nostr-tools'
 import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
 
@@ -184,5 +185,25 @@ describe('an object from an event (sno-core/feed, shared with ONOSENDAI)', () =>
     expect(o?.address).toBe(`33331:${pubkey}:lamp`)
     expect(o?.event).toBe(ev)
     expect(o?.shard.name).toBe('lamp')
+  })
+})
+
+describe('a remix, published (DECK-0003 crediting; ruled 2026-10-08)', () => {
+  const author = 'd'.repeat(64)
+  const content = JSON.stringify({ v: 2, name: 'chair', unit: 0, extent: 8, mode: 'points', vertices: [[1, 0, 0]], colors: [229], faces: [] })
+  const original = objectFromEvent({ id: 'e'.repeat(64), pubkey: author, created_at: 1, kind: 33331, tags: [['d', 'chair']], content })!
+
+  it('credits the original with the q tag and tells its author with the p tag', () => {
+    const remix = withCredit({ ...original.shard, id: 'my-chair' }, { address: original.address, relay: 'wss://relay.example' })
+    const tags = objectTemplate(remix, 2).tags
+    expect(tags).toContainEqual(['q', `33331:${author}:chair`, 'wss://relay.example'])
+    expect(tags).toContainEqual(['p', author])
+    // Not as a placement: a and e on an object mean "this places that" (§1.10).
+    expect(tags.some((t) => (t[0] === 'a' || t[0] === 'e') && t[1]?.includes(':chair'))).toBe(false)
+  })
+
+  it('an original carries neither', () => {
+    const tags = objectTemplate({ ...original.shard, id: 'mine' }, 2).tags
+    expect(tags.some((t) => t[0] === 'q' || t[0] === 'p')).toBe(false)
   })
 })

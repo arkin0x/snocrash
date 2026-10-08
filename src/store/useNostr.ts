@@ -20,7 +20,7 @@
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
 import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, pool, prepareRelay, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
-import { SNO_KIND, createFeed, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
+import { SNO_KIND, createFeed, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
   deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
@@ -127,6 +127,7 @@ interface NostrState {
 /** The event an object goes out as. Pure, so the shape is testable without a relay. */
 export function objectTemplate(shard: ShardModel, createdAt: number): { kind: number; created_at: number; tags: string[][]; content: string } {
   const payload = toPayload(shard)
+  const credit = creditOf(shard)
   return {
     kind: SNO_KIND,
     created_at: createdAt,
@@ -140,6 +141,10 @@ export function objectTemplate(shard: ShardModel, createdAt: number): { kind: nu
       // a relay can answer "what places this object". Readers take the
       // placements from the payload, never from these.
       ...refTags(shard),
+      // A remix credits the object it was made from: the q tag naming it,
+      // and, since this is published for everyone, the p that tells its
+      // author (DECK-0003, crediting; arkinox, 2026-10-08).
+      ...(credit ? creditTags(credit, { notify: true }) : []),
     ],
     content: JSON.stringify(payload),
   }

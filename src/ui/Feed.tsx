@@ -79,8 +79,9 @@ function DraftTile({ shard, picking }: { shard: ShardModel; picking: boolean }):
 function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView: () => void }): JSX.Element {
   const say = useNostr((s) => s.say)
   const remix = (): void => {
-    // A copy with an id of its own: publishing it never touches the original.
-    const id = useWorkshop.getState().importShard(o.shard)
+    // A copy with an id of its own: publishing it never touches the original,
+    // and credits it (the q tag, and the p that tells its author).
+    const id = useWorkshop.getState().importShard(o.shard, { address: o.address, relay: o.seen?.[0] })
     useWorkshop.getState().select(id)
     say(`"${o.shard.name}" is yours to edit now. Publishing it makes a new object.`)
     onOpen()
