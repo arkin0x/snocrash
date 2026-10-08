@@ -99,6 +99,7 @@ import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type Wor
 import { newell, triangulate } from 'sno-core/triangulate'
 import { flipFace, flipSurface, windAdded, windOutward } from 'sno-core/winding'
 import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
+import { withCredit, type Credit } from 'sno-core/feed'
 import { useNostr } from './useNostr'
 import { Vector3 } from 'three'
 import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
@@ -456,8 +457,13 @@ export interface WorkshopState {
   exportCurrent: () => string | null
   /** A shard from wire form (the clipboard); the new shard's id, or null if it is not one. */
   importText: (text: string) => string | null
-  /** Add a deep copy of a model from elsewhere (a found shard) to your Stash; returns its new id. */
-  importShard: (model: ShardModel) => string
+  /**
+   * Add a deep copy of a model from elsewhere to your Stash; returns its new
+   * id. With `credit` (a REMIX from the feed), the copy remembers whose
+   * object it was made from, and publishing it credits them (sno-core
+   * creditTags: the q tag, and the p that tells the author).
+   */
+  importShard: (model: ShardModel, credit?: Credit) => string
   current: () => ShardModel | null
 }
 
@@ -1308,10 +1314,11 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return s.id
     },
 
-    importShard: (model) => {
+    importShard: (model, credit) => {
       const taken = new Set(get().shards.map((s) => s.name))
       const name = taken.has(model.name) ? `${model.name} copy` : model.name
-      const copy: ShardModel = { ...model, id: uuid(), name, vertices: model.vertices.map(cloneVertex), faces: model.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
+      const base: ShardModel = { ...model, id: uuid(), name, vertices: model.vertices.map(cloneVertex), faces: model.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
+      const copy: ShardModel = credit ? withCredit(base, credit) : base
       const list = [...get().shards, copy]
       set({ shards: list }); save(list)
       return copy.id

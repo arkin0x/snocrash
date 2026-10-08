@@ -945,3 +945,15 @@ describe('an object opened from the feed', () => {
     expect(w().shards.some((s) => s.id === published.id)).toBe(true)
   })
 })
+
+describe('REMIX keeps the credit on the copy (DECK-0003 crediting)', () => {
+  it('a copy imported with a credit remembers it, and one without stays an original', async () => {
+    const { creditOf } = await import('sno-core/feed')
+    const model = { ...newShard('chair'), vertices: [{ p: [0, 0, 0] as [number, number, number], c: [1, 1, 1] as [number, number, number] }] }
+    const credited = useWorkshop.getState().importShard(model, { address: `33331:${'d'.repeat(64)}:chair` })
+    const plain = useWorkshop.getState().importShard(model)
+    const shards = useWorkshop.getState().shards
+    expect(creditOf(shards.find((s) => s.id === credited)!)).toEqual({ address: `33331:${'d'.repeat(64)}:chair` })
+    expect(creditOf(shards.find((s) => s.id === plain)!)).toBeUndefined()
+  })
+})

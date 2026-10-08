@@ -19,7 +19,8 @@
 
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
-import { authAll, pool, queryAny, setAuthSigner, stream } from '../lib/pool'
+import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRelay, pool, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
+import { SNO_KIND, createFeed, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
   deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
@@ -28,7 +29,7 @@ import {
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
-import { fromPayload, toPayload, type ShardModel } from 'sno-core/shards'
+import { toPayload, type ShardModel } from 'sno-core/shards'
 import { refTags } from 'sno-core/parts'
 import { forgetRef } from '../lib/parts'
 import { hexAt, parsePaletteEvent, type Palette } from 'sno-core/snoPalette'
@@ -36,7 +37,7 @@ import type { PublishedPalette } from './useWorkshop'
 import { CLIENT_TAG } from '../lib/client'
 
 /** DECK-0003 §3.1. Addressable: the newest event per (pubkey, kind, d) stands. */
-export const SNO_KIND = 33331
+export { SNO_KIND } from 'sno-core/feed'
 
 /**
  * DECK-0003 §1.3b. The colour-moment convention, which is where the palettes
@@ -61,16 +62,11 @@ export type FeedScope = 'global' | 'mine'
 
 /** Which read of the feed is current: a switch mid-read must not let the old one paint over the new. */
 let feedGen = 0
+/** The read in progress, closed when a newer one starts. */
+let currentFeed: Feed | null = null
 
-/** An object someone published, with the event it came from. */
-export interface FeedObject {
-  id: string
-  pubkey: string
-  createdAt: number
-  /** The `d` tag: this object's identity, stable across its edits. */
-  d: string
-  shard: ShardModel
-}
+/** An object someone published, with the event it came from (sno-core/feed, shared with ONOSENDAI). */
+export type { FeedObject } from 'sno-core/feed'
 
 /** Who signs right now. Not in the store: it holds a key and React state is copied. */
 let signer: Signer | null = null
@@ -131,6 +127,7 @@ interface NostrState {
 /** The event an object goes out as. Pure, so the shape is testable without a relay. */
 export function objectTemplate(shard: ShardModel, createdAt: number): { kind: number; created_at: number; tags: string[][]; content: string } {
   const payload = toPayload(shard)
+  const credit = creditOf(shard)
   return {
     kind: SNO_KIND,
     created_at: createdAt,
@@ -144,6 +141,10 @@ export function objectTemplate(shard: ShardModel, createdAt: number): { kind: nu
       // a relay can answer "what places this object". Readers take the
       // placements from the payload, never from these.
       ...refTags(shard),
+      // A remix credits the object it was made from: the q tag naming it,
+      // and, since this is published for everyone, the p that tells its
+      // author (DECK-0003, crediting; arkinox, 2026-10-08).
+      ...(credit ? creditTags(credit, { notify: true }) : []),
     ],
     content: JSON.stringify(payload),
   }
@@ -234,17 +235,8 @@ function withHints(hints: string[] | undefined): string[] {
   return [...new Set([...(hints ?? []), ...relaySet()])]
 }
 
-/** The object an event carries, or null when it is not one or is malformed. */
-export function objectFromEvent(ev: Event): FeedObject | null {
-  if (ev.kind !== SNO_KIND) return null
-  const d = ev.tags.find((t) => t[0] === 'd')?.[1]
-  if (!d) return null
-  let shard: ShardModel | null = null
-  try { shard = fromPayload(JSON.parse(ev.content), `${ev.pubkey}:${d}`) } catch { return null }
-  // An object may be nothing but the arrangement of others (§1.9 rule 13).
-  if (!shard || (shard.vertices.length === 0 && !shard.parts?.length)) return null
-  return { id: ev.id, pubkey: ev.pubkey, createdAt: ev.created_at, d, shard }
-}
+/** The object an event carries, or null when it is not one or is malformed (sno-core/feed). */
+export { objectFromEvent } from 'sno-core/feed'
 
 /**
  * Take a signer, or say why not.
@@ -545,47 +537,30 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   loadFeed: async () => {
-    // Objects appear as they arrive rather than when the last relay finishes.
-    // Waiting for all of them meant the whole read cost whatever the slowest
-    // one cost, and one of four is always slow (lib/pool).
+    // The read is sno-core's (sno-core/feed), shared with ONOSENDAI: each
+    // relay asked on its own, the newest event per address, objects painted
+    // as they arrive in batches rather than once the slowest relay finishes.
     const gen = ++feedGen
     const mineOnly = get().scope === 'mine'
     const me = get().pubkey
     set({ loading: true, feed: [] })
     if (mineOnly && !me) { set({ loading: false, notice: 'Choose a key in the menu to see your own objects.' }); return }
-    // Addressable: one object per (pubkey, d), the newest of them. Relays
-    // repeat each other, so the same event arrives more than once and an older
-    // edit can arrive after a newer one; the map settles both.
-    const newest = new Map<string, Event>()
-    let paint: number | undefined
-    const show = (): void => {
-      paint = undefined
-      if (gen !== feedGen) return
-      set({
-        feed: [...newest.values()]
-          .map(objectFromEvent)
-          .filter((o): o is FeedObject => o !== null)
-          .sort((a, b) => b.createdAt - a.createdAt),
-      })
-    }
-    try {
-      await stream(relaySet(), mineOnly && me ? { kinds: [SNO_KIND], authors: [me], limit: 100 } : { kinds: [SNO_KIND], limit: 100 }, (ev) => {
-        const d = ev.tags.find((t) => t[0] === 'd')?.[1]
-        if (!d) return
-        const key = `${ev.pubkey}:${d}`
-        const prev = newest.get(key)
-        if (prev && prev.created_at >= ev.created_at) return
-        newest.set(key, ev)
-        // A burst from one relay is one repaint, not one per event: parsing
-        // and drawing every object again for each arrival is what would make
-        // a fast read feel slow.
-        if (paint === undefined) paint = window.setTimeout(show, 120)
-      }).done
-    } catch {
-      set({ notice: 'Could not reach the relays.' })
-    }
-    window.clearTimeout(paint)
-    show()
+    // A switch of scope mid-read stops the old read rather than letting it run on.
+    currentFeed?.close()
+    const feed = createFeed({
+      relays: relaySet(),
+      // A FeedFilter is a nostr Filter with no tag keys.
+      subscribe: (url, filter, handlers) => subscribeOne(url, { ...filter }, handlers),
+      authors: mineOnly && me ? [me] : undefined,
+      pageSize: 100,
+      // The connect bounded on its own, the auth on its own allowance (a
+      // signer may be a person approving it): sno-core/feed ReadOptions.
+      read: { connect: connectRelay, auth: authForRead, connectMs: CONNECT_DEADLINE_MS, deadlineMs: READ_DEADLINE_MS },
+      onChange: (st) => { if (gen === feedGen) set({ feed: st.objects }) },
+    })
+    currentFeed = feed
+    await feed.more()
+    if (currentFeed === feed) currentFeed = null
     // An object of mine that came back from a relay was published, even if it
     // was published from another browser. It is noted without a fingerprint,
     // because what a relay returns has been through the reader and the writer
