@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { decodeObjectAddress, objectAddress, paletteTemplate, PALETTE_KIND } from './useNostr'
+import { decodeObjectAddress, objectAddress, objectFromEvent, paletteTemplate, PALETTE_KIND } from './useNostr'
 import { nip19 } from 'nostr-tools'
 import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
 
@@ -158,7 +158,7 @@ describe('a palette shorter than the indices in hand', () => {
 
 describe('an object address', () => {
   const pubkey = 'a'.repeat(64)
-  const o = { id: 'e'.repeat(64), pubkey, createdAt: 1, d: 'a1b2c3', shard: {} as never }
+  const o = { id: 'e'.repeat(64), pubkey, createdAt: 1, d: 'a1b2c3', address: `33331:${pubkey}:a1b2c3`, shard: {} as never, event: {} as never }
 
   it('round-trips author and d through the naddr a feed tile links to', () => {
     const address = objectAddress(o)
@@ -172,5 +172,17 @@ describe('an object address', () => {
     expect(decodeObjectAddress('not an address')).toBeNull()
     expect(decodeObjectAddress(nip19.naddrEncode({ kind: 30023, pubkey, identifier: 'x' }))).toBeNull()
     expect(decodeObjectAddress(nip19.npubEncode(pubkey))).toBeNull()
+  })
+})
+
+describe('an object from an event (sno-core/feed, shared with ONOSENDAI)', () => {
+  it('carries its address and the event it was read from, as both clients now read it', () => {
+    const pubkey = 'b'.repeat(64)
+    const content = JSON.stringify({ v: 2, name: 'lamp', unit: 0, extent: 8, mode: 'points', vertices: [[1, 0, 0]], colors: [229], faces: [] })
+    const ev = { id: 'c'.repeat(64), pubkey, created_at: 5, kind: 33331, tags: [['d', 'lamp']], content, sig: '' }
+    const o = objectFromEvent(ev)
+    expect(o?.address).toBe(`33331:${pubkey}:lamp`)
+    expect(o?.event).toBe(ev)
+    expect(o?.shard.name).toBe('lamp')
   })
 })
