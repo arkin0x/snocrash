@@ -181,8 +181,16 @@ export type PastePlace = 'exact' | 'floor'
 export interface ClipPoints {
   points: Array<{ at: P3; c: [number, number, number] }>
   faces: Array<[number, number, number]>
+  /** Each face's hard color (SEAM), in the order of `faces`, when the shard it came from had them. */
+  facecolors?: Array<[number, number, number]>
   /** Placed objects in hand, each with the reference it names rather than an index into refs, so it pastes into any object. */
   parts: Array<Omit<Part, 'ref'> & { ref: Ref }>
+  /**
+   * Set when a whole shard is in hand (IMPORT), to the unit its ticks are in.
+   * It then grows the grid to hold itself, as far as a grid goes; a
+   * selection asks first, as it always has.
+   */
+  unit?: number
 }
 
 /**
@@ -201,13 +209,21 @@ function clipOf(s: ShardModel, selection: number[], partSel: number[] = []): Cli
   const placed = [...new Set(partSel.filter((i) => s.parts?.[i]))].sort((a, b) => a - b)
   if (taken.length === 0 && placed.length === 0) return null
   const local = new Map(taken.map((i, k) => [i, k]))
+  const kept = s.faces.map((_, i) => i).filter((i) => s.faces[i].every((v) => local.has(v)))
+  const seams = s.facecolors && s.facecolors.length === s.faces.length ? s.facecolors : null
   return {
     points: taken.map((i) => ({ at: ticksOf(s.vertices[i]), c: [...s.vertices[i].c] as [number, number, number] })),
-    faces: s.faces
-      .filter((f) => f.every((i) => local.has(i)))
-      .map((f) => f.map((i) => local.get(i) as number) as [number, number, number]),
+    faces: kept.map((i) => s.faces[i].map((v) => local.get(v) as number) as [number, number, number]),
+    ...(seams ? { facecolors: kept.map((i) => [...seams[i]] as [number, number, number]) } : {}),
     parts: placed.map((i) => { const q = s.parts![i]; return { ...q, at: [...q.at] as P3, turn: [...q.turn] as [number, number, number], ref: s.refs![q.ref] } }),
   }
+}
+
+/** The color a face shows without one of its own: the average of its corners. */
+function cornerAverage(s: Pick<ShardModel, 'vertices'>, f: [number, number, number]): [number, number, number] {
+  const sum: [number, number, number] = [0, 0, 0]
+  for (const i of f) { const v = s.vertices[i]; if (v) { sum[0] += v.c[0]; sum[1] += v.c[1]; sum[2] += v.c[2] } }
+  return [sum[0] / 3, sum[1] / 3, sum[2] / 3]
 }
 
 /** "1 point" or "7 points", with its faces and placed objects when it has any. */
@@ -443,6 +459,14 @@ export interface WorkshopState {
    * they were taken from, `floor` resting on the working plane.
    */
   pasteClip: (where?: PastePlace) => void
+  /**
+   * IMPORT: a shard made from a 3D file (sno-core importFile), put down the
+   * way PASTE FLOOR puts held points down: resting on the working plane,
+   * selected, and undone in one step. The clipboard is left as it was. In an
+   * empty shard it takes the file's name, and a point cloud draws as POINTS.
+   * `notice` is the import's one line. False when nothing was put down.
+   */
+  insertImport: (model: ShardModel, notice: string) => boolean
   pickForFace: (index: number) => void
   clearFacePick: () => void
   /** Make faces from the picked corners, in order. */
@@ -603,6 +627,82 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     before.faces.length === 0 && after.faces.length > 0 && before.mode !== 'solid'
       ? { mode: 'solid', notice: 'Switched to SOLID so the faces show. POINTS and LINES are one tap away.' }
       : { mode: after.mode, notice: null }
+
+  /**
+   * Points put down in the current shard, selected and ready to be moved, in
+   * one undoable step: PASTE's path, and IMPORT's. `exact` puts them where
+   * they were taken from, `floor` rests them on the working plane. `as` is
+   * IMPORT's: its own line, and the name an empty shard takes.
+   */
+  const putDown = (clip: ClipPoints, where: PastePlace, as?: { notice: string; name?: string }): boolean => {
+    const { plane, level } = get()
+    const s = get().current()
+    if (!s || (clip.points.length === 0 && clip.parts.length === 0)) return false
+    // Where they came from, to the tick, which is what a copy is for: the
+    // shape returns to the place you took it from and the nudges carry it
+    // off from there. FLOOR is the other answer: the same shape, slid along
+    // the working plane's normal until its lowest point rests on the level
+    // the grid is at. Neither one flattens anything.
+    let low = Infinity
+    for (const q of [...clip.points, ...clip.parts]) low = Math.min(low, q.at[plane])
+    const shift = where === 'floor' ? level - low : 0
+    const slide = (p: P3): P3 => { const at = [...p] as P3; at[plane] = at[plane] + shift; return at }
+    const placed = clip.points.map((q) => ({ at: slide(q.at), c: q.c }))
+    const objects = clip.parts.map((q) => ({ ...q, at: slide(q.at) }))
+    // A whole shard brings its own grid, so this one grows to hold it, as
+    // far as a grid goes. A selection asks first, as it always has.
+    const whole = clip.unit !== undefined
+    let reach = 0
+    for (const q of [...placed, ...objects]) for (const n of q.at) reach = Math.max(reach, Math.ceil(Math.abs(n) / TICKS_PER_UNIT))
+    const extent = whole ? Math.min(MAX_EXTENT, Math.max(s.extent, reach)) : s.extent
+    if (placed.some((q) => !validPoint(q.at, extent)) || objects.some((q) => !validPoint(q.at, extent))) {
+      set({ notice: 'Those would land off the grid. Move the level, or grow the grid.' })
+      return false
+    }
+    // A copy of this object pasted into itself would place itself.
+    const self = selfAddress(s)
+    if (objects.some((q) => q.ref[1] === self)) { set({ notice: 'An object cannot place itself.' }); return false }
+    const empty = s.vertices.length === 0 && !s.parts?.length
+    const base = s.vertices.length
+    const firstPart = s.parts?.length ?? 0
+    const many = clip.points.length + clip.parts.length > 1
+    const added = edit((m) => {
+      const pasted = clip.faces.map((f) => f.map((i) => base + i) as [number, number, number])
+      let next: ShardModel = {
+        ...m,
+        extent,
+        vertices: [...m.vertices, ...placed.map((q) => vertexAt(q.at, q.c))],
+        faces: [...m.faces, ...pasted],
+      }
+      // Seams are all or none (sno-core shards): when either side has them
+      // every face carries one, and a face that had none keeps the look its
+      // corners gave it. Left short, the wire would drop every seam.
+      const own = m.facecolors && m.facecolors.length === m.faces.length ? m.facecolors : null
+      if (own || clip.facecolors) {
+        next = {
+          ...next,
+          facecolors: [
+            ...(own ?? m.faces.map((f) => cornerAverage(m, f))),
+            ...(clip.facecolors ? clip.facecolors.map((c) => [...c] as [number, number, number]) : pasted.map((f) => cornerAverage(next, f))),
+          ],
+        }
+      }
+      for (const { ref, ...place } of objects) next = addPart(next, ref, place).shard
+      // An import into an empty shard is that shard: it takes the file's
+      // name, and a point cloud draws as POINTS rather than as one line
+      // through every point in file order.
+      if (as?.name && empty) next = { ...next, name: as.name.slice(0, 64) }
+      if (as && empty && clip.faces.length === 0) return { ...next, mode: 'points' }
+      // The first faces switch the shard to SOLID, as a stamp's or FILL's do.
+      return as ? { ...next, mode: solidIfFirstFaces(m, next).mode } : next
+    }, as?.notice ?? `${countLabel(clip)} pasted ${where === 'floor' ? 'on the working plane' : 'where they were taken from'}, selected: move ${many ? 'them' : 'it'} into place.`)
+    // The selection is set here rather than through setSelection, which
+    // widens to every vertex sharing a point: pasted exactly, the copy sits
+    // on its original and widening would take both, so the nudges could
+    // never carry the copy off alone.
+    if (added) set({ selection: placed.map((_, k) => base + k), partSel: objects.map((_, k) => firstPart + k), selectedFace: null, facePick: [] })
+    return added
+  }
 
   return {
     shards: load(),
@@ -1132,43 +1232,19 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     pasteClip: (where = 'exact') => {
-      const { clip, plane, level } = get()
+      const { clip } = get()
+      if (clip) putDown(clip, where)
+    },
+
+    insertImport: (model, notice) => {
       const s = get().current()
-      if (!clip || !s || (clip.points.length === 0 && clip.parts.length === 0)) return
-      // Where they came from, to the tick, which is what a copy is for: the
-      // shape returns to the place you took it from and the nudges carry it
-      // off from there. FLOOR is the other answer: the same shape, slid along
-      // the working plane's normal until its lowest point rests on the level
-      // the grid is at. Neither one flattens anything.
-      const low = Math.min(...clip.points.map((q) => q.at[plane]), ...clip.parts.map((q) => q.at[plane]))
-      const shift = where === 'floor' ? level - low : 0
-      const slide = (p: P3): P3 => { const at = [...p] as P3; at[plane] = at[plane] + shift; return at }
-      const placed = clip.points.map((q) => ({ at: slide(q.at), c: q.c }))
-      const objects = clip.parts.map((q) => ({ ...q, at: slide(q.at) }))
-      if (placed.some((q) => !validPoint(q.at, s.extent)) || objects.some((q) => !validPoint(q.at, s.extent))) {
-        set({ notice: 'Those would land off the grid. Move the level, or grow the grid.' })
-        return
-      }
-      // A copy of this object pasted into itself would place itself.
-      const self = selfAddress(s)
-      if (objects.some((q) => q.ref[1] === self)) { set({ notice: 'An object cannot place itself.' }); return }
-      const base = s.vertices.length
-      const firstPart = s.parts?.length ?? 0
-      const many = clip.points.length + clip.parts.length > 1
-      const added = edit((m) => {
-        let next: ShardModel = {
-          ...m,
-          vertices: [...m.vertices, ...placed.map((q) => vertexAt(q.at, q.c))],
-          faces: [...m.faces, ...clip.faces.map((f) => f.map((i) => base + i) as [number, number, number])],
-        }
-        for (const { ref, ...place } of objects) next = addPart(next, ref, place).shard
-        return next
-      }, `${countLabel(clip)} pasted ${where === 'floor' ? 'on the working plane' : 'where they were taken from'}, selected: move ${many ? 'them' : 'it'} into place.`)
-      // The selection is set here rather than through setSelection, which
-      // widens to every vertex sharing a point: pasted exactly, the copy sits
-      // on its original and widening would take both, so the nudges could
-      // never carry the copy off alone.
-      if (added) set({ selection: placed.map((_, k) => base + k), partSel: objects.map((_, k) => firstPart + k), selectedFace: null, facePick: [] })
+      if (!s) return false
+      const clip = clipOf(model, model.vertices.map((_, i) => i))
+      if (!clip) { set({ notice: 'That file has nothing in it to put down.' }); return false }
+      // A whole shard on this shard's own unit: the converter fitted it to
+      // this grid already, so it pastes tick for tick and the grid grows
+      // only if the level pushes it past the edge.
+      return putDown({ ...clip, unit: s.unit }, 'floor', { notice, name: model.name })
     },
 
     pickForFace: (index) => {
