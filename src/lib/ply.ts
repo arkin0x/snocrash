@@ -15,6 +15,13 @@
  *
  * Colors go out as bytes, which is what `uchar red green blue` means and what
  * every reader expects, rather than as the floats the payload carries.
+ *
+ * Positions go out in the published frame (DECK-0003 §2): Y up, +Z toward the
+ * viewer, right handed, the frame MeshLab and glTF assume and the one IMPORT
+ * reads a PLY in. The model keeps that frame with Z negated (sno-core
+ * shards), a mirror, and writing the model as it is published every object
+ * mirrored and, since a mirror turns every front into a back, inside out.
+ * Faces go out in the order the wire has them, which is the model's.
  */
 
 import { TICKS_PER_UNIT, ticksOf, type ShardModel } from 'sno-core/shards'
@@ -50,7 +57,9 @@ export function toPly(shard: ShardModel): string {
     'end_header',
   ]
   for (const v of shard.vertices) {
-    const [x, y, z] = ticksOf(v).map((t) => t / TICKS_PER_UNIT)
+    // The model's Z is the wire's negated; `0 -` so a zero stays a zero.
+    const [x, y, mz] = ticksOf(v).map((t) => t / TICKS_PER_UNIT)
+    const z = 0 - mz
     const [r, g, b] = v.c.map(byte)
     lines.push(`${x} ${y} ${z} ${r} ${g} ${b}`)
   }
