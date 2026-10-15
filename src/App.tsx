@@ -12,16 +12,16 @@
 import { useEffect } from 'react'
 import { Workshop } from './ui/Workshop'
 import { useNostr } from './store/useNostr'
-import { lastOnBench, useWorkshop } from './store/useWorkshop'
+import { lastOnBench, newestId, useWorkshop } from './store/useWorkshop'
 
 export function App(): JSX.Element {
   useEffect(() => { void useNostr.getState().init() }, [])
   // Always something to edit, so the bench is never an empty room: the model
-  // that was on it last visit, or the first of yours.
+  // that was on it last visit, or the one you edited most recently.
   useEffect(() => {
     const w = useWorkshop.getState()
     if (w.shards.length === 0) w.select(w.create('first object'))
-    else if (!w.currentId) w.select(lastOnBench(w.shards) ?? w.shards[0].id)
+    else if (!w.currentId) w.select(lastOnBench(w.shards) ?? newestId(w.shards))
     if (!w.open) w.openWorkshop()
   }, [])
   return <Workshop />

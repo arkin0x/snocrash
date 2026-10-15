@@ -595,7 +595,7 @@ describe('faces and palette', () => {
     w().selectVertex(0)
     w().selectFace(3)
     // The face's corners join the selection so the pad can move the face
-    // (ported from ONOSENDAI, 2026-10-10); a point already in hand stays.
+    // (ONOSENDAI 2026-10-10, parity); a point already in hand stays, as with point taps.
     const corners = w().current()!.faces[3]
     expect(w().selection).toEqual(expect.arrayContaining([0, ...corners]))
     expect(w().selectedFace).toBe(3)
@@ -1052,7 +1052,7 @@ describe('stacked by a move is not welded', () => {
 
   it('a tap on a lit stacked spot lets go of what is held there and never adds the cube corner', () => {
     land()
-    expect(tapSelection(w().current()!, w().selection, 2)).toEqual([9, 10, 11])
+    expect(tapSelection(w().current()!, w().selection, 2, false)).toEqual([9, 10, 11])
     w().toggleVertex(2)
     expect(w().selection).toEqual([9, 10, 11])
     w().toggleVertex(2)
