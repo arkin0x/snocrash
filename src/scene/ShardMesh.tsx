@@ -40,6 +40,7 @@ import { boxContains, clipMesh, clipPoints, type Box } from 'sno-core/clip'
 import { orientShard } from 'sno-core/orient'
 import { faceEdges } from 'sno-core/outline'
 import { SHARD_DOTS, SHARD_POINTS, createDiscMaterial, sizeDisc, withDiscColors } from './pointDisc'
+import { BACK_SHADE_COLOR, SHARD_FACES_TONE_MAPPED } from './shardLight'
 
 interface Props {
   shard: ShardModel
@@ -294,13 +295,18 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
         <group>
           <mesh name="shard-faces" geometry={indexed} frustumCulled={false} {...pick}>
             {lit
-              ? <meshLambertMaterial vertexColors flatShading side={FrontSide} transparent opacity={opacity} />
-              : <meshBasicMaterial vertexColors side={DoubleSide} toneMapped={false} transparent opacity={opacity} {...(world && !ghost ? TAG_BLEND : {})} />}
+              ? <meshLambertMaterial vertexColors flatShading side={FrontSide} toneMapped={SHARD_FACES_TONE_MAPPED} transparent opacity={opacity} />
+              // forceSinglePass: three draws a transparent DoubleSide material
+              // in two passes, flipping its side and recompiling-by-lookup
+              // twice per object per frame, which is pure garbage at a high
+              // refresh rate (ONOSENDAI's 10 GB desktop tabs, 2026-10-14). A
+              // ghost keeps two passes: two passes: its back must sort behind.
+              : <meshBasicMaterial vertexColors side={DoubleSide} forceSinglePass={!ghost} toneMapped={SHARD_FACES_TONE_MAPPED} transparent opacity={opacity} {...(world && !ghost ? TAG_BLEND : {})} />}
           </mesh>
           {lit && inside && (
             <mesh geometry={inside} frustumCulled={false} {...pick}>
-              {/* The inside of a face: lit like the outside, darker by a multiplier so it still reads as inside. */}
-              <meshLambertMaterial vertexColors flatShading color="#6a6a6a" side={FrontSide} transparent opacity={opacity} />
+              {/* The inside of a face: lit like the outside, at BACK_SHADE of it, so it still reads as inside (shardLight). */}
+              <meshLambertMaterial vertexColors flatShading color={BACK_SHADE_COLOR} side={FrontSide} toneMapped={SHARD_FACES_TONE_MAPPED} transparent opacity={opacity} />
             </mesh>
           )}
         </group>
