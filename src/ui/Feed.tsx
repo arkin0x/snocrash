@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { Copy, Download, GitFork, RefreshCw } from 'lucide-react'
+import { Copy, Download, RefreshCw, SquarePen } from 'lucide-react'
 import { useNostr, type FeedObject } from '../store/useNostr'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload, type ShardModel } from 'sno-core/shards'
@@ -22,6 +22,8 @@ import { Preview, PreviewStage } from './Preview'
 import { useRoute } from '../lib/route'
 import { objectAddress } from '../store/useNostr'
 import { ProfilePic } from './ProfilePic'
+import { useProfiles } from '../store/useProfiles'
+import { tileStats } from '../lib/tileStats'
 
 function shortKey(pk: string): string {
   return `${pk.slice(0, 8)}…${pk.slice(-4)}`
@@ -67,10 +69,8 @@ function DraftTile({ shard, picking }: { shard: ShardModel; picking: boolean }):
     <article className="tile tile--draft" title="Not published yet: publish it from the workshop, and it can be placed">
       <Preview shard={shard} />
       <div className="tile__bar">
-        <div className="tile__who">
-          <span className="tile__name">{shard.name}</span>
-          <span className="tile__meta">{picking ? 'PUBLISH FIRST' : 'DRAFT · not published'}</span>
-        </div>
+        <span className="tile__name" title={shard.name}>{shard.name}</span>
+        <span className="tile__meta">{picking ? 'PUBLISH FIRST' : `DRAFT · not published · ${tileStats(shard)}`}</span>
       </div>
     </article>
   )
@@ -78,6 +78,7 @@ function DraftTile({ shard, picking }: { shard: ShardModel; picking: boolean }):
 
 function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView: () => void }): JSX.Element {
   const say = useNostr((s) => s.say)
+  const authorName = useProfiles((s) => s.profiles[o.pubkey]?.name ?? null)
   const remix = (): void => {
     // A copy with an id of its own: publishing it never touches the original,
     // and credits it (the q tag, and the p that tells its author).
@@ -89,20 +90,25 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
   return (
     <article className="tile">
       <Preview shard={o.shard} onOpen={onView} />
+      {/* Title on a row of its own, then what it is, then who made it across
+          from what you can do with it (arkinox, 2026-10-15). */}
       <div className="tile__bar">
-        <ProfilePic pubkey={o.pubkey} size={28} />
-        <div className="tile__who">
-          <span className="tile__name">{o.shard.name}</span>
-          <span className="tile__meta">{o.shard.vertices.length} v · {o.shard.faces.length} f{o.shard.parts?.length ? ` · ${o.shard.parts.length} obj` : ''} · {shortKey(o.pubkey)}</span>
-        </div>
-        <div className="tile__acts">
-          <button className="icon" title="Open a copy in the editor" aria-label={`Remix ${o.shard.name}`} onClick={remix}><GitFork size={16} strokeWidth={2.25} /></button>
+        <span className="tile__name" title={o.shard.name}>{o.shard.name}</span>
+        <span className="tile__meta">{tileStats(o.shard)}</span>
+        <div className="tile__row">
+          <div className="tile__who">
+            <ProfilePic pubkey={o.pubkey} size={24} />
+            <span className="tile__author">{authorName ?? shortKey(o.pubkey)}</span>
+          </div>
+          <div className="tile__acts">
+            <button className="icon" title="Open a copy in the editor" aria-label={`Edit a copy of ${o.shard.name}`} onClick={remix}><SquarePen size={16} strokeWidth={2.25} /></button>
           <button className="icon" title="Copy the object to the clipboard" aria-label={`Copy ${o.shard.name}`} onClick={() => {
             void navigator.clipboard.writeText(JSON.stringify(toPayload(o.shard))).then(() => say('Copied.'), () => say('The clipboard is not available here.'))
           }}><Copy size={16} strokeWidth={2.25} /></button>
           <button className="icon" title="Save as a PLY that Blender reads" aria-label={`Download ${o.shard.name}`} onClick={() => {
             save(toPly(o.shard), fileNameFor(o.shard, 'ply'), 'text/plain')
           }}><Download size={16} strokeWidth={2.25} /></button>
+          </div>
         </div>
       </div>
     </article>

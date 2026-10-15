@@ -1647,8 +1647,13 @@ button:disabled { opacity: 0.35; cursor: default; }
  * those share. pointer-events none so every button under it still takes a tap.
  */
 .preview-stage { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
-.tile__bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
-.tile__who { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; }
+/* Title, then the stats line, then the author across from the actions
+   (arkinox, 2026-10-15): the title has the full width and wraps to two lines
+   before it gives up, instead of losing its end to the buttons. */
+.tile__bar { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-top: 1px solid var(--border); }
+.tile__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.tile__who { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
+.tile__author { min-width: 0; font-size: 10px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Whose object it is, left of what the object is. The fallback is a real
    answer, not a placeholder: most keys have no kind:0 and never will, and two
@@ -1669,7 +1674,7 @@ button:disabled { opacity: 0.35; cursor: default; }
   letter-spacing: 0;
   border-color: rgba(255, 255, 255, 0.2);
 }
-.tile__name { font-size: 11px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile__name { font-size: 11px; line-height: 1.35; color: var(--fg); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
 .tile__meta { font-size: 9px; color: var(--dim); letter-spacing: 0.06em; }
 .tile__acts { display: flex; gap: 4px; flex: none; }
 .tile__acts .icon { width: 30px; height: 30px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--fg); background: rgba(6, 14, 22, 0.72); border: 1px solid var(--border); cursor: pointer; }
