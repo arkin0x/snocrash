@@ -564,6 +564,15 @@ function load(): ShardModel[] {
  * oldest, and opening that on every fresh load kept bringing back the same old
  * object (arkinox, 2026-09-27).
  */
+/**
+ * Whether two shards are the same object in content: what the wire carries,
+ * whatever their ids, names or edit times. An action whose result is the
+ * shard it started from changed nothing (review of parity #33).
+ */
+export function sameContent(a: ShardModel, b: ShardModel): boolean {
+  return JSON.stringify(toPayload({ ...a, name: b.name })) === JSON.stringify(toPayload(b))
+}
+
 export function newestId(shards: ShardModel[]): string | null {
   let best: ShardModel | null = null
   for (const s of shards) if (!best || (s.updatedAt ?? 0) > (best.updatedAt ?? 0)) best = s
@@ -742,7 +751,11 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     // feed leaves nothing behind (review of parity #33).
     const viewing = get().viewing
     if (viewing) {
-      if (!fn(viewing.shard)) return false
+      const tried = fn(viewing.shard)
+      // A refusal, or a result that is the shard it started from (the lit
+      // mode button pressed again, AUTO on faces already outward, a color
+      // already there), changes nothing and adopts nothing.
+      if (!tried || sameContent(tried, viewing.shard)) return false
       get().adopt()
     }
     const { shards, currentId, past } = get()
@@ -784,11 +797,13 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    * objects. The second run matters for your own object with an unpublished
    * local edit, where the stored shard is not the relay's copy on view.
    */
-  const onLive = <R,>(plan: (s: ShardModel) => R | null): { s: ShardModel; r: R } | null => {
+  const onLive = <R,>(plan: (s: ShardModel) => R | null, changed?: (s: ShardModel, r: R) => boolean): { s: ShardModel; r: R } | null => {
     const peek = get().current()
     if (!peek) return null
     const first = plan(peek)
-    if (first === null) return null
+    // `changed` says whether a plan that went through changes anything (a
+    // turn of one point does not); an unchanged plan adopts nothing.
+    if (first === null || (changed && !changed(peek, first))) return null
     if (!get().viewing) return { s: peek, r: first }
     const s = get().adopt()
     if (!s) return null
@@ -821,9 +836,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    * Points put down in the current shard, selected and ready to be moved, in
    * one undoable step: PASTE's path, and IMPORT's. `exact` puts them where
    * they were taken from, `floor` rests them on the working plane. `as` is
-   * IMPORT's: its own line, and the name an empty shard takes.
+   * IMPORT's: its own line, the name an empty shard takes, and `fitted`, a
+   * whole shard already fitted to the target's own unit.
    */
-  const putDown = (clip: ClipPoints, where: PastePlace, self?: string, as?: { notice: string; name?: string }): boolean => {
+  const putDown = (clip: ClipPoints, where: PastePlace, self?: string, as?: { notice: string; name?: string; fitted?: boolean }): boolean => {
     const { plane, level } = get()
     if (clip.points.length === 0 && clip.parts.length === 0) return false
     // Every refusal is decided on the object on the bench before anything
@@ -839,10 +855,14 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       // and an empty shard, whose unit measures nothing yet, takes the copied
       // one's instead. A placed object's own size is its unit plus its step
       // whatever places it (sno-core partMatrix), so only where it stands moves.
-      const whole = clip.unit !== undefined
+      // IMPORT's clip is fitted to the target's own grid, so its unit is the
+      // unit of the shard it lands in, read here, on that shard: the bench's
+      // copy can be the relay's while yours has an unpublished unit change.
+      const clipUnit = as?.fitted ? s.unit : clip.unit
+      const whole = clipUnit !== undefined
       const empty = s.vertices.length === 0 && !s.parts?.length
-      const unit = whole && empty ? clip.unit! : s.unit
-      const k = whole ? clip.unit! - unit : 0
+      const unit = whole && empty ? clipUnit! : s.unit
+      const k = whole ? clipUnit! - unit : 0
       const points = clip.points.map((q) => ({ at: scaleTicks(q.at, k), c: q.c }))
       const parts = clip.parts.map((q) => ({ ...q, at: scaleTicks(q.at, k) }))
       // Where they came from, to the tick, which is what a copy is for: the
@@ -960,11 +980,11 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return s.id
     },
 
-    select: (id, address = null) => set({ currentId: id, viewing: null, address, aimKey: id, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }),
+    select: (id, address = null) => set({ currentId: id, viewing: null, address, aimKey: id, selection: [], partSel: [], selectedFace: null, facePick: [], turnPivot: null, past: [], future: [], notice: null }),
 
     view: (shard, { d, own, address }) => set({
       viewing: { shard, d, own }, address, aimKey: shard.id,
-      selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null,
+      selection: [], partSel: [], selectedFace: null, facePick: [], turnPivot: null, past: [], future: [], notice: null,
     }),
 
     adopt: () => {
@@ -1089,6 +1109,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (!validPoint(p, get().current()?.extent ?? GRID_HALF)) return
       let added = -1
       edit((s) => {
+        // Each run starts over: the dry run on a feed object and the real one
+        // may differ, and a refused run must not leave a stale index behind.
+        added = -1
         // Bounds again on the shard the edit is made to (the check above read the one on the bench).
         if (!validPoint(p, s.extent)) return null
         // One vertex per point by hand: adding where one already is selects it instead.
@@ -1395,7 +1418,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         }
         if (refused) return null
         return { shard: placed.length ? { ...s, vertices, parts } : { ...s, vertices }, key, at }
-      })
+      }, (s, r) => !sameContent(r.shard, s))
       if (refused) { set({ notice: 'That turn would carry a point or an object off the grid.' }); return }
       if (!got) return
       edit(() => got.r.shard)
@@ -1515,14 +1538,13 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     insertImport: (model, notice, self) => {
-      const s = get().current()
-      if (!s) return false
+      if (!get().current()) return false
       const clip = clipOf(model, model.vertices.map((_, i) => i))
       if (!clip) { set({ notice: 'That file has nothing in it to put down.' }); return false }
       // A whole shard on this shard's own unit: the converter fitted it to
       // this grid already, so it pastes tick for tick and the grid grows
       // only if the level pushes it past the edge.
-      return putDown({ ...clip, unit: s.unit }, 'floor', self, { notice, name: model.name })
+      return putDown(clip, 'floor', self, { notice, name: model.name, fitted: true })
     },
 
     pickForFace: (index) => {
