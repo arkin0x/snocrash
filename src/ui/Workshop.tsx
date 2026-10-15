@@ -940,8 +940,10 @@ export function Workshop(): JSX.Element | null {
             hand: that color, a face's as the average of its corners, into the
             chip and onto the front of the recent row (arkinox, 2026-09-27). */}
         <div className="ws__chiprow">
-        {(selection.length === 1 || (selection.length === 0 && selectedFace !== null)) && (
-          <button className="workshop__color ws__act" onClick={() => w().sampleColor()} title={selection.length === 1 ? 'Take this point\'s color' : 'Take this face\'s color, the average of its corners'} aria-label="Take the selected color" {...noCallout}>
+        {/* A face picked in FACE has its corners selected with it (ONOSENDAI
+            parity), so the dropper offers the face there whatever is selected. */}
+        {(selection.length === 1 || (selectedFace !== null && (selection.length === 0 || tool === 'face'))) && (
+          <button className="workshop__color ws__act" onClick={() => w().sampleColor()} title={selectedFace !== null && (selection.length === 0 || tool === 'face') ? 'Take this face\'s color: its seam color, else the average of its corners' : 'Take this point\'s color'} aria-label="Take the selected color" {...noCallout}>
             <Pipette size={17} strokeWidth={2.25} aria-hidden />
           </button>
         )}

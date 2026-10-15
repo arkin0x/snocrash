@@ -44,7 +44,30 @@ import {
   type ShardMode,
   type ShardModel,
   type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
+import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
+import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
 import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from 'sno-core/snoPalette'
+import { newell, triangulate } from 'sno-core/triangulate'
+import { flipFace, flipSurface, windAdded, windOutward } from 'sno-core/winding'
+import { Vector3 } from 'three'
+import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
+import { cornerAverage, weld } from '../lib/weld'
+import { subdivide, subdivideNotice } from '../lib/subdivide'
+import { withCredit, type Credit } from 'sno-core/feed'
+import { useNostr } from './useNostr'
+
+/** VIEW builds nothing: it is the tool you hold to look around. */
+export type Tool = 'view' | 'stamp' | 'add' | 'select' | 'face'
+
+const STORAGE = 'onosendai:shards'
+const PALETTE_STORAGE = 'onosendai:palette'
+/**
+ * The model last on the bench, so returning to the workshop returns to it
+ * rather than to the first in the list (arkinox, 2026-10-04). Only the id:
+ * the model itself is in STORAGE with the rest.
+ */
+const CURRENT_KEY = 'snocrash:current'
+const PALETTES_STORAGE = 'snocrash:palettes'
 
 /**
  * Where a palette this browser knows lives on nostr (DECK-0003 §1.3b).
@@ -71,8 +94,6 @@ export interface NamedPalette {
   event?: PublishedPalette
 }
 
-const PALETTES_STORAGE = 'snocrash:palettes'
-
 function loadPalettes(): NamedPalette[] {
   try {
     const raw = JSON.parse(localStorage.getItem(PALETTES_STORAGE) ?? '[]') as unknown
@@ -95,35 +116,15 @@ function validEvent(e: PublishedPalette | undefined): boolean {
 function savePalettes(list: NamedPalette[]): void {
   try { localStorage.setItem(PALETTES_STORAGE, JSON.stringify(list)) } catch { /* quota or private mode */ }
 }
-import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
-import { newell, triangulate } from 'sno-core/triangulate'
-import { flipFace, flipSurface, windAdded, windOutward } from 'sno-core/winding'
-import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
-import { withCredit, type Credit } from 'sno-core/feed'
-import { useNostr } from './useNostr'
-import { Vector3 } from 'three'
-import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
-
-/** VIEW builds nothing: it is the tool you hold to look around. */
-export type Tool = 'view' | 'stamp' | 'add' | 'select' | 'face'
-
-const STORAGE = 'onosendai:shards'
-const PALETTE_STORAGE = 'onosendai:palette'
 const AVATAR_KEY = 'onosendai:workshop-avatar'
-/**
- * The model last on the bench, so returning to the workshop returns to it
- * rather than to the first in the list (arkinox, 2026-10-04). Only the id:
- * the model itself is in STORAGE with the rest.
- */
-const CURRENT_KEY = 'snocrash:current'
 /** Undo depth per shard. */
 const HISTORY = 64
 /**
- * The swatches older builds seeded the recent row with, taken from the built-in palette by
- * index rather than written as hex, so every one of them is a colour an object
- * can actually carry (lib/snoPalette).
+ * The swatches older builds seeded the recent row with, taken from the SNO palette by index
+ * rather than written as hex, so every one of them is a colour a shard can
+ * actually carry on the wire (lib/snoPalette).
  *
- * 226 is the client's own cyan, 238 pure red, 246 a spring green, 249 amber,
+ * 226 is this client's own cyan, 238 pure red, 246 a spring green, 249 amber,
  * 243 violet, 228 the instrument orange, 225 white, 239 pure blue.
  */
 export const DEFAULT_PALETTE = [226, 238, 246, 249, 243, 228, 225, 239].map((i) => hexAt(BUILT_IN, i))
@@ -186,21 +187,12 @@ export interface ClipPoints {
   /** Placed objects in hand, each with the reference it names rather than an index into refs, so it pastes into any object. */
   parts: Array<Omit<Part, 'ref'> & { ref: Ref }>
   /**
-   * Set when a whole shard is in hand (IMPORT), to the unit its ticks are in.
-   * It then grows the grid to hold itself, as far as a grid goes; a
-   * selection asks first, as it always has.
+   * The unit of the shard it came from, set only when a whole shard was
+   * copied (COPY in MENU). PASTE then keeps its true size in a shard on
+   * another unit and grows the grid to hold it; a selection pastes tick for
+   * tick, as it always has.
    */
   unit?: number
-}
-
-/**
- * An object chosen to stamp with OBJECT: the reference each placement will
- * name, and the object as it was when chosen, which is what the ghost draws.
- */
-export interface StampObject {
-  ref: Ref
-  name: string
-  shard: ShardModel
 }
 
 /** The selected points, exactly where they are, with the faces wholly among them, and the selected placed objects. */
@@ -219,11 +211,31 @@ function clipOf(s: ShardModel, selection: number[], partSel: number[] = []): Cli
   }
 }
 
-/** The color a face shows without one of its own: the average of its corners. */
-function cornerAverage(s: Pick<ShardModel, 'vertices'>, f: [number, number, number]): [number, number, number] {
-  const sum: [number, number, number] = [0, 0, 0]
-  for (const i of f) { const v = s.vertices[i]; if (v) { sum[0] += v.c[0]; sum[1] += v.c[1]; sum[2] += v.c[2] } }
-  return [sum[0] / 3, sum[1] / 3, sum[2] / 3]
+/** This shard's address once this key deploys it, which Bench gives OBJECT and the clipboard gives PASTE: what it must never place. */
+export function ownAddress(pubkey: string, id: string | null): string | undefined {
+  return id ? `33331:${pubkey}:${id}` : undefined
+}
+
+/** The address this object would have if this key published it: an object placing that would place itself. */
+function selfAddress(s: ShardModel): string | undefined {
+  const pk = useNostr.getState().pubkey
+  return pk ? ownAddress(pk, s.id) : undefined
+}
+
+/** A position in ticks scaled by 2^k about the origin, rounded half away from zero (so a mirror image stays one), never -0. */
+function scaleTicks(p: P3, k: number): P3 {
+  if (k === 0) return [...p] as P3
+  return p.map((n) => { const r = Math.round(Math.abs(n) * 2 ** k); return n < 0 ? 0 - r : r }) as P3
+}
+
+/**
+ * An object chosen to stamp with OBJECT: the reference each placement will
+ * name, and the object as it was when chosen, which is what the ghost draws.
+ */
+export interface StampObject {
+  ref: Ref
+  name: string
+  shard: ShardModel
 }
 
 /** "1 point" or "7 points", with its faces and placed objects when it has any. */
@@ -233,12 +245,6 @@ function countLabel(clip: ClipPoints): string {
   if (clip.faces.length) bits.push(`${clip.faces.length} face${clip.faces.length === 1 ? '' : 's'}`)
   if (clip.parts.length) bits.push(`${clip.parts.length} object${clip.parts.length === 1 ? '' : 's'}`)
   return bits.length > 1 ? `${bits.slice(0, -1).join(', ')} and ${bits[bits.length - 1]}` : bits[0] ?? 'nothing'
-}
-
-/** The address this object would have if this key published it: an object placing that would place itself. */
-function selfAddress(s: ShardModel): string | null {
-  const pk = useNostr.getState().pubkey
-  return pk ? `33331:${pk}:${s.id}` : null
 }
 
 /**
@@ -265,6 +271,9 @@ function connectedTo(s: ShardModel, selection: number[]): number[] {
 export interface WorkshopState {
   shards: ShardModel[]
   currentId: string | null
+  /** The workshop overlay is up. */
+  open: boolean
+  tool: Tool
   /**
    * An object opened from the feed that is not yours yet.
    *
@@ -295,31 +304,20 @@ export interface WorkshopState {
    * aiming on object change, not on edit, exists to avoid.
    */
   aimKey: string | null
-  /** The workshop overlay is up. */
-  open: boolean
-  tool: Tool
   /**
-   * Selected vertex indices. Picking a point (a tap, a box) takes every
-   * vertex standing on it then, and the nudge pad, the color and DELETE act
-   * on all of them together. Built by tapping points, dragging a box on the
-   * bench, or CONNECTED. Once held, a vertex set is never widened again by
+   * Selected vertex indices. Picking a point (a tap, a box, a face) takes
+   * every vertex standing on it then, and the nudge pad, the color and DELETE
+   * act on all of them together. Built by tapping points, dragging a box on
+   * the bench, or JOINED. Once held, a vertex set is never widened again by
    * what comes to stand on the same spot later: a stack made by a move stays
-   * two points until the author picks the spot or welds it (settleSelection).
+   * two points until the author picks the spot or WELDs it
+   * (settleSelection, arkinox, 2026-10-12).
    */
   selection: number[]
-  /** Selected placed objects (DECK-0003 §1.10), indices into the shard's parts. Each is one whole thing: selected or not. */
-  partSel: number[]
-  /** STAMP stamps a built-in shape, or an object chosen from the feed. */
-  stampMode: 'shape' | 'object'
-  /** The object OBJECT stamps, or none chosen yet. */
-  stampObject: StampObject | null
-  /** The feed is open to choose that object: a tap on a tile picks it rather than opening it. */
-  picking: boolean
   /** Corners picked so far for the next face, in order. */
   facePick: number[]
   /** The face tapped in FACE mode, an index into the shard's faces, so DELETE can take it. */
   selectedFace: number | null
-  /** Swatches to hand: newest first, every color the picker ever settled on, then the defaults. */
   /** The swatch row: hexes the author has reached for, all of them palette colours. */
   palette: string[]
   /** Palettes this browser knows, beyond the built-in. Named for people, not for the wire. */
@@ -345,23 +343,50 @@ export interface WorkshopState {
   future: ShardModel[]
   /** One line about the last action, shown on the bench until the next edit. */
   notice: string | null
-  /** Points CUT or DUPLICATE took a copy of, for PASTE. Outlives the shard they came from. */
+  /** Points CUT, COPY or DUPLICATE took a copy of, or a whole shard MENU's COPY did, for PASTE. Outlives the shard they came from. */
   clip: ClipPoints | null
   /** Where the last turn pivoted, kept while the same selection turns again. */
   turnPivot: { key: string; at: [number, number] } | null
+  /**
+   * Placed objects selected, by index into `parts` (DECK-0003 §1.10). A placed
+   * object is one thing: it moves, turns, cuts, copies and deletes whole, with
+   * or without points selected beside it; its own vertices are not this
+   * object's to edit.
+   */
+  partSel: number[]
+  /** Select one placed object alone, or none. */
+  selectPart: (index: number | null) => void
+  /** Put one placed object in or out of the selection. */
+  togglePart: (index: number) => void
+  /** Replace the placed-object selection, as the box does. */
+  setPartSelection: (indices: number[]) => void
+  /**
+   * INVERT (arkinox, 2026-10-10): while on, a tap on a point, a face or a
+   * placed object, and a box, take out of the selection and never add. On a
+   * phone it is far easier to gather too much with a few boxes and take the
+   * extras away than to tap each point exactly. Off again when the tool
+   * changes, so a mode nobody can see never follows you to the next tool.
+   */
+  invert: boolean
+  setInvert: (on: boolean) => void
+  /** STAMP places a built-in shape, or a published object by reference (DECK-0003 §1.10). */
+  stampMode: 'shape' | 'object'
+  /** The object OBJECT stamps, chosen in the picker. */
+  stampObject: StampObject | null
+  /** The feed is open to choose that object: a tap on a tile picks it rather than opening it. */
+  picking: boolean
+  setPicking: (on: boolean) => void
+  setStampMode: (mode: 'shape' | 'object') => void
+  setStampObject: (object: StampObject | null) => void
+  /**
+   * Place the chosen object at `at`, turned by the stamp's facing. `self` is
+   * this object's own address if this key published it, so an object is never
+   * made to place itself (every reader would draw a loop placeholder).
+   */
+  placeObject: (at: P3, self?: string) => void
 
   openWorkshop: (id?: string) => void
   closeWorkshop: () => void
-  setStampMode: (mode: 'shape' | 'object') => void
-  setStampObject: (o: StampObject | null) => void
-  setPicking: (on: boolean) => void
-  /** Place the chosen object with its origin at `at`, turned by FACING: a reference, not a copy. */
-  placeObject: (at: P3) => void
-  /** One placed object alone, or none. */
-  selectPart: (index: number | null) => void
-  /** A placed object in or out of the selection, the points untouched. */
-  togglePart: (index: number) => void
-  setPartSelection: (indices: number[]) => void
   create: (name?: string) => string
   select: (id: string | null, address?: string | null) => void
   /** Put an object from the feed on the bench without making it yours. See `viewing`. */
@@ -411,13 +436,6 @@ export interface WorkshopState {
   clearFaceColors: () => void
   /** Put a color at the front of the palette (moving it there if it is already in). */
   rememberColor: (hex: string) => void
-  /**
-   * The dropper: the color of the one selected point, or of the selected
-   * face (its hard color when it has one, else the average of its corners),
-   * snapped onto the object's palette,
-   * put in hand and at the front of the recent row.
-   */
-  sampleColor: () => void
   forgetColor: (hex: string) => void
   moveSelected: (axis: 0 | 1 | 2, delta: number) => void
   /**
@@ -430,8 +448,6 @@ export interface WorkshopState {
   colorAll: (c: [number, number, number]) => void
   /** Keep a palette under a name, and return its id. */
   savePalette: (name: string, colors: Palette, event?: PublishedPalette) => string
-  renamePalette: (id: string, name: string) => void
-  forgetPalette: (id: string) => void
   /**
    * Remember where a palette went, so the next publish of it is an edit.
    *
@@ -440,41 +456,71 @@ export interface WorkshopState {
    * what the colours used to be.
    */
   notePalettePublished: (id: string, event: PublishedPalette) => void
+  /** The colour onto the selection and everything joined to it by faces. */
+  colorConnected: (c: [number, number, number]) => void
+  /**
+   * The dropper: the color of the one selected point, or of the selected
+   * face (its hard color when it has one, else the average of its corners),
+   * snapped onto the object's palette,
+   * put in hand and at the front of the recent row.
+   */
+  sampleColor: () => void
+  renamePalette: (id: string, name: string) => void
+  forgetPalette: (id: string) => void
   /**
    * Put the current shard on another palette, keeping every index.
    * `id` is a saved palette, or null for the built-in.
    */
   usePalette: (id: string | null) => void
-  /** The colour onto the selection and everything joined to it by faces. */
-  colorConnected: (c: [number, number, number]) => void
   deleteSelected: () => void
+  /**
+   * Fold points standing on one spot into one: the selection when two or more
+   * are selected, else the whole shard. Faces that disagreed on colour keep
+   * their own (lib/weld). Never automatic: a paste lands on its original on
+   * purpose, to be moved.
+   */
+  weld: () => void
   /** Take the selected points out of the shard and hold them for PASTE. */
   cutSelection: () => void
-  /** Hold a copy of the selected points and put one down at once: copy and paste in a step. */
-  /** Hold a copy of the selected points; they stay where they are. */
+  /** Hold a copy of the selected points for PASTE and leave them where they are. */
   copySelection: () => void
   /** Let the held points go; PASTE goes with them. */
   clearClip: () => void
+  /** Hold a copy of the selected points and put one down at once: copy and paste in a step. */
   duplicateSelection: () => void
   /**
-   * Put the held points down, selected and ready to be moved: `exact` where
-   * they were taken from, `floor` resting on the working plane.
+   * COPY on a shard in MENU: hold the whole of it for PASTE, every point,
+   * face, seam and placed object, with its unit. False, holding nothing new,
+   * when the shard is empty.
    */
-  pasteClip: (where?: PastePlace) => void
+  copyShard: (model: ShardModel) => boolean
+  /**
+   * Put the held points down, selected and ready to be moved: `exact` where
+   * they were taken from, `floor` resting on the working plane. `self` is
+   * this shard's own address (ownAddress), so a paste never makes it place
+   * itself.
+   */
+  pasteClip: (where?: PastePlace, self?: string) => void
   /**
    * IMPORT: a shard made from a 3D file (sno-core importFile), put down the
-   * way PASTE FLOOR puts held points down: resting on the working plane,
+   * way PASTE FLOOR puts a copied shard down: resting on the working plane,
    * selected, and undone in one step. The clipboard is left as it was. In an
    * empty shard it takes the file's name, and a point cloud draws as POINTS.
    * `notice` is the import's one line. False when nothing was put down.
    */
-  insertImport: (model: ShardModel, notice: string) => boolean
+  insertImport: (model: ShardModel, notice: string, self?: string) => boolean
   pickForFace: (index: number) => void
   clearFacePick: () => void
   /** Make faces from the picked corners, in order. */
   fill: () => void
   /** Faces for the selected points at once: a flat set becomes one polygon, a solid set its convex hull. */
   fillSelection: () => void
+  /**
+   * SUBDIVIDE: every fully selected face cut into four, with the neighbors
+   * split to match, or the one selected edge cut in two (lib/subdivide). The
+   * corners and the new points stay selected, so a second press cuts again.
+   */
+  subdivideSelection: () => void
   removeFace: (index: number) => void
   clearShard: () => void
   undo: () => void
@@ -484,14 +530,21 @@ export interface WorkshopState {
   /** A shard from wire form (the clipboard); the new shard's id, or null if it is not one. */
   importText: (text: string) => string | null
   /**
-   * Add a deep copy of a model from elsewhere to your Stash; returns its new
-   * id. With `credit` (a REMIX from the feed), the copy remembers whose
-   * object it was made from, and publishing it credits them (sno-core
-   * creditTags: the q tag, and the p that tells the author).
+   * Add a deep copy of a model from elsewhere (a found shard, a feed object)
+   * to your Stash; returns its new id. With
+   * `credit`, the copy remembers whose object it was made from (REMIX from
+   * the Shard Feed), and every copy deployed from it carries the credit tag.
+   * With `id`, the copy keeps that id and its name instead of taking new
+   * ones: your own published object taken back from the Shard Feed under its
+   * `d`, so PUBLISH edits it in place rather than publishing a second copy
+   * beside it, as snocrash's adopt does (arkinox, 2026-10-10).
    */
-  importShard: (model: ShardModel, credit?: Credit) => string
+  importShard: (model: ShardModel, credit?: Credit, id?: string) => string
   current: () => ShardModel | null
 }
+
+/** Whose object a model was made from (REMIX): sno-core's, shared with snocrash. */
+export { creditOf } from 'sno-core/feed'
 
 function load(): ShardModel[] {
   try {
@@ -502,6 +555,19 @@ function load(): ShardModel[] {
       ? list.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.vertices)).map((s) => normalizeStored(s)).map((s) => ({ ...s, extent: Number.isInteger(s.extent) ? s.extent : Math.max(GRID_HALF, neededExtent(s)) }))
       : []
   } catch { return [] }
+}
+
+/**
+ * The object edited most recently: the one at the top of the workshop's list.
+ *
+ * The stored list is in the order objects were made, so its first entry is the
+ * oldest, and opening that on every fresh load kept bringing back the same old
+ * object (arkinox, 2026-09-27).
+ */
+export function newestId(shards: ShardModel[]): string | null {
+  let best: ShardModel | null = null
+  for (const s of shards) if (!best || (s.updatedAt ?? 0) > (best.updatedAt ?? 0)) best = s
+  return best?.id ?? null
 }
 
 /** The model last on the bench, when it is still one of yours. */
@@ -553,16 +619,31 @@ function savePalette(palette: string[]): void {
 }
 
 /**
+ * The selection after a tap or a box: `inside` added to `base`, or taken out
+ * of it under INVERT. Sorted and deduped, so a selection built by five little
+ * boxes reads the same as one built by hand. Pure, and the same arithmetic for
+ * points and for placed objects (arkinox, 2026-10-10, decision A: boxes add,
+ * and INVERT makes taps and boxes take away).
+ */
+export function nextSelection(base: number[], inside: number[], invert: boolean): number[] {
+  if (invert) {
+    const gone = new Set(inside)
+    return [...new Set(base.filter((i) => !gone.has(i)))].sort((a, b) => a - b)
+  }
+  return [...new Set([...base, ...inside])].sort((a, b) => a - b)
+}
+
+/**
  * The selection `indices` asks for, given what is `held` now. A vertex that
  * is new to the selection brings every vertex standing on its point, as a tap
  * does; a vertex already held is kept exactly as it is and never widened.
  *
- * Picking is the one moment a spot's stack is taken whole. Before (ported
- * from ONOSENDAI #311, arkinox, 2026-10-12) every write widened all of it
- * again, so a shape moved onto another's corners took those corners the next
- * time anything rewrote the selection (a box growing, a pan putting the box
- * back), and the next nudge tore them off. Points that came to share a spot
- * by a move stay apart until the author picks that spot or welds it.
+ * Picking is the one moment a spot's stack is taken whole. Before
+ * (arkinox, 2026-10-12) every write widened all of it again, so a rectangle
+ * moved down onto a cube's corners took those corners the next time anything
+ * rewrote the selection (a box growing, a two-finger pan putting the box
+ * back), and the next nudge tore them off the cube. Points that came to share
+ * a spot by a move stay apart until the author picks that spot or WELDs.
  * Pure: sorted, deduped, and only real vertices.
  */
 export function settleSelection(s: Pick<ShardModel, 'vertices'>, held: readonly number[], indices: readonly number[]): number[] {
@@ -579,15 +660,16 @@ export function settleSelection(s: Pick<ShardModel, 'vertices'>, held: readonly 
 /**
  * The selection after a tap on the point vertex `index` stands on. Anything
  * of that point in hand: what is in hand there comes out. Nothing in hand:
- * the whole point goes in. A spot is lit when any vertex on it is held, so a
- * tap on a lit spot lets go; asking only about `index` (the first vertex on
- * the spot) took the rest of a stack instead (ONOSENDAI #311). Pure.
+ * the whole point goes in. Under INVERT a tap only takes out. A spot is lit
+ * when any vertex on it is held, so a tap on a lit spot lets go; it used to
+ * ask only about `index`, which the bench sends as the first vertex on the
+ * spot, and a lit spot whose held vertex came later took the rest of the
+ * stack instead (arkinox, 2026-10-12). Pure.
  */
-export function tapSelection(s: Pick<ShardModel, 'vertices'>, held: readonly number[], index: number): number[] {
+export function tapSelection(s: Pick<ShardModel, 'vertices'>, held: readonly number[], index: number, invert: boolean): number[] {
   const g = group(s, index)
-  const release = g.some((i) => held.includes(i))
-  const out = release ? held.filter((i) => !g.includes(i)) : [...new Set([...held, ...g])]
-  return out.sort((a, b) => a - b)
+  const release = invert || g.some((i) => held.includes(i))
+  return nextSelection([...held], g, release)
 }
 
 /** Every vertex on the same point as vertex `index`, itself included. */
@@ -644,7 +726,15 @@ function facesFor(pts: P3[]): Tris | null {
 }
 
 export const useWorkshop = create<WorkshopState>((set, get) => {
-  /** Apply an edit to the current shard, remember what it was, stamp it, persist. */
+  /**
+   * Apply an edit to the current shard, remember what it was, stamp it, persist.
+   *
+   * No size check here or anywhere: the format sets no ceiling on vertices or
+   * faces (DECK-0003 §1.8, 2026-09-24), and the event's size is the relay's
+   * concern. For one day there was one, after a floor pasted to 516 vertices
+   * was refused by every reader; the answer was to drop the limit, not to
+   * enforce it earlier.
+   */
   const edit = (fn: (s: ShardModel) => ShardModel | null, notice: string | null = null): boolean => {
     // An object opened from the feed becomes yours on its first change.
     if (get().viewing) get().adopt()
@@ -655,7 +745,6 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     if (!next) return false
     const list = shards.slice()
     list[i] = { ...next, updatedAt: Date.now() }
-    // A placement that no longer exists cannot stay selected.
     const partSel = get().partSel.filter((k) => k < (next.parts?.length ?? 0))
     set({ shards: list, past: [...past.slice(-(HISTORY - 1)), shards[i]], future: [], notice, turnPivot: null, partSel })
     save(list)
@@ -674,24 +763,38 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    * they were taken from, `floor` rests them on the working plane. `as` is
    * IMPORT's: its own line, and the name an empty shard takes.
    */
-  const putDown = (clip: ClipPoints, where: PastePlace, as?: { notice: string; name?: string }): boolean => {
+  const putDown = (clip: ClipPoints, where: PastePlace, self?: string, as?: { notice: string; name?: string }): boolean => {
     const { plane, level } = get()
     const s = get().current()
     if (!s || (clip.points.length === 0 && clip.parts.length === 0)) return false
+    // A copy of a shard that places this one would make it place itself;
+    // placeObject refuses the same thing in the same words.
+    const own = self ?? selfAddress(s)
+    if (own && clip.parts.some((q) => q.ref[1] === own)) { set({ notice: 'An object cannot place itself.' }); return false }
+    // A whole shard keeps its true size. Its ticks are its own unit's, so in
+    // a shard on another unit they scale about the origin by the difference,
+    // and an empty shard, whose unit measures nothing yet, takes the copied
+    // one's instead. A placed object's own size is its unit plus its step
+    // whatever places it (sno-core partMatrix), so only where it stands moves.
+    const whole = clip.unit !== undefined
+    const empty = s.vertices.length === 0 && !s.parts?.length
+    const unit = whole && empty ? clip.unit! : s.unit
+    const k = whole ? clip.unit! - unit : 0
+    const points = clip.points.map((q) => ({ at: scaleTicks(q.at, k), c: q.c }))
+    const parts = clip.parts.map((q) => ({ ...q, at: scaleTicks(q.at, k) }))
     // Where they came from, to the tick, which is what a copy is for: the
     // shape returns to the place you took it from and the nudges carry it
     // off from there. FLOOR is the other answer: the same shape, slid along
     // the working plane's normal until its lowest point rests on the level
     // the grid is at. Neither one flattens anything.
     let low = Infinity
-    for (const q of [...clip.points, ...clip.parts]) low = Math.min(low, q.at[plane])
+    for (const q of [...points, ...parts]) low = Math.min(low, q.at[plane])
     const shift = where === 'floor' ? level - low : 0
     const slide = (p: P3): P3 => { const at = [...p] as P3; at[plane] = at[plane] + shift; return at }
-    const placed = clip.points.map((q) => ({ at: slide(q.at), c: q.c }))
-    const objects = clip.parts.map((q) => ({ ...q, at: slide(q.at) }))
+    const placed = points.map((q) => ({ at: slide(q.at), c: q.c }))
+    const objects = parts.map((q) => ({ ...q, at: slide(q.at) }))
     // A whole shard brings its own grid, so this one grows to hold it, as
     // far as a grid goes. A selection asks first, as it always has.
-    const whole = clip.unit !== undefined
     let reach = 0
     for (const q of [...placed, ...objects]) for (const n of q.at) reach = Math.max(reach, Math.ceil(Math.abs(n) / TICKS_PER_UNIT))
     const extent = whole ? Math.min(MAX_EXTENT, Math.max(s.extent, reach)) : s.extent
@@ -699,10 +802,6 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       set({ notice: 'Those would land off the grid. Move the level, or grow the grid.' })
       return false
     }
-    // A copy of this object pasted into itself would place itself.
-    const self = selfAddress(s)
-    if (objects.some((q) => q.ref[1] === self)) { set({ notice: 'An object cannot place itself.' }); return false }
-    const empty = s.vertices.length === 0 && !s.parts?.length
     const base = s.vertices.length
     const firstPart = s.parts?.length ?? 0
     const many = clip.points.length + clip.parts.length > 1
@@ -710,6 +809,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const pasted = clip.faces.map((f) => f.map((i) => base + i) as [number, number, number])
       let next: ShardModel = {
         ...m,
+        unit,
         extent,
         vertices: [...m.vertices, ...placed.map((q) => vertexAt(q.at, q.c))],
         faces: [...m.faces, ...pasted],
@@ -734,8 +834,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (as?.name && empty) next = { ...next, name: as.name.slice(0, 64) }
       if (as && empty && clip.faces.length === 0) return { ...next, mode: 'points' }
       // The first faces switch the shard to SOLID, as a stamp's or FILL's do.
-      return as ? { ...next, mode: solidIfFirstFaces(m, next).mode } : next
-    }, as?.notice ?? `${countLabel(clip)} pasted ${where === 'floor' ? 'on the working plane' : 'where they were taken from'}, selected: move ${many ? 'them' : 'it'} into place.`)
+      return { ...next, mode: solidIfFirstFaces(m, next).mode }
+    }, as?.notice ?? `${countLabel(clip)} pasted ${where === 'floor' ? 'on the working plane' : 'where they were taken from'}${k ? ', kept at true size' : ''}, selected: move ${many ? 'them' : 'it'} into place.`)
     // The selection is set here rather than through setSelection, which
     // widens to every vertex sharing a point: pasted exactly, the copy sits
     // on its original and widening would take both, so the nudges could
@@ -747,15 +847,13 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
   return {
     shards: load(),
     currentId: null,
+    open: false,
+    tool: 'view',
     viewing: null,
     address: null,
     aimKey: null,
-    open: false,
-    tool: 'view',
-    selection: [],
-    partSel: [],
-    stampMode: 'shape',
-    stampObject: null,
+    selection: [], partSel: [],
+    invert: false,
     picking: false,
     facePick: [],
     selectedFace: null,
@@ -766,6 +864,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     plane: FLOOR,
     division: 1,
     turnPivot: null,
+    stampMode: 'shape',
+    stampObject: null,
     showAvatar: loadShowAvatar(),
     color: [0, 0.9, 1],
     stampKind: 'block',
@@ -778,14 +878,14 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     openWorkshop: (id) => {
       const { shards } = get()
-      const currentId = id ?? get().currentId ?? shards[0]?.id ?? get().create()
+      const currentId = id ?? get().currentId ?? newestId(shards) ?? get().create()
       set({ open: true, currentId, aimKey: get().viewing ? get().aimKey : currentId, selection: [], partSel: [], selectedFace: null, facePick: [], tool: 'view', plane: FLOOR, aim: null, past: [], future: [], notice: null })
     },
 
     closeWorkshop: () => set({ open: false, selection: [], partSel: [], selectedFace: null, facePick: [], aim: null }),
 
     create: (name) => {
-      const s = newShard(name ?? `Shard ${get().shards.length + 1}`)
+      const s = newShard(name ?? `Object ${get().shards.length + 1}`)
       const list = [...get().shards, s]
       set({ shards: list, currentId: s.id, viewing: null, address: null, aimKey: s.id, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null })
       save(list)
@@ -845,7 +945,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     remove: (id) => {
       const list = get().shards.filter((s) => s.id !== id)
       const wasCurrent = get().currentId === id
-      const currentId = wasCurrent ? (list[0]?.id ?? null) : get().currentId
+      const currentId = wasCurrent ? newestId(list) : get().currentId
       set({ shards: list, currentId, ...(wasCurrent ? { aimKey: currentId, address: null } : {}), selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], notice: null }); save(list)
     },
 
@@ -854,7 +954,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     // FACE works on corners it picks itself, and its panel only appears with
     // nothing else selected, so a point still held from SELECT hid FILL behind
     // it and the tool looked broken. Taking the tool clears the selection.
-    setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
+    // INVERT goes off with the tool too: it is a mode of SELECT and FACE, and
+    // the key that shows it is only drawn there.
+    setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, invert: false, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
+    setInvert: (on) => set({ invert: on }),
     setExtent: (extent) => {
       const s = get().current()
       if (!s) return
@@ -886,14 +989,14 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setStampObject: (stampObject) => set({ stampObject, stampMode: 'object' }),
     setPicking: (picking) => set({ picking }),
 
-    placeObject: (at) => {
+    placeObject: (at, self) => {
       const { stampObject, stampFacing } = get()
       const s = get().current()
       if (!s || !validPoint(at, s.extent)) return
-      if (!stampObject) { set({ notice: 'Choose an object to stamp first: tap the empty slot under OBJECT.' }); return }
-      // An object placing itself is a loop every reader draws as a placeholder
-      // (§1.10); better never to make one.
-      if (stampObject.ref[1] === selfAddress(s)) { set({ notice: 'An object cannot place itself.' }); return }
+      if (!stampObject) { set({ notice: 'Choose an object to stamp first: tap the slot under OBJECT.' }); return }
+      // snocrash knows its own key: an object placing itself is a loop every reader draws as a placeholder (§1.10).
+      const own = self ?? selfAddress(s)
+      if (own && stampObject.ref[1] === own) { set({ notice: 'An object cannot place itself.' }); return }
       const { shard } = addPart(s, stampObject.ref, { at: [...at] as P3, turn: [0, (90 * stampFacing) % 360, 0], step: 0 })
       edit(() => shard, `"${stampObject.name}" placed. It is one object: SELECT it to move, turn or copy it.`)
       set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
@@ -936,8 +1039,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     togglePart: (index) => {
       const s = get().current()
       if (!s?.parts?.[index]) return
-      const has = get().partSel.includes(index)
-      set({ partSel: has ? get().partSel.filter((i) => i !== index) : [...get().partSel, index].sort((a, b) => a - b), selectedFace: null })
+      const { partSel, invert } = get()
+      // Under INVERT a tap only takes an object out; one not in hand is left alone.
+      set({ partSel: nextSelection(partSel, [index], invert || partSel.includes(index)), selectedFace: null })
     },
 
     setPartSelection: (indices) => {
@@ -948,8 +1052,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     toggleVertex: (index) => {
       const s = get().current()
       if (!s || !s.vertices[index]) return
-      // The whole point goes in, or what is held of it comes out (tapSelection).
-      set({ selection: tapSelection(s, get().selection, index), selectedFace: null })
+      const { selection, invert } = get()
+      // The whole point goes in, or what is held of it comes out. Under INVERT
+      // a tap only takes a point out; one not in hand is left alone, never added.
+      set({ selection: tapSelection(s, selection, index, invert), selectedFace: null })
     },
 
     setSelection: (indices) => {
@@ -978,14 +1084,16 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       // A face is its corners: picking it puts them in the selection (every
       // vertex on each corner's point, as a point tap does), so the pad moves
       // and turns the face as one thing. Picking a face whose corners are all
-      // in hand already takes them back out (ported from ONOSENDAI b82b9bd,
-      // 2026-10-10: before, picking a face emptied the selection).
+      // in hand already takes them back out (arkinox, 2026-10-10: selecting a
+      // face should let you move it; before, it emptied the selection). Under
+      // INVERT a tap on a face takes its corners out whatever was held, and
+      // selects no face: it is taking away, not picking.
       const corners = [...new Set(f.flatMap((v) => group(s, v)))]
-      const sel = get().selection
-      const held = corners.every((i) => sel.includes(i))
+      const { selection: sel, invert } = get()
+      const release = invert || corners.every((i) => sel.includes(i))
       set({
-        selectedFace: held ? null : index,
-        selection: held ? sel.filter((i) => !corners.includes(i)) : [...new Set([...sel, ...corners])].sort((a, b) => a - b),
+        selectedFace: release ? null : index,
+        selection: nextSelection(sel, corners, release),
       })
     },
 
@@ -994,6 +1102,22 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (selectedFace === null) return
       get().removeFace(selectedFace)
       set({ selectedFace: null })
+    },
+
+    flipSelectedFace: () => {
+      const { selectedFace } = get()
+      if (selectedFace === null) return
+      edit((s) => (s.faces[selectedFace] ? flipFace(s, selectedFace) : null), 'Face turned round.')
+    },
+
+    flipSelectedSurface: () => {
+      const { selectedFace } = get()
+      if (selectedFace === null) return
+      edit((s) => (s.faces[selectedFace] ? flipSurface(s, selectedFace) : null), 'Surface turned round.')
+    },
+
+    autoWind: () => {
+      edit((s) => (s.faces.length ? windOutward(s) : null), 'Every face turned to look outward.')
     },
 
     /**
@@ -1025,6 +1149,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         facecolors[index] = clampColor(c)
         return { ...s, facecolors }
       }, 'That face keeps its own color now.')
+    },
+
+    clearFaceColors: () => {
+      edit((s) => (s.facecolors ? { ...s, facecolors: undefined } : null), 'Faces blend across their corners again.')
     },
 
     savePalette: (name, colors, event) => {
@@ -1089,10 +1217,6 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       }
     },
 
-    clearFaceColors: () => {
-      edit((s) => (s.facecolors ? { ...s, facecolors: undefined } : null), 'Faces blend across their corners again.')
-    },
-
     rememberColor: (hex) => {
       // Against the object's own palette when it has one. Snapping a custom
       // palette's color to the nearest built-in entry would put a color in the
@@ -1106,14 +1230,19 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     sampleColor: () => {
-      const { selection, selectedFace } = get()
+      const { selection, selectedFace, tool } = get()
       const s = get().current()
       if (!s) return
-      const corners = selection.length === 1 ? selection : selection.length === 0 && selectedFace !== null ? s.faces[selectedFace] ?? [] : []
+      // A selected face is sampled as a face whenever it is in hand: in FACE
+      // its corners are selected with it, so the selection is never empty
+      // there (arkinox, 2026-10-12: "the face tool has no sample dropper for
+      // the selected face; if I have a face with a seam I will want to sample it").
+      const asFace = selectedFace !== null && (selection.length === 0 || tool === 'face')
+      const corners = asFace ? s.faces[selectedFace!] ?? [] : selection.length === 1 ? selection : []
       // A face with a hard color (SEAM) shows that color, so that is what the
       // dropper takes. Face colors are all or none (sno-core shards): once one
       // face has a seam, every face carries its own.
-      const seam = selection.length === 0 && selectedFace !== null && s.facecolors?.length === s.faces.length ? s.facecolors[selectedFace] : undefined
+      const seam = asFace && s.facecolors?.length === s.faces.length ? s.facecolors[selectedFace!] : undefined
       const cs = seam ? [seam] : corners.map((i) => s.vertices[i]?.c).filter((c): c is P3 => !!c)
       if (cs.length === 0) return
       const mean = [0, 1, 2].map((k) => cs.reduce((t, c) => t + c[k], 0) / cs.length) as P3
@@ -1262,6 +1391,17 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
+    weld: () => {
+      const s = get().current()
+      if (!s) return
+      const { selection } = get()
+      const res = weld(s, selection.length >= 2 ? new Set(selection) : undefined)
+      if (!res) { set({ notice: 'Nothing to weld: no two points stand on the same spot.' }); return }
+      const n = res.shard.vertices.length
+      edit(() => res.shard, `${res.merged} point${res.merged === 1 ? '' : 's'} welded${res.colored ? ', and the faces keep their own colors now' : ''}. ${n} vert${n === 1 ? 'ex' : 'ices'}.`)
+      set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
+    },
+
     cutSelection: () => {
       const s = get().current()
       const clip = s ? clipOf(s, get().selection, get().partSel) : null
@@ -1288,12 +1428,19 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       get().pasteClip('exact')
     },
 
-    pasteClip: (where = 'exact') => {
-      const { clip } = get()
-      if (clip) putDown(clip, where)
+    copyShard: (model) => {
+      const clip = clipOf(model, model.vertices.map((_, i) => i), (model.parts ?? []).map((_, i) => i))
+      if (!clip) return false
+      set({ clip: { ...clip, unit: model.unit }, notice: `Copied "${model.name}". PASTE puts it in any shard.` })
+      return true
     },
 
-    insertImport: (model, notice) => {
+    pasteClip: (where = 'exact', self) => {
+      const { clip } = get()
+      if (clip) putDown(clip, where, self)
+    },
+
+    insertImport: (model, notice, self) => {
       const s = get().current()
       if (!s) return false
       const clip = clipOf(model, model.vertices.map((_, i) => i))
@@ -1301,7 +1448,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       // A whole shard on this shard's own unit: the converter fitted it to
       // this grid already, so it pastes tick for tick and the grid grows
       // only if the level pushes it past the edge.
-      return putDown({ ...clip, unit: s.unit }, 'floor', { notice, name: model.name })
+      return putDown({ ...clip, unit: s.unit }, 'floor', self, { notice, name: model.name })
     },
 
     pickForFace: (index) => {
@@ -1367,24 +1514,21 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       set({ notice: added ? `${added} face${added === 1 ? '' : 's'} ${faces.hull ? 'around' : 'across'} ${idx.length} points.` : 'Those faces are already there.' })
     },
 
-    flipSelectedFace: () => {
-      const { selectedFace } = get()
-      if (selectedFace === null) return
-      edit((s) => (s.faces[selectedFace] ? flipFace(s, selectedFace) : null), 'Face turned round.')
-    },
-
-    flipSelectedSurface: () => {
-      const { selectedFace } = get()
-      if (selectedFace === null) return
-      edit((s) => (s.faces[selectedFace] ? flipSurface(s, selectedFace) : null), 'Surface turned round.')
-    },
-
-    autoWind: () => {
-      edit((s) => (s.faces.length ? windOutward(s) : null), 'Every face turned to look outward.')
+    subdivideSelection: () => {
+      const s = get().current()
+      const { selection } = get()
+      if (!s || selection.length === 0) return
+      const res = subdivide(s, selection)
+      if ('refused' in res) { set({ notice: res.refused }); return }
+      edit(() => res.shard, subdivideNotice(res))
+      // Whole points, as every selection is, so a midpoint that landed on an
+      // occupied spot is in hand with what stands there.
+      get().setSelection([...res.corners, ...res.added])
     },
 
     removeFace: (index) => edit((s) => (s.faces[index] ? { ...s, faces: s.faces.filter((_, i) => i !== index) } : null)),
 
+    // Everything drawn goes, placements included (their refs with them); undo brings it back.
     clearShard: () => { edit((s) => { const { refs: _r, parts: _p, facecolors: _f, ...rest } = s; return { ...rest, vertices: [], faces: [] } }); set({ selection: [], partSel: [], selectedFace: null, facePick: [] }) },
 
     undo: () => {
@@ -1447,10 +1591,11 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return s.id
     },
 
-    importShard: (model, credit) => {
+    importShard: (model, credit, id) => {
       const taken = new Set(get().shards.map((s) => s.name))
-      const name = taken.has(model.name) ? `${model.name} copy` : model.name
-      const base: ShardModel = { ...model, id: uuid(), name, vertices: model.vertices.map(cloneVertex), faces: model.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
+      // Your own object comes back under its own name: there is no other to be a copy of.
+      const name = !id && taken.has(model.name) ? `${model.name} copy` : model.name
+      const base: ShardModel = { ...model, id: id ?? uuid(), name, vertices: model.vertices.map(cloneVertex), faces: model.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
       const copy: ShardModel = credit ? withCredit(base, credit) : base
       const list = [...get().shards, copy]
       set({ shards: list }); save(list)
