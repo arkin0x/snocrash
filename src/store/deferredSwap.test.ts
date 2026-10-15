@@ -137,4 +137,19 @@ describe('a signature that lands after the key changed (review of parity #35)', 
     expect(await publishing).toBe(false)
     expect(useNostr.getState().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
   })
+
+  it('a signature that fails after the key changed says the key changed, not the failure', async () => {
+    let refuse!: () => void
+    const live = liveBunker()
+    live.signEvent.mockImplementation(() => new Promise((_, reject) => { refuse = () => reject(new Error('the bunker went away')) }))
+    bunker.handshake = Promise.resolve(live)
+    useRelays.setState({ relays: [] } as never)
+    await useNostr.getState().init()
+    const publishing = useNostr.getState().publish(shard)
+    await vi.waitFor(() => expect(live.signEvent).toHaveBeenCalled())
+    useNostr.getState().useNewKey()
+    refuse()
+    expect(await publishing).toBe(false)
+    expect(useNostr.getState().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
+  })
 })

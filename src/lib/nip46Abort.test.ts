@@ -49,7 +49,7 @@ vi.mock('nostr-tools/nip46', async (importOriginal) => {
 
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, type EventTemplate } from 'nostr-tools'
 import { newShard } from 'sno-core/shards'
-import { GIVEN_UP, HANDSHAKE_LATE, HANDSHAKE_PATIENCE_MS, deferredReconnect, nip46Signer, saveSignerPref, type Signer, type SignerPref } from './signers'
+import { CANCELLED, GIVEN_UP, HANDSHAKE_LATE, HANDSHAKE_PATIENCE_MS, OTHER_KEY, deferredReconnect, nip46Signer, saveSignerPref, type Signer, type SignerPref } from './signers'
 import { useRelays } from '../store/useRelays'
 import { useNostr } from '../store/useNostr'
 
@@ -183,6 +183,18 @@ describe('publishing while a saved bunker reconnects (review of parity #35)', ()
     expect(fake.connects).toBe(before + 2)
   })
 
+  it('a publish that began 30 s into the connect gets the reconnect message, not a key change', async () => {
+    const before = fake.connects
+    const first = n().publish(shard)
+    await tick(30_000)
+    const palette = n().publishPalette('two', [[255, 0, 0], [0, 255, 0]])
+    await tick(HANDSHAKE_PATIENCE_MS - 30_000)
+    expect(await first).toBe(false)
+    expect(await palette).toBeNull()
+    expect(n().notice).toBe(HANDSHAKE_LATE)
+    expect(fake.connects).toBe(before + 1)
+  })
+
   it('the PUBLISHING chip calls the publish off, and closes the connect it was waiting on', async () => {
     const before = fake.connects
     const publishing = n().publish(shard)
@@ -216,5 +228,71 @@ describe('publishing while a saved bunker reconnects (review of parity #35)', ()
     await tick(0)
     expect(await publishing).toBe(false)
     expect(n().notice).toBe('Signed out, so nothing was published.')
+  })
+})
+
+describe('one connect, several waiting on it (review of parity #35)', () => {
+  const pref = (): SignerPref => ({ kind: 'nip46', pubkey: fake.pubkey, bunkerUri: 'bunker://x', clientNsec: nip19.nsecEncode(generateSecretKey()) })
+  const tick = (ms = 10): Promise<void> => vi.advanceTimersByTimeAsync(ms).then(() => undefined)
+
+  beforeEach(() => {
+    fake.close = vi.fn(async () => {})
+    fake.answer = null
+    vi.useFakeTimers()
+  })
+  afterEach(() => { vi.useRealTimers(); fake.pubkey = 'c'.repeat(64) })
+
+  it('the minute is the connect\'s, not each waiter\'s: one that came later is told the same thing at the same time', async () => {
+    const lazy = deferredReconnect(pref(), () => {})
+    const before = fake.connects
+    const signIn = lazy.ready!()
+    await tick(30_000)
+    const publish = lazy.ready!()
+    const told: string[] = []
+    signIn.catch((e: Error) => told.push(`sign-in: ${e.message}`))
+    publish.catch((e: Error) => told.push(`publish: ${e.message}`))
+    await tick(HANDSHAKE_PATIENCE_MS - 30_000)
+    expect(told.sort()).toEqual([`publish: ${HANDSHAKE_LATE}`, `sign-in: ${HANDSHAKE_LATE}`])
+    expect(fake.connects).toBe(before + 1)
+    expect(fake.close).toHaveBeenCalled()
+  })
+
+  it('a waiter that cancels leaves; the connect goes on for the other, which gets the signer', async () => {
+    const lazy = deferredReconnect(pref(), () => {})
+    const one = new AbortController()
+    const leaving = lazy.ready!(one.signal)
+    const staying = lazy.ready!()
+    await tick()
+    one.abort()
+    await expect(leaving).rejects.toThrow(CANCELLED)
+    expect(fake.close).not.toHaveBeenCalled()
+    fake.answer!()
+    await tick()
+    expect((await staying).pubkey).toBe(fake.pubkey)
+  })
+
+  it('the last waiter to cancel gives the connect up', async () => {
+    const lazy = deferredReconnect(pref(), () => {})
+    const one = new AbortController()
+    const two = new AbortController()
+    const a = lazy.ready!(one.signal)
+    const b = lazy.ready!(two.signal)
+    await tick()
+    one.abort()
+    await expect(a).rejects.toThrow(CANCELLED)
+    expect(fake.close).not.toHaveBeenCalled()
+    two.abort()
+    await expect(b).rejects.toThrow(CANCELLED)
+    await tick(0)
+    expect(fake.close).toHaveBeenCalled()
+  })
+
+  it('a signer that comes back as another key is let go, and says so', async () => {
+    const lazy = deferredReconnect({ ...pref(), pubkey: 'd'.repeat(64) }, () => {})
+    const waiting = lazy.ready!()
+    await tick()
+    fake.answer!()
+    await expect(waiting).rejects.toThrow(OTHER_KEY)
+    expect(fake.close).toHaveBeenCalled()
   })
 })

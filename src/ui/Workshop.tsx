@@ -547,6 +547,7 @@ export function Workshop(): JSX.Element | null {
   const showAvatar = useWorkshop((s) => s.showAvatar)
   const signedIn = useNostr((s) => s.signedIn)
   const publishing = useNostr((s) => s.publishing)
+  const sending = useNostr((s) => s.sending)
   const nostrNotice = useNostr((s) => s.notice)
   // Where you are is the address bar's business (lib/route), so a link can
   // land on the feed or on one object, and the phone's back gesture works.
@@ -777,10 +778,19 @@ export function Workshop(): JSX.Element | null {
           </button>
         )}
         {/* A tap calls the publish off: a bunker that never answers would
-            otherwise hold it, and every PUBLISH, for good (review of parity #35). */}
+            otherwise hold it, and every PUBLISH, for good. Once it is going out
+            to the relays it is too late, and the chip says so (review of
+            parity #35). */}
         {making && publishing && (
-          <button className="chip ws__chip ws__chip--work" aria-live="polite" aria-label="Publishing. Tap to cancel." title="Tap to cancel" onClick={() => useNostr.getState().cancelPublish()}>
-            <Pickaxe size={12} strokeWidth={2.25} aria-hidden />PUBLISHING
+          <button
+            className="chip ws__chip ws__chip--work"
+            aria-live="polite"
+            disabled={sending}
+            aria-label={sending ? 'Sending to the relays. Too late to cancel.' : 'Publishing. Tap to cancel.'}
+            title={sending ? 'Too late to cancel: it is going out.' : 'Tap to cancel'}
+            onClick={() => useNostr.getState().cancelPublish()}
+          >
+            <Pickaxe size={12} strokeWidth={2.25} aria-hidden />{sending ? 'SENDING' : 'PUBLISHING'}
           </button>
         )}
         {/* Out of the way while a panel is open: on a phone they wrapped the chip

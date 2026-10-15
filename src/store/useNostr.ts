@@ -23,7 +23,7 @@ import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRel
 import { SNO_KIND, createFeed, creditAuthor, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
-  CANCELLED, GIVEN_UP, HANDSHAKE_LATE, deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
+  CANCELLED, GIVEN_UP, HANDSHAKE_LATE, OTHER_KEY, deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
   prefOf, randomSigner, saveSignerPref, signWithin, signerFromNcryptsec, signerFromNsec,
   signerFromPref, type Signer, type SignerKind,
 } from '../lib/signers'
@@ -99,6 +99,8 @@ interface NostrState {
   scope: FeedScope
   loading: boolean
   publishing: boolean
+  /** The publish is past signing and going out to the relays: too late to cancel. */
+  sending: boolean
   notice: string | null
   /** Whether an identity has been chosen at all. */
   signedIn: boolean
@@ -371,10 +373,21 @@ const KEY_CHANGED = 'Not published: the key changed while it was being signed. P
 function publishFailed(err: unknown, signedIn: boolean): string {
   const why = err instanceof Error ? err.message : String(err)
   if (why === CANCELLED) return 'Publishing cancelled. Nothing went out.'
-  if (why === HANDSHAKE_LATE) return why
+  if (why === HANDSHAKE_LATE || why === OTHER_KEY) return why
   // Signed out meanwhile: that was the point, so nothing more to say.
   if (why === GIVEN_UP) return signedIn ? KEY_CHANGED : 'Signed out, so nothing was published.'
   return `Could not publish: ${why}`
+}
+
+/**
+ * The last word before an event goes out: not cancelled, and still signed by
+ * the key this app is now. A key change or a sign-out during the relays'
+ * sign-in comes after the signature, so it is checked here, right before
+ * sending (review of parity #35).
+ */
+function readyToSend(signed: Event, signal: AbortSignal, currentPubkey: () => string | null): void {
+  if (signal.aborted) throw new Error(CANCELLED)
+  if (signed.pubkey !== currentPubkey()) throw new Error(GIVEN_UP)
 }
 
 /** The publish in flight, so the PUBLISHING chip can call it off. */
@@ -424,7 +437,10 @@ let pendingSigns = 0
  */
 function wakeSigner(): void {
   const current = signer
-  if (!current || current.kind === 'local' || pendingSigns > 0) return
+  // A saved identity that has not connected yet has no sockets to refresh,
+  // and starting its connect here would put a round trip on the phone
+  // nobody asked for (review of parity #35).
+  if (!current || current.kind === 'local' || current.ready || pendingSigns > 0) return
   void current.reconnect?.().then((fresh) => { if (signer === current) signer = fresh }).catch(() => { /* next request retries */ })
 }
 
@@ -443,6 +459,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   scope: 'global',
   loading: false,
   publishing: false,
+  sending: false,
   notice: null,
 
   init: async () => {
@@ -534,8 +551,9 @@ export const useNostr = create<NostrState>((set, get) => ({
       const signed = await signForPublish(template, abort.signal, () => get().pubkey)
       // A relay that gates reads gates writes, and an unauthenticated publish
       // is refused rather than queued.
-      await authAll(relays)
-      if (abort.signal.aborted) throw new Error(CANCELLED)
+      await untilCancelled(authAll(relays), abort.signal)
+      readyToSend(signed, abort.signal, () => get().pubkey)
+      set({ sending: true })
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = results.filter((r) => r.status === 'fulfilled').length
       if (took > 0) {
@@ -559,6 +577,7 @@ export const useNostr = create<NostrState>((set, get) => ({
       return false
     } finally {
       if (publishAbort === abort) publishAbort = null
+      set({ sending: false })
     }
   },
 
@@ -573,8 +592,9 @@ export const useNostr = create<NostrState>((set, get) => ({
     publishAbort = abort
     try {
       const signed = await signForPublish(paletteTemplate(name, colors, Math.floor(Date.now() / 1000), prev), abort.signal, () => get().pubkey)
-      await authAll(relays)
-      if (abort.signal.aborted) throw new Error(CANCELLED)
+      await untilCancelled(authAll(relays), abort.signal)
+      readyToSend(signed, abort.signal, () => get().pubkey)
+      set({ sending: true })
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = relays.filter((_, i) => results[i]?.status === 'fulfilled')
       if (took.length === 0) {
@@ -595,6 +615,7 @@ export const useNostr = create<NostrState>((set, get) => ({
       return null
     } finally {
       if (publishAbort === abort) publishAbort = null
+      set({ sending: false })
     }
   },
 
