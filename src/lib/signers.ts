@@ -51,10 +51,12 @@ export interface Signer {
   reconnect?: () => Promise<Signer>
   /**
    * Only on a deferred identity (deferredReconnect): the live signer, once
-   * its handshake is done. A signature's patience starts after it, so a slow
-   * handshake is not taken for a dead channel (review of parity #35).
+   * its handshake is done, within HANDSHAKE_PATIENCE_MS. A signature's
+   * patience starts after it, so a slow handshake is not taken for a dead
+   * channel (review of parity #35). `signal` gives the wait, and the
+   * handshake it started, up.
    */
-  ready?: () => Promise<Signer>
+  ready?: (signal?: AbortSignal) => Promise<Signer>
 }
 
 interface Nip07 {
@@ -243,6 +245,21 @@ export function forgetSignerPref(): void {
 /** Why a way in that was given up rejects. */
 export const GIVEN_UP = 'Given up.'
 
+/** Why a wait the person cancelled (the PUBLISHING chip) rejects. */
+export const CANCELLED = 'Cancelled.'
+
+/**
+ * How long a saved bunker gets to answer its reconnect. Its handshake has no
+ * deadline of its own (nostr-tools waits on the relay for good), and every
+ * publish and relay sign-in waits on it, so a bunker that never answered left
+ * PUBLISHING up for good (review of parity #35). A minute is long enough to
+ * find the phone and approve it.
+ */
+export const HANDSHAKE_PATIENCE_MS = 60_000
+
+/** What a reconnect that ran out of patience says. */
+export const HANDSHAKE_LATE = 'Your bunker did not answer the reconnect within a minute. Approve it in your signer app, then publish again.'
+
 /**
  * An identity whose pubkey is already known but whose signer has not been
  * reconnected yet.
@@ -259,36 +276,67 @@ export const GIVEN_UP = 'Given up.'
  * to `onReady`, so an identity replaced in the meantime stays replaced. A
  * handshake that fails is not remembered: the next signature tries again,
  * as ONOSENDAI's does (review of parity #35).
+ *
+ * `ready` waits HANDSHAKE_PATIENCE_MS at most. A handshake that runs out of
+ * it, or whose wait is cancelled, is given up (its bunker closed) and
+ * forgotten, so the next signature starts one fresh connect.
  */
 export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void): Signer {
   let pending: Promise<Signer> | null = null
   let live: Signer | null = null
   let closed = false
-  const abort = new AbortController()
+  /** The handshake in flight, so a deadline or a cancel can give that one up. */
+  let attempt: AbortController | null = null
   const ensure = (): Promise<Signer> => {
     if (closed) return Promise.reject(new Error(GIVEN_UP))
     if (!pending) {
-      pending = signerFromPref(pref, abort.signal).then((s) => {
-        if (closed) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(GIVEN_UP) }
+      const mine = new AbortController()
+      attempt = mine
+      pending = signerFromPref(pref, mine.signal).then((s) => {
+        if (closed || mine.signal.aborted) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(GIVEN_UP) }
         live = s
         onReady(s)
         return s
       }, (err: unknown) => {
-        if (!closed) pending = null
+        if (attempt === mine) { pending = null; attempt = null }
         throw closed ? new Error(GIVEN_UP) : err
       })
     }
     return pending
   }
+  /** Give the handshake in flight up and forget it: the next ensure() starts afresh. */
+  const dropAttempt = (): void => {
+    if (live || !attempt) return
+    attempt.abort()
+    attempt = null
+    pending = null
+  }
+  const ready = (signal?: AbortSignal): Promise<Signer> => new Promise<Signer>((resolve, reject) => {
+    let done = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (): boolean => {
+      if (done) return false
+      done = true
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
+      return true
+    }
+    const giveUp = (why: string): void => { if (finish()) { dropAttempt(); reject(new Error(why)) } }
+    const cancel = (): void => giveUp(CANCELLED)
+    if (signal?.aborted) { reject(new Error(CANCELLED)); return }
+    signal?.addEventListener('abort', cancel, { once: true })
+    timer = setTimeout(() => giveUp(HANDSHAKE_LATE), HANDSHAKE_PATIENCE_MS)
+    ensure().then((s) => { if (finish()) resolve(s) }, (err: unknown) => { if (finish()) reject(err) })
+  })
   return {
     kind: pref.kind,
     pubkey: pref.pubkey,
-    signEvent: (template) => ensure().then((s) => s.signEvent(template)),
-    reconnect: ensure,
-    ready: ensure,
+    signEvent: (template) => ready().then((s) => s.signEvent(template)),
+    reconnect: () => ready(),
+    ready,
     close: async () => {
       closed = true
-      abort.abort()
+      attempt?.abort()
       await live?.close?.()
     },
   }

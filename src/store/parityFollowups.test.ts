@@ -23,7 +23,6 @@ import { BUILT_IN, snapHex } from 'sno-core/snoPalette'
 import { DEFAULT_PALETTE, useWorkshop } from './useWorkshop'
 import { useNostr } from './useNostr'
 import WORKSHOP from '../ui/Workshop.tsx?raw'
-import FEED from '../ui/Feed.tsx?raw'
 
 const w = () => useWorkshop.getState()
 const ME = 'a'.repeat(64)
@@ -240,10 +239,6 @@ describe('an edited feed object credits its author, as REMIX does (7)', () => {
     expect(WORKSHOP).toMatch(/mine \? readCredit\(o\.event\.tags\) \?\? undefined : \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
   })
 
-  it('REMIX of your own remix keeps its upstream credit; of your own original, credits that original (review of #35)', () => {
-    expect(FEED).toMatch(/const credit = \(mine \? readCredit\(o\.event\.tags\) : null\) \?\? \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
-    expect(FEED).toMatch(/importShard\(o\.shard, credit\)/)
-  })
 })
 
 describe('a color off the palette painted with its nearest entry lands (review of #35, blocking 1)', () => {

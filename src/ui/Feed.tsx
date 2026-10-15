@@ -14,10 +14,9 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Copy, Download, RefreshCw, SquarePen } from 'lucide-react'
-import { useNostr, type FeedObject } from '../store/useNostr'
+import { remixCredit, useNostr, type FeedObject } from '../store/useNostr'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload, type ShardModel } from 'sno-core/shards'
-import { readCredit } from 'sno-core/feed'
 import { fileNameFor, toPly } from '../lib/ply'
 import { Preview, PreviewStage } from './Preview'
 import { useRoute } from '../lib/route'
@@ -82,13 +81,8 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
   const authorName = useProfiles((s) => s.profiles[o.pubkey]?.name ?? null)
   const remix = (): void => {
     // A copy with an id of its own: publishing it never touches the original,
-    // and credits it (the q tag, and the p that tells its author). A copy of
-    // your own remix keeps the credit that remix was published with; a copy
-    // of your own original credits the original, which goes out as the q
-    // alone, since the p would only tell you (review of parity #35).
-    const mine = o.pubkey === useNostr.getState().pubkey
-    const credit = (mine ? readCredit(o.event.tags) : null) ?? { address: o.address, relay: o.seen?.[0] }
-    const id = useWorkshop.getState().importShard(o.shard, credit)
+    // and credits it (remixCredit: the q tag, and the p that tells its author).
+    const id = useWorkshop.getState().importShard(o.shard, remixCredit(o, useNostr.getState().pubkey))
     useWorkshop.getState().select(id)
     say(`"${o.shard.name}" is yours to edit now. Publishing it makes a new object.`)
     onOpen()

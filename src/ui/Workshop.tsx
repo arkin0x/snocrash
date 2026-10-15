@@ -776,8 +776,10 @@ export function Workshop(): JSX.Element | null {
             <Grid3x3 size={12} strokeWidth={2.25} aria-hidden />GRID
           </button>
         )}
+        {/* A tap calls the publish off: a bunker that never answers would
+            otherwise hold it, and every PUBLISH, for good (review of parity #35). */}
         {making && publishing && (
-          <button className="chip ws__chip ws__chip--work" aria-live="polite">
+          <button className="chip ws__chip ws__chip--work" aria-live="polite" aria-label="Publishing. Tap to cancel." title="Tap to cancel" onClick={() => useNostr.getState().cancelPublish()}>
             <Pickaxe size={12} strokeWidth={2.25} aria-hidden />PUBLISHING
           </button>
         )}

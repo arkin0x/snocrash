@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { decodeObjectAddress, objectAddress, objectFromEvent, objectTemplate, paletteTemplate, PALETTE_KIND } from './useNostr'
+import { decodeObjectAddress, objectAddress, objectFromEvent, objectTemplate, paletteTemplate, PALETTE_KIND, remixCredit } from './useNostr'
 import { withCredit } from 'sno-core/feed'
 import { nip19 } from 'nostr-tools'
 import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
@@ -208,6 +208,27 @@ describe('a remix, published (DECK-0003 crediting; ruled 2026-10-08)', () => {
     expect(tags).toContainEqual(['q', `33331:${author}:chair`, ''])
     expect(tags.some((t) => t[0] === 'p')).toBe(false)
     expect(objectTemplate(own, 2, 'f'.repeat(64)).tags).toContainEqual(['p', author])
+  })
+
+  it('REMIX of your own original credits it with the q alone (review of parity #35)', () => {
+    const copy = withCredit({ ...original.shard, id: 'chair-2' }, remixCredit(original, author))
+    const tags = objectTemplate(copy, 2, author).tags
+    expect(tags).toContainEqual(['q', `33331:${author}:chair`, ''])
+    expect(tags.some((t) => t[0] === 'p')).toBe(false)
+  })
+
+  it('REMIX of your own remix keeps the credit it was published with: the q and the p of its original', () => {
+    const upstream = 'a'.repeat(64)
+    const myRemix = objectFromEvent({ id: 'f'.repeat(64), pubkey: author, created_at: 3, kind: 33331, tags: [['d', 'chair-remix'], ['q', `33331:${upstream}:stool`, 'wss://up.example'], ['p', upstream]], content })!
+    const copy = withCredit({ ...myRemix.shard, id: 'chair-3' }, remixCredit(myRemix, author))
+    const tags = objectTemplate(copy, 4, author).tags
+    expect(tags).toContainEqual(['q', `33331:${upstream}:stool`, 'wss://up.example'])
+    expect(tags).toContainEqual(['p', upstream])
+    expect(tags.some((t) => t[0] === 'q' && t[1].includes(':chair'))).toBe(false)
+  })
+
+  it("REMIX of someone else's object credits them, with a relay it was seen on", () => {
+    expect(remixCredit({ ...original, seen: ['wss://seen.example'] }, 'f'.repeat(64))).toEqual({ address: original.address, relay: 'wss://seen.example' })
   })
 
   it('an original carries neither', () => {

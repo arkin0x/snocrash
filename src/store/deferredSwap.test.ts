@@ -48,14 +48,18 @@ vi.mock('../lib/signers', async (importOriginal) => {
   }
 })
 
-import { finalizeEvent, generateSecretKey } from 'nostr-tools'
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools'
 import { newShard } from 'sno-core/shards'
 import { useNostr } from './useNostr'
 import { useRelays } from './useRelays'
 
+/** The bunker's own key: what the saved identity names, and what its live signer signs with. */
+const BUNKER_SK = generateSecretKey()
+bunker.pubkey = getPublicKey(BUNKER_SK)
+
 /** A live bunker signer, as a finished handshake hands over. */
 function liveBunker(): { kind: 'nip46'; pubkey: string; signEvent: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> } {
-  const sk = generateSecretKey()
+  const sk = BUNKER_SK
   return { kind: 'nip46', pubkey: bunker.pubkey, signEvent: vi.fn(async (t) => finalizeEvent(t, sk)), close: vi.fn(async () => {}) }
 }
 
@@ -112,5 +116,25 @@ describe("a signature's patience (review of parity #35)", () => {
     await publishing
     expect(live.signEvent).toHaveBeenCalledTimes(1)
     expect(useNostr.getState().notice).toBe('No relay took it.')
+  })
+})
+
+describe('a signature that lands after the key changed (review of parity #35)', () => {
+  afterEach(() => { bunker.handshake = null })
+
+  it('is not sent: the publish says the key changed', async () => {
+    // Connected, and asked to sign; the person switches keys before approving.
+    let approve!: () => void
+    const live = liveBunker()
+    live.signEvent.mockImplementation((t) => new Promise((resolve) => { approve = () => resolve(finalizeEvent(t, BUNKER_SK)) }))
+    bunker.handshake = Promise.resolve(live)
+    useRelays.setState({ relays: [] } as never)
+    await useNostr.getState().init()
+    const publishing = useNostr.getState().publish(shard)
+    await vi.waitFor(() => expect(live.signEvent).toHaveBeenCalled())
+    useNostr.getState().useNewKey()
+    approve()
+    expect(await publishing).toBe(false)
+    expect(useNostr.getState().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
   })
 })

@@ -7,7 +7,7 @@
  * reaches a relay.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 if (typeof localStorage === 'undefined') {
   const mem = new Map<string, string>()
@@ -23,6 +23,10 @@ const fake = vi.hoisted(() => {
   const state = {
     close: null as unknown as ReturnType<typeof import('vitest').vi.fn>,
     answer: null as null | ((err?: Error) => void),
+    /** How many handshakes were started. */
+    connects: 0,
+    pubkey: 'c'.repeat(64),
+    sign: null as null | ((t: unknown) => Promise<unknown>),
   }
   return state
 })
@@ -34,16 +38,19 @@ vi.mock('nostr-tools/nip46', async (importOriginal) => {
     parseBunkerInput: async () => ({ pubkey: 'c'.repeat(64), relays: ['wss://bunker.invalid'], secret: null }),
     BunkerSigner: {
       fromBunker: () => ({
-        connect: () => new Promise<void>((resolve, reject) => { fake.answer = (err) => (err ? reject(err) : resolve()) }),
-        getPublicKey: async () => 'c'.repeat(64),
+        connect: () => { fake.connects++; return new Promise<void>((resolve, reject) => { fake.answer = (err) => (err ? reject(err) : resolve()) }) },
+        getPublicKey: async () => fake.pubkey,
+        signEvent: (t: unknown) => fake.sign!(t),
         close: fake.close,
       }),
     },
   }
 })
 
-import { generateSecretKey, nip19 } from 'nostr-tools'
-import { GIVEN_UP, deferredReconnect, nip46Signer, type Signer, type SignerPref } from './signers'
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19, type EventTemplate } from 'nostr-tools'
+import { newShard } from 'sno-core/shards'
+import { GIVEN_UP, HANDSHAKE_LATE, HANDSHAKE_PATIENCE_MS, deferredReconnect, nip46Signer, saveSignerPref, type Signer, type SignerPref } from './signers'
+import { useRelays } from '../store/useRelays'
 import { useNostr } from '../store/useNostr'
 
 describe('a bunker handshake', () => {
@@ -132,5 +139,82 @@ describe('a saved bunker identity, reconnected later (the real deferredReconnect
     await vi.waitFor(() => expect(fake.answer).not.toBeNull())
     fake.answer!()
     expect((await second).pubkey).toBe('c'.repeat(64))
+  })
+})
+
+describe('publishing while a saved bunker reconnects (review of parity #35)', () => {
+  const sk = generateSecretKey()
+  const shard = { ...newShard('probe'), vertices: [{ p: [0, 0, 0] as [number, number, number], c: [1, 1, 1] as [number, number, number] }] }
+  const n = () => useNostr.getState()
+  /** Let the microtasks and any timers due run. */
+  const tick = (ms = 10): Promise<void> => vi.advanceTimersByTimeAsync(ms).then(() => undefined)
+
+  beforeEach(async () => {
+    fake.close = vi.fn(async () => {})
+    fake.answer = null
+    fake.pubkey = getPublicKey(sk)
+    fake.sign = async (t) => finalizeEvent(t as EventTemplate, sk)
+    useRelays.setState({ relays: [] } as never)
+    saveSignerPref({ kind: 'nip46', pubkey: fake.pubkey, bunkerUri: 'bunker://x', clientNsec: nip19.nsecEncode(generateSecretKey()) })
+    await n().init()
+    vi.useFakeTimers()
+  })
+  afterEach(() => { vi.useRealTimers(); fake.pubkey = 'c'.repeat(64) })
+
+  it('a bunker that never answers gives the publish up after a minute, closes its connect, and the next publish starts exactly one new one', async () => {
+    const before = fake.connects
+    const first = n().publish(shard)
+    await tick()
+    expect(fake.connects).toBe(before + 1)
+    expect(n().publishing).toBe(true)
+    await tick(HANDSHAKE_PATIENCE_MS)
+    expect(await first).toBe(false)
+    expect(n().notice).toBe(HANDSHAKE_LATE)
+    expect(n().publishing).toBe(false)
+    expect(fake.close).toHaveBeenCalled()
+    // Again: one fresh connect, which this time is answered.
+    const second = n().publish(shard)
+    await tick()
+    expect(fake.connects).toBe(before + 2)
+    fake.answer!()
+    await tick()
+    await second
+    expect(n().notice).toBe('No relay took it.')
+    expect(fake.connects).toBe(before + 2)
+  })
+
+  it('the PUBLISHING chip calls the publish off, and closes the connect it was waiting on', async () => {
+    const before = fake.connects
+    const publishing = n().publish(shard)
+    await tick()
+    n().cancelPublish()
+    await tick(0)
+    expect(await publishing).toBe(false)
+    expect(n().notice).toBe('Publishing cancelled. Nothing went out.')
+    expect(n().publishing).toBe(false)
+    expect(fake.close).toHaveBeenCalled()
+    void n().publish(shard)
+    await tick()
+    expect(fake.connects).toBe(before + 2)
+    n().cancelPublish()
+    await tick(0)
+  })
+
+  it('a new key chosen while it waits: the publish says the key changed', async () => {
+    const publishing = n().publish(shard)
+    await tick()
+    n().useNewKey()
+    await tick(0)
+    expect(await publishing).toBe(false)
+    expect(n().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
+  })
+
+  it('signed out while it waits: the publish says only that', async () => {
+    const publishing = n().publish(shard)
+    await tick()
+    n().signOut()
+    await tick(0)
+    expect(await publishing).toBe(false)
+    expect(n().notice).toBe('Signed out, so nothing was published.')
   })
 })
