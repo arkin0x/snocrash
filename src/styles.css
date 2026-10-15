@@ -476,6 +476,9 @@ button:disabled { opacity: 0.35; cursor: default; }
   width: 30px;
   padding: 0;
   color: var(--dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .workshop__mini--danger:hover {
@@ -806,14 +809,30 @@ button:disabled { opacity: 0.35; cursor: default; }
 }
 
 .ws__top > * { pointer-events: auto; }
+/* The grid floor's LEVEL under the chip row (Workshop LevelStack, ported from
+   ONOSENDAI; arkinox 2026-10-10): up, the level, down, one narrow column so it
+   covers as little of the bench as a chip does. */
+.ws__level {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.ws__level-key { width: 38px; height: 34px; }
+.ws__level-value {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--dim, #7fa3b3);
+  font-variant-numeric: tabular-nums;
+}
 
-/* Room on the right for DEPLOY and the way out, which share the top edge. */
+/* Room on the right for PUBLISH, which shares the top edge. */
 .ws__chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding-right: 88px;
+  padding-right: 112px;
 }
 
 .ws__chip {
@@ -1015,22 +1034,17 @@ button:disabled { opacity: 0.35; cursor: default; }
 /* The pad and the orbit ball side by side. The pad's grid keeps its size when
    nothing is selected (its keys are simply absent), so the ball never moves
    under the thumb when a selection comes and goes. */
-.benchrow {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  pointer-events: none;
-}
-.benchrow > * { pointer-events: auto; }
-.benchrow .benchpad { pointer-events: none; }
-.benchrow .benchpad > * { pointer-events: auto; }
-/* The orbit ball (ported from ONOSENDAI, 2026-10-10): the pad's size, right of
-   it. A drag on it turns the view about the shard and keeps turning after the
-   finger leaves it (pointer capture); a tap sends the view home. Drawn as a
-   lit globe with a meridian and an equator, so it reads as something that turns. */
+/* The orbit ball (ONOSENDAI, 2026-10-10): a drag on it turns the view about
+   the shard and keeps turning after the finger leaves it (pointer capture); a
+   tap sends the view home. Drawn as a lit globe with a meridian and an
+   equator, so it reads as something that turns. Docked at the bottom right
+   beside the color column (right 14px, 38px wide, then a 6px gap), out of
+   every column, so no row has to clear it (arkinox: "right aligned"). */
 .benchorb {
-  position: relative;
+  position: absolute;
+  right: 58px;
+  bottom: 14px;
+  z-index: 3;
   width: 152px;
   height: 152px;
   display: flex;
@@ -1078,6 +1092,17 @@ button:disabled { opacity: 0.35; cursor: default; }
 .benchclip .touchpad__key { width: 48px; height: 48px; flex-direction: column; gap: 2px; font-size: 17px; }
 .benchclip .touchpad__sub { font-size: 8px; }
 .benchclip .touchpad__key--danger { color: var(--danger); }
+/* A mode key lit while its mode is on (INVERT, arkinox, 2026-10-10), in the
+   same lit treatment as a tool chip, so "on" reads the same everywhere. */
+.benchclip .touchpad__key.is-on {
+  color: #05070d;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+.benchclip .touchpad__key.is-on .touchpad__sub { opacity: 1; }
+/* SUBDIVIDE is the row's one long word: the pad's JOINED and DELETE size, tighter, so it fits a 48px key. */
+.benchclip .touchpad__key--long .touchpad__sub { font-size: 7px; letter-spacing: 0.04em; }
 /* A key that asks before it acts (PASTE where, FLIP how much) carries a dot
    in its top right corner, so it reads as two steps before it is pressed.
    The dot lights while its question is open (arkinox, 2026-09-27). */
@@ -1146,6 +1171,28 @@ button:disabled { opacity: 0.35; cursor: default; }
   flex: 1 1 0;
   min-width: 0;
   padding: 5px 4px;
+}
+/* Every row in the bottom-left column shares one left and one right edge. */
+.benchclip { align-self: stretch; }
+
+/* The weld row (ONOSENDAI, arkinox 2026-10-12): the stack count as a readout
+   cell the height of a key, then WELD, at the top of the bottom-left column.
+   The readout lets taps through to nothing; only the key acts. */
+.benchweld { align-items: stretch; }
+.benchweld__count {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  color: var(--dim, #7fa3b3);
+  background: rgba(6, 14, 22, 0.85);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(8px);
 }
 
 /* COLOR open: a column rising from the corner, two swatches wide, so it never
@@ -2199,14 +2246,15 @@ button:disabled { opacity: 0.35; cursor: default; }
    not. The symptom is always the same shape: an element with no box, or one
    auto-placed into whatever grid cell was free. */
 
-/* The two quarter-turn keys above the pad. Without the container they had no
-   track to size against, so they collapsed to their glyphs. */
+/* The turn row: LEFT, RIGHT, then CUT, COPY and PASTE (ONOSENDAI, arkinox
+   2026-10-10), a flex row of 48px keys; relative, so PASTE's question anchors
+   to it. */
 .benchturn {
-  display: grid;
-  grid-template-columns: repeat(2, 48px);
-  grid-template-rows: 48px;
+  position: relative;
+  display: flex;
   gap: 4px;
 }
+.benchturn .touchpad__key { width: 48px; height: 48px; }
 
 /* The count of selected points, in the middle of the directions it moves.
    Without grid-area it auto-placed into the first free cell, which is the one
@@ -2250,6 +2298,14 @@ button:disabled { opacity: 0.35; cursor: default; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* The one selected point's readout, top right under PUBLISH (ONOSENDAI). */
+.ws__at--top {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 3;
   pointer-events: none;
 }
 
@@ -2299,17 +2355,13 @@ button:disabled { opacity: 0.35; cursor: default; }
 .compass-label--y { color: #44ff44; text-shadow: 0 0 3px rgba(0, 0, 0, 0.8); }
 .compass-label--z { color: #4488ff; text-shadow: 0 0 3px rgba(0, 0, 0, 0.8); }
 
-.ws__view { top: 12px; }
-/* PUBLISH, the compass and the pad in one column, all 64 wide. */
-.ws__publish {
-  width: 64px;
-  height: 30px;
-  padding: 0;
-  font-size: 8px;
-  letter-spacing: 0.1em;
-  border-radius: 9px;
-}
 
+.viewmenu.viewmenu--bench {
+  position: static;
+  top: auto;
+  right: auto;
+  bottom: auto;
+}
 .viewmenu {
   display: flex;
   flex-direction: column;
@@ -2368,11 +2420,28 @@ button:disabled { opacity: 0.35; cursor: default; }
    above the colour chip in their own right. Larger than they were, because they
    are now a first-class control rather than a footer inside a panel. */
 .ws__acts {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 5px;
 }
+/* The bucket as a two-stage key while a face is in hand (FILL or SEAM): the
+   same dot the two-stage pad keys wear, and its question opens to the left,
+   since the column stands at the right edge. */
+.ws__act--two { position: relative; }
+.ws__act--two::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+.ws__act--two[aria-expanded='true']::after { background: var(--accent); }
+.benchpaste--right { left: auto; right: 0; bottom: 44px; }
 .ws__act {
   width: 34px;
   height: 34px;
@@ -2524,4 +2593,67 @@ button:disabled { opacity: 0.35; cursor: default; }
   background: rgba(0, 229, 255, 0.08);
   pointer-events: none;
   z-index: 5;
+}
+
+/* ---- Switch and Field (ui/Switch.tsx): shadcn's anatomy on the Radix
+   primitive, in the app's own neon (ported from ONOSENDAI, 2026-10-01). ---- */
+
+/* A control and its label on one row; the label flips the control. */
+.ui-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+.ui-field__text { display: flex; flex-direction: column; gap: 3px; cursor: pointer; padding-top: 1px; }
+.ui-field__label { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg); }
+.ui-field__hint { font-size: 10px; line-height: 1.45; color: var(--dim); }
+
+/* The switch: a track with a thumb that slides right and lights when on. */
+.ui-switch {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(6, 14, 22, 0.9);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-switch[data-state='checked'] {
+  background: rgba(0, 229, 255, 0.22);
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.35);
+}
+.ui-switch__thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dim);
+  transform: translateX(2px);
+  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+/* The workshop's switches in its own green, PUBLISH's (arkinox, 2026-10-10).
+   Two classes, to outrank the accent rules below. */
+.ui-switch.ui-switch--ok[data-state='checked'] {
+  background: rgba(82, 227, 159, 0.22);
+  border-color: var(--ok, #52e39f);
+  box-shadow: 0 0 10px rgba(82, 227, 159, 0.35);
+}
+.ui-switch.ui-switch--ok[data-state='checked'] .ui-switch__thumb { background: var(--ok, #52e39f); }
+.ui-switch[data-state='checked'] .ui-switch__thumb {
+  background: var(--accent);
+  transform: translateX(18px);
+  box-shadow: 0 0 8px var(--accent);
+}
+/* Keyboard focus shows; a tap does not leave a ring behind. */
+.ui-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ui-switch[data-disabled] { opacity: 0.4; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .ui-switch, .ui-switch__thumb { transition: none; }
 }
