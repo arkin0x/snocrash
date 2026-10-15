@@ -240,8 +240,8 @@ describe('an edited feed object credits its author, as REMIX does (7)', () => {
     expect(WORKSHOP).toMatch(/mine \? readCredit\(o\.event\.tags\) \?\? undefined : \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
   })
 
-  it("REMIX of your own object keeps its upstream credit rather than crediting you (review of #35)", () => {
-    expect(FEED).toMatch(/const credit = mine \? readCredit\(o\.event\.tags\) \?\? undefined : \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
+  it('REMIX of your own remix keeps its upstream credit; of your own original, credits that original (review of #35)', () => {
+    expect(FEED).toMatch(/const credit = \(mine \? readCredit\(o\.event\.tags\) : null\) \?\? \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
     expect(FEED).toMatch(/importShard\(o\.shard, credit\)/)
   })
 })

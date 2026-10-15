@@ -19,12 +19,12 @@
 import { SimplePool, type Event, type EventTemplate, type Filter, type VerifiedEvent } from 'nostr-tools'
 import { readEach } from 'sno-core/feed'
 
+// The pool keeps no record of which relay sent which event (its trackRelays
+// stays off): nostr-tools keeps that by holding each relay message whole for
+// the session, 48 MB for a thousand big objects (review of parity #35). The
+// reads that need a relay hint get the relay from readEach instead (stream,
+// queryAny).
 export const pool = new SimplePool()
-// Remember which relays each event came from (pool.seenOn): the relay hints in
-// an object's link, a credit's relay and a palette's pointer are read from it,
-// and nostr-tools leaves it off by default, so every hint came out empty
-// (review of parity #35).
-pool.trackRelays = true
 
 /** How long to keep a read open when a relay never says it is finished. */
 export const READ_DEADLINE_MS = 6000
@@ -202,17 +202,26 @@ export function subscribeOne(url: string, filter: Filter, handlers: { onevent: (
 export function stream(
   relays: string[],
   filter: Filter,
-  onevent: (ev: Event) => void,
+  onevent: (ev: Event, relay: string) => void,
   deadline: number = READ_DEADLINE_MS,
 ): StreamHandle {
-  const handle = readEach<Filter>(relays, filter, subscribeOne, (ev) => onevent(ev as Event), { deadlineMs: deadline, connectMs: CONNECT_DEADLINE_MS, connect: connectRelay, auth: authForRead })
+  const handle = readEach<Filter>(relays, filter, subscribeOne, (ev, url) => onevent(ev as Event, url), { deadlineMs: deadline, connectMs: CONNECT_DEADLINE_MS, connect: connectRelay, auth: authForRead })
   return { done: handle.done.then(() => undefined), close: handle.close }
 }
 
+/** An event a read found, and every relay that sent it: what a relay hint is made from. */
+export interface Found {
+  event: Event
+  relays: string[]
+}
+
 /** Collect everything a read returns, for callers that cannot paint early. */
-export async function queryAny(relays: string[], filter: Filter, deadline: number = READ_DEADLINE_MS): Promise<Event[]> {
-  const out: Event[] = []
-  const seen = new Set<string>()
-  await stream(relays, filter, (ev) => { if (!seen.has(ev.id)) { seen.add(ev.id); out.push(ev) } }, deadline).done
-  return out
+export async function queryAny(relays: string[], filter: Filter, deadline: number = READ_DEADLINE_MS): Promise<Found[]> {
+  const byId = new Map<string, Found>()
+  await stream(relays, filter, (ev, relay) => {
+    const got = byId.get(ev.id)
+    if (!got) byId.set(ev.id, { event: ev, relays: [relay] })
+    else if (!got.relays.includes(relay)) got.relays.push(relay)
+  }, deadline).done
+  return [...byId.values()]
 }

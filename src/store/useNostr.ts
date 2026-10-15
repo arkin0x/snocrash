@@ -23,7 +23,7 @@ import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRel
 import { SNO_KIND, createFeed, creditAuthor, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
-  deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
+  GIVEN_UP, deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
   prefOf, randomSigner, saveSignerPref, signWithin, signerFromNcryptsec, signerFromNsec,
   signerFromPref, type Signer, type SignerKind,
 } from '../lib/signers'
@@ -246,7 +246,7 @@ export function paletteNevent(event: PublishedPalette): string {
  * whose relays never carried it.
  */
 export function objectAddress(o: FeedObject): string {
-  const relays = [...(pool.seenOn.get(o.id) ?? [])].map((r) => r.url).slice(0, 2)
+  const relays = (o.seen ?? []).slice(0, 2)
   return nip19.naddrEncode({ kind: SNO_KIND, pubkey: o.pubkey, identifier: o.d, relays })
 }
 
@@ -306,22 +306,39 @@ async function adopt(set: (p: Partial<NostrState>) => void, make: (signal: Abort
  * phone leaves behind after the tab has sat in another app: the sockets look
  * open and the request goes into the void. So they are dropped and the same
  * signer is asked once more over fresh ones.
+ *
+ * A saved identity reconnects first (deferredReconnect), and the patience
+ * starts once that handshake is done: a slow one is somebody approving the
+ * connection on their phone, not a dead channel, and taking it for one asked
+ * them a second time (review of parity #35).
  */
 async function signEvent(template: Parameters<Signer['signEvent']>[0]): Promise<Event> {
-  const current = signer
-  if (!current) throw new Error('Pick a key first.')
-  if (current.kind === 'local') return current.signEvent(template) as Promise<Event>
+  const asked = signer
+  if (!asked) throw new Error('Pick a key first.')
+  if (asked.kind === 'local' && !asked.ready) return asked.signEvent(template) as Promise<Event>
   pendingSigns++
   try {
-    return await signWithin(current, template) as Event
-  } catch (err) {
-    if (!current.reconnect) throw err
-    const fresh = await current.reconnect()
-    if (signer === current) signer = fresh
-    return await signWithin(fresh, template) as Event
+    // A saved identity's handshake first, with no clock on it. It rejects
+    // with GIVEN_UP if the identity is replaced meanwhile.
+    const current = asked.ready ? await asked.ready() : asked
+    if (current.kind === 'local') return await current.signEvent(template) as Event
+    try {
+      return await signWithin(current, template) as Event
+    } catch (err) {
+      if (!current.reconnect) throw err
+      const fresh = await current.reconnect()
+      if (signer === current) signer = fresh
+      return await signWithin(fresh, template) as Event
+    }
   } finally {
     pendingSigns--
   }
+}
+
+/** What a publish that failed says: a signature given up means the identity changed under it. */
+function publishFailed(err: unknown): string {
+  if (err instanceof Error && err.message === GIVEN_UP) return 'Not published: the identity changed while it was being signed. Publish again to sign it as the new one.'
+  return `Could not publish: ${err instanceof Error ? err.message : String(err)}`
 }
 
 /**
@@ -484,7 +501,7 @@ export const useNostr = create<NostrState>((set, get) => ({
       if (took > 0) void get().loadFeed()
       return took > 0
     } catch (err) {
-      set({ publishing: false, notice: `Could not publish: ${err instanceof Error ? err.message : String(err)}` })
+      set({ publishing: false, notice: publishFailed(err) })
       return false
     }
   },
@@ -513,7 +530,7 @@ export const useNostr = create<NostrState>((set, get) => ({
       // not is worse than no hint, because a reader spends its fetch there.
       return { id: signed.id, genesis: prev?.genesis ?? signed.id, relays: took }
     } catch (err) {
-      set({ publishing: false, notice: `Could not publish: ${err instanceof Error ? err.message : String(err)}` })
+      set({ publishing: false, notice: publishFailed(err) })
       return null
     }
   },
@@ -525,14 +542,14 @@ export const useNostr = create<NostrState>((set, get) => ({
     if (held) return held
     const found = await queryAny(withHints(where.relays), { kinds: [SNO_KIND], authors: [where.pubkey], '#d': [where.d] })
     // Several relays may each hold a different edit; the newest is the object.
-    const ev = found.sort((a, b) => b.created_at - a.created_at)[0]
+    const newest = found.sort((a, b) => b.event.created_at - a.event.created_at)[0]
+    const ev = newest?.event
     if (!ev) { set({ notice: 'No relay had that object. It may have been deleted, or live on a relay this app does not reach.' }); return null }
     const o = objectFromEvent(ev)
     if (!o) { set({ notice: 'That object could not be read.' }); return null }
     // Where it was seen, as the feed's own objects say: the relay a credit
     // names when this object is edited into a copy (review of parity #35).
-    const seen = [...(pool.seenOn.get(ev.id) ?? [])].map((r) => r.url)
-    return seen.length ? { ...o, seen } : o
+    return { ...o, seen: newest.relays }
   },
 
   fetchPalette: async (ref) => {
@@ -558,7 +575,8 @@ export const useNostr = create<NostrState>((set, get) => ({
     const found = await queryAny(relays, filter)
     // The newest, for an naddr that several relays answer with different
     // versions of. An nevent can only match one event, so this is a no-op there.
-    const ev = found.sort((a, b) => b.created_at - a.created_at)[0]
+    const newest = found.sort((a, b) => b.event.created_at - a.event.created_at)[0]
+    const ev = newest?.event
     if (!ev) {
       // Which relays, because "no relay had it" is unactionable and the usual
       // cause is that the pointer named none. An nevent with no relay hint can
@@ -583,7 +601,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     }
     // Where it was actually seen, not where it was looked for, because that is
     // what a relay hint is for.
-    const seen = [...(pool.seenOn.get(ev.id) ?? [])].map((r) => r.url)
+    const seen = newest.relays
     return {
       colors,
       name: ev.tags.find((t) => t[0] === 'name')?.[1] ?? null,

@@ -83,10 +83,11 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
   const remix = (): void => {
     // A copy with an id of its own: publishing it never touches the original,
     // and credits it (the q tag, and the p that tells its author). A copy of
-    // your own object keeps the credit it was published with, if it is a
-    // remix itself, rather than crediting you (review of parity #35).
+    // your own remix keeps the credit that remix was published with; a copy
+    // of your own original credits the original, which goes out as the q
+    // alone, since the p would only tell you (review of parity #35).
     const mine = o.pubkey === useNostr.getState().pubkey
-    const credit = mine ? readCredit(o.event.tags) ?? undefined : { address: o.address, relay: o.seen?.[0] }
+    const credit = (mine ? readCredit(o.event.tags) : null) ?? { address: o.address, relay: o.seen?.[0] }
     const id = useWorkshop.getState().importShard(o.shard, credit)
     useWorkshop.getState().select(id)
     say(`"${o.shard.name}" is yours to edit now. Publishing it makes a new object.`)

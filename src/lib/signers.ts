@@ -49,6 +49,12 @@ export interface Signer {
   close?: () => Promise<void>
   /** Drop the sockets and come back with a working signer. */
   reconnect?: () => Promise<Signer>
+  /**
+   * Only on a deferred identity (deferredReconnect): the live signer, once
+   * its handshake is done. A signature's patience starts after it, so a slow
+   * handshake is not taken for a dead channel (review of parity #35).
+   */
+  ready?: () => Promise<Signer>
 }
 
 interface Nip07 {
@@ -179,12 +185,12 @@ export function prefOf(signer: Signer): SignerPref {
 }
 
 /** Rebuild a signer from a kept preference. Local is instant; the others reconnect. */
-export async function signerFromPref(pref: SignerPref): Promise<Signer> {
+export async function signerFromPref(pref: SignerPref, signal?: AbortSignal): Promise<Signer> {
   if (pref.kind === 'local' && pref.nsec) return signerFromNsec(pref.nsec)
   if (pref.kind === 'nip07') return nip07Signer()
   if (pref.kind === 'nip46' && pref.bunkerUri) {
     const clientSk = pref.clientNsec ? (nip19.decode(pref.clientNsec).data as Uint8Array) : undefined
-    return nip46Signer(pref.bunkerUri, clientSk)
+    return nip46Signer(pref.bunkerUri, clientSk, signal)
   }
   throw new Error('That stored identity cannot be rebuilt.')
 }
@@ -247,23 +253,29 @@ export const GIVEN_UP = 'Given up.'
  * swap it in. Without this, opening the app with a bunker identity would mean
  * waiting on somebody's phone before anything could be drawn.
  *
- * `close` lets it go, handshake and all: a live signer already handed over
- * is closed, and one a handshake still in flight brings back later is closed
- * on arrival and never handed to `onReady`, so an identity replaced in the
- * meantime stays replaced (review of parity #35).
+ * `close` lets it go, handshake and all: a handshake in flight is given up
+ * (a bunker's is closed at once), a live signer already handed over is
+ * closed, and one that arrives anyway is closed on arrival and never handed
+ * to `onReady`, so an identity replaced in the meantime stays replaced. A
+ * handshake that fails is not remembered: the next signature tries again,
+ * as ONOSENDAI's does (review of parity #35).
  */
 export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void): Signer {
   let pending: Promise<Signer> | null = null
   let live: Signer | null = null
   let closed = false
+  const abort = new AbortController()
   const ensure = (): Promise<Signer> => {
     if (closed) return Promise.reject(new Error(GIVEN_UP))
     if (!pending) {
-      pending = signerFromPref(pref).then((s) => {
+      pending = signerFromPref(pref, abort.signal).then((s) => {
         if (closed) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(GIVEN_UP) }
         live = s
         onReady(s)
         return s
+      }, (err: unknown) => {
+        if (!closed) pending = null
+        throw closed ? new Error(GIVEN_UP) : err
       })
     }
     return pending
@@ -273,8 +285,10 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
     pubkey: pref.pubkey,
     signEvent: (template) => ensure().then((s) => s.signEvent(template)),
     reconnect: ensure,
+    ready: ensure,
     close: async () => {
       closed = true
+      abort.abort()
       await live?.close?.()
     },
   }

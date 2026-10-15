@@ -8,7 +8,7 @@
  * list is empty, so publish signs and sends nowhere).
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 if (typeof localStorage === 'undefined') {
   const mem = new Map<string, string>()
@@ -23,6 +23,8 @@ if (typeof localStorage === 'undefined') {
 const bunker = vi.hoisted(() => ({
   pubkey: 'c'.repeat(64),
   onReady: null as ((s: unknown) => void) | null,
+  /** When set, the deferred signer's handshake: what ready(), signEvent and reconnect wait on, as the real one's do. */
+  handshake: null as Promise<{ signEvent: (t: unknown) => Promise<unknown> }> | null,
 }))
 
 vi.mock('../lib/signers', async (importOriginal) => {
@@ -33,6 +35,14 @@ vi.mock('../lib/signers', async (importOriginal) => {
     // The handshake starts with the first signature and finishes when the test calls onReady.
     deferredReconnect: (pref: { kind: 'nip46'; pubkey: string }, onReady: (s: unknown) => void) => {
       bunker.onReady = onReady
+      const h = bunker.handshake
+      if (h) {
+        return {
+          kind: pref.kind, pubkey: pref.pubkey, close: vi.fn(async () => {}),
+          ready: () => h, reconnect: () => h,
+          signEvent: (t: unknown) => h.then((live) => live.signEvent(t)),
+        }
+      }
       return { kind: pref.kind, pubkey: pref.pubkey, signEvent: () => new Promise(() => { /* waits on the phone */ }), close: vi.fn(async () => {}) }
     },
   }
@@ -53,6 +63,7 @@ const shard = { ...newShard('probe'), vertices: [{ p: [0, 0, 0] as [number, numb
 
 describe('a saved bunker identity, reconnecting late', () => {
   beforeEach(async () => {
+    bunker.handshake = null
     useRelays.setState({ relays: [] } as never)
     await useNostr.getState().init()
     expect(useNostr.getState().pubkey).toBe(bunker.pubkey)
@@ -79,5 +90,27 @@ describe('a saved bunker identity, reconnecting late', () => {
     expect(live.close).not.toHaveBeenCalled()
     await useNostr.getState().publish(shard)
     expect(live.signEvent).toHaveBeenCalled()
+  })
+})
+
+describe("a signature's patience (review of parity #35)", () => {
+  afterEach(() => { vi.useRealTimers(); bunker.handshake = null })
+
+  it('starts after a slow handshake, so the phone is asked to sign once', async () => {
+    let answer!: (live: ReturnType<typeof liveBunker>) => void
+    bunker.handshake = new Promise((resolve) => { answer = resolve })
+    useRelays.setState({ relays: [] } as never)
+    await useNostr.getState().init()
+    vi.useFakeTimers()
+    const publishing = useNostr.getState().publish(shard)
+    // Somebody takes 20 s to approve the connection: longer than the 15 s patience.
+    await vi.advanceTimersByTimeAsync(20_000)
+    const live = liveBunker()
+    answer(live)
+    bunker.onReady!(live)
+    await vi.advanceTimersByTimeAsync(0)
+    await publishing
+    expect(live.signEvent).toHaveBeenCalledTimes(1)
+    expect(useNostr.getState().notice).toBe('No relay took it.')
   })
 })

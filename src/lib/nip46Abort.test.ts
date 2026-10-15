@@ -42,7 +42,8 @@ vi.mock('nostr-tools/nip46', async (importOriginal) => {
   }
 })
 
-import { GIVEN_UP, nip46Signer } from './signers'
+import { generateSecretKey, nip19 } from 'nostr-tools'
+import { GIVEN_UP, deferredReconnect, nip46Signer, type Signer, type SignerPref } from './signers'
 import { useNostr } from '../store/useNostr'
 
 describe('a bunker handshake', () => {
@@ -85,5 +86,51 @@ describe('a bunker handshake', () => {
     expect(fake.close).toHaveBeenCalled()
     expect(useNostr.getState().loggingIn).toBe(false)
     expect(useNostr.getState().loginError).toBeNull()
+  })
+})
+
+describe('a saved bunker identity, reconnected later (the real deferredReconnect)', () => {
+  const pref: SignerPref = { kind: 'nip46', pubkey: 'c'.repeat(64), bunkerUri: 'bunker://x', clientNsec: nip19.nsecEncode(generateSecretKey()) }
+
+  beforeEach(() => {
+    fake.close = vi.fn(async () => {})
+    fake.answer = null
+  })
+
+  it('let go after the handover, closes the live bunker it handed over', async () => {
+    let handed: Signer | null = null
+    const lazy = deferredReconnect(pref, (s) => { handed = s })
+    const ready = lazy.ready!()
+    await vi.waitFor(() => expect(fake.answer).not.toBeNull())
+    fake.answer!()
+    await ready
+    expect(handed).not.toBeNull()
+    expect(fake.close).not.toHaveBeenCalled()
+    await lazy.close!()
+    expect(fake.close).toHaveBeenCalled()
+  })
+
+  it('let go mid-handshake, gives the handshake up: the bunker is closed at once and nothing is handed over', async () => {
+    let handed: Signer | null = null
+    const lazy = deferredReconnect(pref, (s) => { handed = s })
+    const ready = lazy.ready!()
+    await vi.waitFor(() => expect(fake.answer).not.toBeNull())
+    await lazy.close!()
+    await expect(ready).rejects.toThrow(GIVEN_UP)
+    expect(fake.close).toHaveBeenCalled()
+    expect(handed).toBeNull()
+  })
+
+  it('a handshake that failed is not remembered: the next signature tries again', async () => {
+    const lazy = deferredReconnect(pref, () => {})
+    const first = lazy.ready!()
+    await vi.waitFor(() => expect(fake.answer).not.toBeNull())
+    fake.answer!(new Error('the phone was off'))
+    await expect(first).rejects.toThrow('the phone was off')
+    fake.answer = null
+    const second = lazy.ready!()
+    await vi.waitFor(() => expect(fake.answer).not.toBeNull())
+    fake.answer!()
+    expect((await second).pubkey).toBe('c'.repeat(64))
   })
 })
