@@ -470,9 +470,8 @@ function Aim(): null {
   return null
 }
 
-/** Keyboard on the bench: undo, tools, nudge, fill, delete, level, turn. */
 /**
- * A box dragged on the bench in SELECT and in FACE: every point whose
+ * A box dragged on the bench in SELECT: every point whose
  * projection falls inside is added to the selection, live as the box grows,
  * and the box's own additions shrink back as it does. Each box adds to what
  * was in hand when the finger touched, so several little boxes build a
@@ -585,6 +584,7 @@ function Marquee(): null {
   return null
 }
 
+/** Keyboard on the bench: undo, tools, nudge, fill, delete, level, turn. Escape is Workshop's (escape.ts). */
 function Keys(): null {
   const camera = useThree((s) => s.camera)
   useEffect(() => {

@@ -23,6 +23,7 @@ import { Compass3D } from './Compass3D'
 import { ArrowLeft, Box, ChevronDown, ChevronUp, ClipboardCopy, ClipboardPaste, Copy, CopyPlus, Eraser, Eye, FlipVertical2, Globe, Grid2x2Plus, Grid3x3, Link, Merge, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { PaletteModal } from './PaletteModal'
+import { benchEscape, holding, letGo, typingIn } from './escape'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
 import { stepDivision } from './divisions'
@@ -104,12 +105,6 @@ function Toast(): JSX.Element | null {
 }
 
 /**
- * The CONTROLS pad: the main pad's nine cells, for the selection. Arrows move
- * it a unit in screen directions (the sub-label says which world axis that is
- * right now), the corners CONNECT and DELETE, the hub counts the points and
- * clears them.
- */
-/**
  * The grid floor's LEVEL, raised and lowered from the top left on every tool
  * (arkinox, 2026-10-10): up, the level, down, stacked under the chip row. The
  * same step as GRID's LEVEL row and the ] and [ keys, one step of the current
@@ -183,6 +178,12 @@ function OrbitSphere(): JSX.Element {
   )
 }
 
+/**
+ * The CONTROLS pad: the main pad's nine cells, for the selection. Arrows move
+ * it a unit in screen directions (the sub-label says which world axis that is
+ * right now), the corners CONNECT and DELETE, the hub counts the points and
+ * clears them.
+ */
 function ControlsPad({ points, objects = 0 }: { points: number; objects?: number }): JSX.Element {
   // Points and placed objects move, turn, cut and copy together.
   const held = points + objects
@@ -611,24 +612,21 @@ export function Workshop(): JSX.Element | null {
   }, [viewOpen])
   const bind = useRepeatable()
   const stacked = useMemo(() => (shard ? stackedSpots(shard) : { spots: 0, points: 0 }), [shard])
-  // Esc, in ONOSENDAI's order (2026-10-01): a sheet or modal over the bench
-  // closes itself first (the palette sheet, the menu, the key), then the open
-  // panel, then the view pad, then what is in hand. Nothing past that: the
-  // workshop is this app's home, so there is nothing to close it into.
+  // Esc, in ONOSENDAI's order (escape.ts): the palette sheet folds itself
+  // (its own confirmations first) and the menu and the key take the press, so
+  // the bench is left alone under any of them; then the open panel, then the
+  // view pad, then what is in hand. Never the workshop itself.
   const escape = useRef<() => void>(() => {})
   escape.current = () => {
-    if (pickerOpen || menuOpen || loginOpen) return
-    const ws = useWorkshop.getState()
-    if (panel !== null) setPanel(null)
-    else if (viewOpen) setViewOpen(false)
-    else if (ws.selection.length || ws.partSel.length || ws.selectedFace !== null || ws.facePick.length) { ws.selectVertex(null); ws.clearFacePick() }
+    const step = benchEscape({ covered: pickerOpen || menuOpen || loginOpen, panel: panel !== null, viewOpen, holding: holding() })
+    if (step === 'panel') setPanel(null)
+    else if (step === 'view') setViewOpen(false)
+    else if (step === 'selection') letGo()
   }
   useEffect(() => {
     if (!open || view !== 'make') return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'Escape') return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.code !== 'Escape' || typingIn(e.target)) return
       escape.current()
     }
     window.addEventListener('keydown', onKey)

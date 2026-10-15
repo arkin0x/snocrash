@@ -793,8 +793,9 @@ button:disabled { opacity: 0.35; cursor: default; }
  *
  * The bench fills the screen; everything else floats on it the way the
  * instruments float on the world. Top left, the chip row and the history;
- * top right, DEPLOY and the way out; bottom right, the CONTROLS pad and the
- * COLOR bar. One panel at a time opens under the chip row. */
+ * top right, PUBLISH, with the compass (VIEW) or the selected point's place
+ * under it; bottom left, the rows and the CONTROLS pad; bottom right, the
+ * orbit ball and the COLOR bar. One panel at a time opens under the chip row. */
 .ws__top {
   position: absolute;
   top: 12px;
@@ -982,7 +983,7 @@ button:disabled { opacity: 0.35; cursor: default; }
   border-left: 0;
 }
 
-/* Top right, under DEPLOY and the way out: the compass, the grid pad under it. */
+/* Top right, under PUBLISH: the compass in VIEW, with the view pad under it. */
 .ws__view {
   position: absolute;
   top: 54px;
@@ -1031,9 +1032,6 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .benchpad > * { pointer-events: auto; }
 
-/* The pad and the orbit ball side by side. The pad's grid keeps its size when
-   nothing is selected (its keys are simply absent), so the ball never moves
-   under the thumb when a selection comes and goes. */
 /* The orbit ball (ONOSENDAI, 2026-10-10): a drag on it turns the view about
    the shard and keeps turning after the finger leaves it (pointer capture); a
    tap sends the view home. Drawn as a lit globe with a meridian and an
@@ -1634,10 +1632,10 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 /* The workshop's panels hover over the compass and its pad, which share the
    top-right corner: the panel is what you are reading, so it wins. The compass
-   drops a layer rather than the panels rising one, because DEPLOY and the way
-   out share the top edge with the chips and must stay pressable above all of it.
-   The chip row also reserves 124px on its right for those two buttons, and that
-   strip must let a press through rather than swallow it. */
+   drops a layer rather than the panels rising one, because PUBLISH shares the
+   top edge with the chips and must stay pressable above all of it. The chip
+   row also reserves 112px on its right for it, and that strip must let a
+   press through rather than swallow it. */
 .ws__view { z-index: 2; }
 
 .ws__chips { pointer-events: none; }
@@ -2323,9 +2321,9 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 /* ---------- The compass, and the grid pad under it ----------
 
-   Pinned to the very top right corner. PUBLISH keeps a standing berth to its
-   left (.ws__exit below), so the corner does not reshuffle when the tool
-   changes and the compass comes or goes. */
+   In .ws__view, under PUBLISH at the top right, and only in VIEW: on every
+   other tool that spot shows the selected point's place (.ws__at--top), as in
+   ONOSENDAI. */
 .compass-3d {
   position: static;
   width: 64px;
