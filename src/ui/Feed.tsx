@@ -6,10 +6,11 @@
  * someone else's object: open it in the editor as your own copy, take the
  * payload to the clipboard, or save it as a PLY that Blender will open.
  *
- * An object for sale on Fanfares (a listing, sno-core/feed) is a tile among
- * them, newest first with the rest: the seller's preview GIF, the title, the
- * price, who sells it, and BUY ON FANFARES, which opens its Fanfares page in
- * a new tab. It has no shape until bought, so it cannot be opened, remixed,
+ * An object for sale (a listing, sno-core/feed) is a tile among them,
+ * newest first with the rest: the seller's preview GIF, the title, the price,
+ * who sells it, and BUY ON <seller> with the domain the link opens beside it,
+ * which opens the seller's page in a new tab (its NIP-89 handler's, a known
+ * key service's app, or njump: sno-core sellerLink). It has no shape until bought, so it cannot be opened, remixed,
  * copied, saved or stamped, and its picture is an image, not a 3D preview.
  *
  * Remixing is a copy and never a reference. The copy gets its own id, so
@@ -22,7 +23,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Download, ExternalLink, LockKeyhole, RefreshCw, SquarePen } from 'lucide-react'
 import { feedItems, isListing } from 'sno-core/feed'
 import { remixCredit, useNostr, type FeedListing, type FeedObject } from '../store/useNostr'
-import { fanfaresUrl, listingPictures, satsLabel } from '../lib/fanfares'
+import { listingPictures, satsLabel } from '../lib/listing'
+import { useSellerLink } from '../hooks/useSellerLink'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload, type ShardModel } from 'sno-core/shards'
 import { fileNameFor, toPly } from '../lib/ply'
@@ -141,10 +143,11 @@ function ListingPic({ listing }: { listing: FeedListing }): JSX.Element {
   )
 }
 
-/** An object for sale: bought on Fanfares, never opened or placed here (no shape until bought). */
+/** An object for sale: bought from its seller's page, never opened or placed here (no shape until bought). */
 export function ListingTile({ listing }: { listing: FeedListing }): JSX.Element {
   const authorName = useProfiles((s) => s.profiles[listing.pubkey]?.name ?? null)
   const title = listing.title || 'Untitled'
+  const link = useSellerLink(listing)
   return (
     <article className="tile tile--sale" title="For sale: its shape is sealed until bought">
       <ListingPic listing={listing} />
@@ -157,9 +160,16 @@ export function ListingTile({ listing }: { listing: FeedListing }): JSX.Element 
             <span className="tile__author">{authorName ?? shortKey(listing.pubkey)}</span>
           </div>
         </div>
-        <a className="btn tile__buy" href={fanfaresUrl(listing)} target="_blank" rel="noopener noreferrer" title="Open its Fanfares page in a new tab">
-          <ExternalLink size={14} strokeWidth={2.25} aria-hidden /> BUY ON FANFARES
-        </a>
+        {/* The domain is the link's own, so a seller's chosen name cannot hide where it goes. */}
+        {link && (
+          <a className="btn tile__buy" href={link.url} target="_blank" rel="noopener noreferrer" title={link.url}>
+            <span className="tile__buy-main">
+              <ExternalLink size={14} strokeWidth={2.25} aria-hidden />
+              <span className="tile__buy-label">BUY ON {link.label}</span>
+            </span>
+            <span className="tile__buy-domain">{link.domain}</span>
+          </a>
+        )}
       </div>
     </article>
   )

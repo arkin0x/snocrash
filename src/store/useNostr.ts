@@ -96,7 +96,7 @@ interface NostrState {
   signer: SignerKind
   feed: FeedObject[]
   /**
-   * Objects for sale on Fanfares (a 33331 sealed with a key service,
+   * Objects for sale (a 33331 sealed with any seller's key service,
    * NIP-FF-1): a title, a price and a picture, no shape until bought. Kept
    * apart from `feed`, so nothing that opens, remixes or stamps an object is
    * handed one.
