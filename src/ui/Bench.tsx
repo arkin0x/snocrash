@@ -29,6 +29,7 @@ import { drawnDivision } from './divisions'
 import { benchAxes, benchPose, nudgeFor, orbitOffset, planeAfter, sameAxes, setOrbitSink, useBenchView, type NudgeName } from './benchAxes'
 import { landing, preview, type WorkPlane } from 'sno-core/stamps'
 import { ShardMesh, faceOfHit } from '../scene/ShardMesh'
+import { ShardLights } from '../scene/shardLight'
 import { useWorkshop, type Tool } from '../store/useWorkshop'
 
 /** A press that travels further than this is an orbit, not a tap. */
@@ -373,7 +374,7 @@ function FaceHighlight(): JSX.Element | null {
   return (
     <>
       <mesh geometry={lit.g} frustumCulled={false}>
-        <meshBasicMaterial color={WARN} transparent opacity={0.5} side={DoubleSide} depthWrite={false} polygonOffset polygonOffsetFactor={-4} toneMapped={false} />
+        <meshBasicMaterial color={WARN} transparent opacity={0.5} side={DoubleSide} forceSinglePass depthWrite={false} polygonOffset polygonOffsetFactor={-4} toneMapped={false} />
       </mesh>
       <primitive object={lit.edge} />
     </>
@@ -641,11 +642,10 @@ export function Bench(): JSX.Element {
         if (w.selection.length || w.partSel.length || w.selectedFace !== null || w.facePick.length) { w.selectVertex(null); w.clearFacePick() }
       }}
     >
-      {/* A key light high and to one side, a dim fill from behind: faces read by
-          their tilt, and the dark backs (ShardMesh lit) show through any hole. */}
-      <ambientLight intensity={0.4} />
-      <directionalLight position={[8, 12, 6]} intensity={0.9} />
-      <directionalLight position={[-9, 2, -3]} intensity={0.6} />
+      {/* Lit near a face's own color, as ONOSENDAI's bench and the world are,
+          with a key high to one side and a fill from behind so faces read by
+          their tilt, and the darker backs show through any hole (shardLight). */}
+      <ShardLights />
       {/* One finger or left drag orbits, except in SELECT where that drag is the
           marquee's. Two fingers, or the right button, pan the view in the screen
           plane; pinch or the wheel dollies, in to 0.6 of a gibson so a fifth-gibson
