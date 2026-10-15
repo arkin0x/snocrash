@@ -86,6 +86,8 @@ describe('the feed draws listings among its objects (source)', () => {
   })
 
   it('counts what is for sale beside the objects, in the header', () => {
-    expect(SOURCE).toMatch(/for sale/)
+    // Objects count only objects (2 objects and 1 listing read "2 objects · 1 for sale", three tiles),
+    // and the "for sale" part shows only when something is.
+    expect(SOURCE).toContain("`${feed.length} object${feed.length === 1 ? '' : 's'}${listings.length ? ` · ${listings.length} for sale` : ''}`")
   })
 })
