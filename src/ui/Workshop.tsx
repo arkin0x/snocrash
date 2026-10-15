@@ -28,6 +28,7 @@ import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
 import { stepDivision } from './divisions'
 import { IMPORT_ACCEPT, IMPORT_FORMATS_LABEL } from 'sno-core/importFile'
+import { readCredit } from 'sno-core/feed'
 import { importFitFor } from 'sno-core/meshToShard'
 import { BUILT_IN } from 'sno-core/snoPalette'
 import { importFiles } from '../lib/meshImport'
@@ -507,7 +508,13 @@ function useOpenAddress(address: string | null): void {
       if (own && w.shards.some((x) => x.id === where.d)) { w.select(where.d, address); return }
       const o = await n.fetchObject(address)
       if (cancelled || !o) return
-      w.view(o.shard, { d: o.d, own: o.pubkey === useNostr.getState().pubkey, address, credit: { address: o.address, relay: o.seen?.[0] } })
+      // The credit the copy an edit makes will carry: someone else's object
+      // credits them, as REMIX does; your own keeps the credit it was
+      // published with, which the model read back from the event does not
+      // carry (review of parity #35).
+      const mine = o.pubkey === useNostr.getState().pubkey
+      const credit = mine ? readCredit(o.event.tags) ?? undefined : { address: o.address, relay: o.seen?.[0] }
+      w.view(o.shard, { d: o.d, own: mine, address, credit })
     })()
     return () => { cancelled = true }
   }, [address])
@@ -523,6 +530,10 @@ function useOpenAddress(address: string | null): void {
 export function Workshop(): JSX.Element | null {
   const open = useWorkshop((s) => s.open)
   const shard = useWorkshop((s) => s.current())
+  // What the unit and grid steppers change: your stored object while its
+  // relay copy is on view, so they show and stop at its sizes (review of
+  // parity #35).
+  const held = useWorkshop((s) => s.target())
   const shards = useWorkshop((s) => s.shards)
   const tool = useWorkshop((s) => s.tool)
   const selection = useWorkshop((s) => s.selection)
@@ -619,7 +630,7 @@ export function Workshop(): JSX.Element | null {
   const escape = useRef<(typing: boolean) => void>(() => {})
   escape.current = (typing) => {
     const step = workshopEscape({
-      sheet: pickerOpen, login: loginOpen, menu: menuOpen,
+      sheet: pickerOpen, login: loginOpen, loginBusy: useNostr.getState().loggingIn, menu: menuOpen,
       making: view === 'make', typing,
       panel: panel !== null, viewOpen, holding: holding(),
     })
@@ -645,8 +656,9 @@ export function Workshop(): JSX.Element | null {
 
   const selectedPoints = shard ? new Set(selection.map((i) => { const v = shard.vertices[i]; return v ? ticksOf(v).join(',') : '' })).size : 0
   const one = selection.length === 1 && shard ? shard.vertices[selection[0]] : null
-  const extent = shard?.extent ?? MIN_EXTENT
-  const minExtent = shard ? Math.max(MIN_EXTENT, neededExtent(shard)) : MIN_EXTENT
+  const extent = held?.extent ?? MIN_EXTENT
+  const minExtent = held ? Math.max(MIN_EXTENT, neededExtent(held)) : MIN_EXTENT
+  const unit = held?.unit ?? 0
   const hex = rgbToHex(color)
 
   /**
@@ -891,10 +903,10 @@ export function Workshop(): JSX.Element | null {
           <div className="workshop__row">
             <span className="workshop__label">SCALE</span>
             <span className="workshop__value">2^</span>
-            <button className="workshop__btn" {...bind(() => w().stepUnit(-1))} disabled={shard.unit <= 0} aria-label="Smaller unit">−</button>
-            <span className="workshop__value">{shard.unit}</span>
-            <button className="workshop__btn" {...bind(() => w().stepUnit(1))} disabled={shard.unit >= MAX_UNIT} aria-label="Larger unit">+</button>
-            <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(shard.unit)}</span>
+            <button className="workshop__btn" {...bind(() => w().stepUnit(-1))} disabled={unit <= 0} aria-label="Smaller unit">−</button>
+            <span className="workshop__value">{unit}</span>
+            <button className="workshop__btn" {...bind(() => w().stepUnit(1))} disabled={unit >= MAX_UNIT} aria-label="Larger unit">+</button>
+            <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(unit)}</span>
           </div>
           {/* A stepper like the rows around it (arkinox, 2026-10-15): fifteen
               divisions down to a single tick no longer fit as a row of buttons. */}

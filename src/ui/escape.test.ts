@@ -20,7 +20,7 @@ describe('Escape in the workshop', () => {
     useWorkshop.setState({ shards: [], currentId: null, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], aim: null, notice: null, tool: 'select' })
   })
 
-  const none = { sheet: false, login: false, menu: false, making: true, typing: false, panel: false, viewOpen: false, holding: false }
+  const none = { sheet: false, login: false, loginBusy: false, menu: false, making: true, typing: false, panel: false, viewOpen: false, holding: false }
 
   it('closes one thing per press, topmost first: the key, the menu, the panel, the view pad, what is in hand', () => {
     // Everything up at once, then each press with the one above it gone.
@@ -40,6 +40,11 @@ describe('Escape in the workshop', () => {
     expect(workshopEscape(none)).toBeNull()
   })
 
+  it('leaves the key alone while it is WORKING, and everything under it', () => {
+    expect(workshopEscape({ ...none, login: true, loginBusy: true, menu: true, panel: true, holding: true })).toBeNull()
+    expect(WORKSHOP).toMatch(/loginBusy: useNostr\.getState\(\)\.loggingIn/)
+  })
+
   it('leaves everything to the palette sheet while it is up', () => {
     expect(workshopEscape({ ...none, sheet: true, login: true, menu: true, panel: true, viewOpen: true, holding: true })).toBeNull()
   })
@@ -57,7 +62,7 @@ describe('Escape in the workshop', () => {
     expect(sheetEscape(false)).toBe('fold')
     // The sheet listens for the key itself, and the workshop counts it as cover.
     expect(PALETTE).toMatch(/sheetEscape\(switching !== null \|\| forgetting !== null\)/)
-    expect(WORKSHOP).toMatch(/sheet: pickerOpen, login: loginOpen, menu: menuOpen/)
+    expect(WORKSHOP).toMatch(/sheet: pickerOpen, login: loginOpen, loginBusy: [^,]+, menu: menuOpen/)
   })
 
   it('on the bench, leaves a key typed into a field alone', () => {

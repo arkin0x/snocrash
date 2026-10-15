@@ -23,17 +23,20 @@ export type WorkshopEscape = 'login' | 'menu' | 'panel' | 'view' | 'selection' |
  * The workshop's step. The palette sheet listens for the key itself, so
  * while it is up the press is its alone. The key (LoginModal) is a modal and
  * the menu sits under the modals, as in ONOSENDAI (useEscape 'modal' over
- * 'menu'); both close from their own fields too, as ONOSENDAI's do. The bench
+ * 'menu'); both close from their own fields too, as ONOSENDAI's do. The key
+ * stays while it is WORKING (`loginBusy`): closing it then would leave the
+ * attempt running behind it, so Escape does nothing and its ✕ is the way to
+ * give the attempt up (review of parity #35). The bench
  * comes after them, and only on the bench (`making`): there a key typed into
  * a field is left alone (`typing`).
  */
 export function workshopEscape(s: {
-  sheet: boolean; login: boolean; menu: boolean
+  sheet: boolean; login: boolean; loginBusy: boolean; menu: boolean
   making: boolean; typing: boolean
   panel: boolean; viewOpen: boolean; holding: boolean
 }): WorkshopEscape {
   if (s.sheet) return null
-  if (s.login) return 'login'
+  if (s.login) return s.loginBusy ? null : 'login'
   if (s.menu) return 'menu'
   if (!s.making || s.typing) return null
   if (s.panel) return 'panel'

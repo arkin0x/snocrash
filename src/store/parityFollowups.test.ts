@@ -18,10 +18,12 @@ if (typeof localStorage === 'undefined') {
 }
 
 import { creditOf } from 'sno-core/feed'
-import { fromPayload, type ShardModel } from 'sno-core/shards'
+import { fromPayload, hexToRgb, rgbToHex, type ShardModel } from 'sno-core/shards'
+import { BUILT_IN, snapHex } from 'sno-core/snoPalette'
 import { DEFAULT_PALETTE, useWorkshop } from './useWorkshop'
 import { useNostr } from './useNostr'
 import WORKSHOP from '../ui/Workshop.tsx?raw'
+import NOSTR from './useNostr.ts?raw'
 
 const w = () => useWorkshop.getState()
 const ME = 'a'.repeat(64)
@@ -100,6 +102,14 @@ describe('the unit and grid − and + step the shard the edit lands on (1)', () 
     expect(WORKSHOP).toMatch(/w\(\)\.stepExtent\(1\)/)
     expect(WORKSHOP).not.toMatch(/setUnit\(\(w\(\)\.current\(\)/)
     expect(WORKSHOP).not.toMatch(/setExtent\(\(w\(\)\.current\(\)/)
+  })
+
+  it('the steppers show and stop at the sizes of the shard they change (review of #35)', () => {
+    expect(WORKSHOP).toMatch(/const held = useWorkshop\(\(s\) => s\.target\(\)\)/)
+    expect(WORKSHOP).toMatch(/const extent = held\?\.extent/)
+    expect(WORKSHOP).toMatch(/neededExtent\(held\)/)
+    expect(WORKSHOP).toMatch(/disabled=\{unit <= 0\} aria-label="Smaller unit"/)
+    expect(WORKSHOP).toMatch(/<span className="workshop__value">\{unit\}<\/span>/)
   })
 })
 
@@ -208,15 +218,74 @@ describe('an edited feed object credits its author, as REMIX does (7)', () => {
     expect(creditOf(w().current()!)).toEqual(CREDIT)
   })
 
-  it('your own object adopted by an edit carries none', () => {
-    w().view(feedCopy(ME, 'mine'), { d: 'mine', own: true, address: 'naddr-mine', credit: { address: `33331:${ME}:mine` } })
+  it('your own object, an original, adopted by an edit carries none', () => {
+    w().view(feedCopy(ME, 'mine'), { d: 'mine', own: true, address: 'naddr-mine' })
     w().setMode('points')
     expect(w().current()!.id).toBe('mine')
     expect(creditOf(w().current()!)).toBeUndefined()
   })
 
-  it('the workshop opens a feed object with the credit REMIX gives', () => {
-    expect(WORKSHOP).toMatch(/credit: \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
+  it('your own remix, adopted from the feed in a browser without it, keeps the credit it was published with (review of #35)', () => {
+    w().view(feedCopy(ME, 'mine'), { d: 'mine', own: true, address: 'naddr-mine', credit: CREDIT })
+    w().setMode('points')
+    expect(w().current()!.id).toBe('mine')
+    expect(creditOf(w().current()!)).toEqual(CREDIT)
+  })
+
+  it("the workshop opens someone else's object with the credit REMIX gives, and your own with its event's credit", () => {
+    expect(WORKSHOP).toMatch(/mine \? readCredit\(o\.event\.tags\) \?\? undefined : \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
+  })
+
+  it('an object fetched by its link says where it was seen, for the relay a credit names (review of #35)', () => {
+    const fetch = NOSTR.slice(NOSTR.indexOf('fetchObject: async'), NOSTR.indexOf('fetchPalette: async'))
+    expect(fetch).toMatch(/pool\.seenOn\.get\(ev\.id\)/)
+    expect(fetch).toMatch(/seen\.length \? \{ \.\.\.o, seen \} : o/)
+  })
+})
+
+describe('a color off the palette painted with its nearest entry lands (review of #35, blocking 1)', () => {
+  /** The palette entry the wire would snap a color to. */
+  const nearest = (c: [number, number, number]): [number, number, number] => hexToRgb(snapHex(BUILT_IN, rgbToHex(c))!)
+  const OFF: [number, number, number] = [0.5, 0.31, 0.77]
+  /** A v1 square whose corner 0 is the literal color OFF, which no palette entry is. */
+  const V1 = { ...SQUARE, colors: [OFF, [1, 1, 1], [1, 1, 1], [1, 1, 1]] }
+
+  it('a v1 literal color painted with its nearest entry changes the color, with an undo entry', () => {
+    const id = w().importText(JSON.stringify(V1))!
+    w().select(id)
+    const before = w().current()!.vertices[0].c
+    expect(before).not.toEqual(nearest(before))
+    w().setSelection([0])
+    w().colorSelected(nearest(before))
+    expect(w().current()!.vertices[0].c).toEqual(nearest(before))
+    expect(w().past).toHaveLength(1)
+  })
+
+  it('a SUBDIVIDE midpoint painted with its nearest entry lands', () => {
+    // Corners of two palette colors far apart, so the midpoint between them is on neither.
+    const id = w().importText(JSON.stringify({ ...SQUARE, colors: [[1, 0, 0], [0, 0, 1], [1, 1, 1], [1, 1, 1]] }))!
+    w().select(id)
+    w().setSelection([0, 1])
+    w().subdivideSelection()
+    const s = w().current()!
+    const mid = s.vertices.length - 1
+    const c = s.vertices[mid].c
+    expect(c).not.toEqual(nearest(c))
+    const steps = w().past.length
+    w().setSelection([mid])
+    w().colorSelected(nearest(c))
+    expect(w().current()!.vertices[mid].c).toEqual(nearest(c))
+    expect(w().past).toHaveLength(steps + 1)
+  })
+
+  it("on someone else's object, the same paint adopts it and lands", () => {
+    openTheirs(V1)
+    const before = w().current()!.vertices[0].c
+    w().setSelection([0])
+    w().colorSelected(nearest(before))
+    expect(w().shards).toHaveLength(1)
+    expect(w().viewing).toBeNull()
+    expect(w().current()!.vertices[0].c).toEqual(nearest(before))
   })
 })
 

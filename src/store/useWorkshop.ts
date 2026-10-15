@@ -390,7 +390,7 @@ export interface WorkshopState {
   create: (name?: string) => string
   select: (id: string | null, address?: string | null) => void
   /** Put an object from the feed on the bench without making it yours. See `viewing`. */
-  /** `credit` is whose it is, as REMIX gives it (the coordinate and a relay), for the copy the first edit makes. */
+  /** `credit` goes on the copy the first edit makes: for someone else's object, theirs, as REMIX gives it (the coordinate and a relay); for your own, the credit it was published with, if any. */
   view: (shard: ShardModel, source: { d: string; own: boolean; address: string; credit?: Credit }) => void
   /** Make the object on the bench yours, if it is not already, and return it. */
   adopt: () => ShardModel | null
@@ -570,20 +570,46 @@ function load(): ShardModel[] {
 }
 
 /**
+ * Whether two shards are the same object: every field of the model, exactly,
+ * whatever their ids, names or edit times. An action whose result is the
+ * shard it started from changed nothing (review of parity #33).
+ *
+ * The model, not the wire: the wire snaps each color to its nearest palette
+ * entry, so a color off the palette (a SUBDIVIDE midpoint, a corner average,
+ * a v1 literal) painted with that entry read as unchanged and the paint was
+ * dropped; the snap also searched the palette per color, hundreds of
+ * milliseconds an edit on a big object (review of parity #35). Colors,
+ * paletteName and credit count as they are. A field set to undefined is the
+ * same as one left out.
+ */
+export function sameContent(a: ShardModel, b: ShardModel): boolean {
+  return sameValue(a, b, SHARD_IDENTITY)
+}
+
+/** Fields that say which object and when, not what it is. */
+const SHARD_IDENTITY = new Set(['id', 'name', 'updatedAt'])
+
+function sameValue(a: unknown, b: unknown, skip?: Set<string>): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (!sameValue(a[i], b[i])) return false
+    return true
+  }
+  const x = a as Record<string, unknown>, y = b as Record<string, unknown>
+  for (const k in x) if (!skip?.has(k) && !sameValue(x[k], y[k])) return false
+  for (const k in y) if (!skip?.has(k) && !(k in x) && y[k] !== undefined) return false
+  return true
+}
+
+/**
  * The object edited most recently: the one at the top of the workshop's list.
  *
  * The stored list is in the order objects were made, so its first entry is the
  * oldest, and opening that on every fresh load kept bringing back the same old
  * object (arkinox, 2026-09-27).
  */
-/**
- * Whether two shards are the same object in content: what the wire carries,
- * whatever their ids, names or edit times. An action whose result is the
- * shard it started from changed nothing (review of parity #33).
- */
-export function sameContent(a: ShardModel, b: ShardModel): boolean {
-  return JSON.stringify(toPayload({ ...a, name: b.name })) === JSON.stringify(toPayload(b))
-}
 
 export function newestId(shards: ShardModel[]): string | null {
   let best: ShardModel | null = null
@@ -1038,8 +1064,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       }
       // Someone else's object becomes yours on the first edit, and says whose
       // it was, as REMIX does (importShard with credit): publishing the edit
-      // credits its author (review of parity #33). Your own needs no credit.
-      const copy: ShardModel = !v.own && v.credit ? withCredit(base, v.credit) : base
+      // credits its author (review of parity #33). Your own keeps the credit
+      // it was published with, when it is a remix itself (review of #35).
+      const copy: ShardModel = v.credit ? withCredit(base, v.credit) : base
       const list = [...get().shards, copy]
       // aimKey and address stay as they are: see their comments.
       set({ shards: list, currentId: id, viewing: null })

@@ -14,7 +14,7 @@
  * not this file), so what leaves is safe to keep anywhere.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { hasNip07 } from '../lib/signers'
 import { MIN_PASSWORD, backupFileName, exportProblem } from '../lib/keyExport'
@@ -54,13 +54,23 @@ export function LoginModal({ onClose }: { onClose: () => void }): JSX.Element {
   const disabled = busy !== null
 
   // Run a switch, then close if it took. A failed switch sets loginError and
-  // changes nothing else, so the error is the whole verdict.
+  // changes nothing else, so the error is the whole verdict. One given up
+  // (✕ while WORKING) closes nothing more: the modal is already gone, and
+  // another may be open in its place.
+  const gaveUp = useRef(false)
   const run = async (id: string, fn: () => Promise<void> | void): Promise<void> => {
     setBusy(id)
     try {
       await fn()
-      if (!useNostr.getState().loginError) onClose()
-    } finally { setBusy(null) }
+      if (!gaveUp.current && !useNostr.getState().loginError) onClose()
+    } finally { if (!gaveUp.current) setBusy(null) }
+  }
+  // ✕ while WORKING gives the attempt up, as ONOSENDAI's stopQr does: a
+  // bunker or extension that answers later changes nothing (review of
+  // parity #35). Escape leaves a WORKING modal alone (escape.ts).
+  const close = (): void => {
+    if (busy !== null) { gaveUp.current = true; useNostr.getState().cancelLogin() }
+    onClose()
   }
   const label = (id: string, word: string): string => (busy === id ? 'WORKING' : word)
 
@@ -69,7 +79,7 @@ export function LoginModal({ onClose }: { onClose: () => void }): JSX.Element {
       <div className="modal__card login">
         <div className="modal__head">
           <h2 className="modal__title">WHO SIGNS</h2>
-          <button className="chip ws__icon" onClick={onClose} aria-label="Close">✕</button>
+          <button className="chip ws__icon" onClick={close} aria-label="Close">✕</button>
         </div>
 
         {signedIn ? (

@@ -20,7 +20,7 @@
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
 import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRelay, pool, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
-import { SNO_KIND, createFeed, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
+import { SNO_KIND, createFeed, creditAuthor, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
   deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
@@ -70,6 +70,14 @@ export type { FeedObject } from 'sno-core/feed'
 
 /** Who signs right now. Not in the store: it holds a key and React state is copied. */
 let signer: Signer | null = null
+/**
+ * Which way in is the live one. Each attempt takes the next number; one
+ * that comes back after another has started, or after it was given up
+ * (cancelLogin, a new key, signing out), is dropped: a bunker or an
+ * extension approved later must not switch who signs behind a closed
+ * modal, and its late error must not linger (review of parity #35).
+ */
+let attempt = 0
 
 /** The current signer, for the one thing outside this module that needs it. */
 export function currentSigner(): Signer | null { return signer }
@@ -89,6 +97,10 @@ interface NostrState {
   published: Ledger
   /** The last thing that went wrong while choosing one. */
   loginError: string | null
+  /** Whether a way in (a key, an extension, a bunker) is being tried now. */
+  loggingIn: boolean
+  /** Give up the way in being tried: whatever it brings back later is dropped. */
+  cancelLogin: () => void
   /** Pick up a key this browser already holds, without prompting for anything. */
   init: () => Promise<void>
   useNewKey: () => void
@@ -124,10 +136,17 @@ interface NostrState {
   say: (note: string | null) => void
 }
 
-/** The event an object goes out as. Pure, so the shape is testable without a relay. */
-export function objectTemplate(shard: ShardModel, createdAt: number): { kind: number; created_at: number; tags: string[][]; content: string } {
+/**
+ * The event an object goes out as. Pure, so the shape is testable without a
+ * relay. `author` is the key that will sign it: a credit naming that key is
+ * left off, since an object does not credit its own author (one opened from
+ * the feed while signed out, or under another key, and edited, carries a
+ * credit to whoever published it, who may be you; review of parity #35).
+ */
+export function objectTemplate(shard: ShardModel, createdAt: number, author?: string): { kind: number; created_at: number; tags: string[][]; content: string } {
   const payload = toPayload(shard)
-  const credit = creditOf(shard)
+  const named = creditOf(shard)
+  const credit = named && author && creditAuthor(named) === author ? undefined : named
   return {
     kind: SNO_KIND,
     created_at: createdAt,
@@ -246,8 +265,12 @@ export { objectFromEvent } from 'sno-core/feed'
  * signing as somebody it no longer is.
  */
 async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer | Promise<Signer>): Promise<void> {
+  const mine = ++attempt
+  set({ loggingIn: true })
   try {
     const next = await make()
+    // Given up, or overtaken, while it was being made: let it go unused.
+    if (mine !== attempt) { void next.close?.().catch(() => { /* already gone */ }); return }
     const old = signer
     signer = next
     // The one it replaces holds sockets of its own; let them go.
@@ -255,7 +278,10 @@ async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer |
     saveSignerPref(prefOf(next))
     set({ pubkey: next.pubkey, signer: next.kind, signedIn: true, loginError: null })
   } catch (err) {
+    if (mine !== attempt) return
     set({ loginError: err instanceof Error ? err.message : String(err) })
+  } finally {
+    if (mine === attempt) set({ loggingIn: false })
   }
 }
 
@@ -331,6 +357,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   signedIn: false,
   published: loadLedger(),
   loginError: null,
+  loggingIn: false,
   feed: [],
   scope: 'global',
   loading: false,
@@ -371,12 +398,13 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   useNewKey: () => {
+    attempt++
     const old = signer
     signer = randomSigner()
     if (old) void old.close?.().catch(() => { /* already gone */ })
     saveSignerPref(prefOf(signer))
     set({
-      pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null,
+      pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null, loggingIn: false,
       notice: 'A key was made in this browser. Export it before you clear your cache, or it is gone.',
     })
   },
@@ -387,13 +415,16 @@ export const useNostr = create<NostrState>((set, get) => ({
   useBunker: async (uri) => { await adopt(set, () => nip46Signer(uri)) },
 
   signOut: () => {
+    attempt++
     void signer?.close?.().catch(() => { /* already gone */ })
     signer = null
     forgetSignerPref()
-    set({ pubkey: null, signedIn: false, signer: 'local', loginError: null, notice: 'Signed out. The key this browser held is gone.' })
+    set({ pubkey: null, signedIn: false, signer: 'local', loginError: null, loggingIn: false, notice: 'Signed out. The key this browser held is gone.' })
   },
 
   clearLoginError: () => set({ loginError: null }),
+
+  cancelLogin: () => { attempt++; set({ loggingIn: false, loginError: null }) },
 
   exportKey: (password, again) => exportNcryptsec(signer?.secretKey, password, again),
 
@@ -407,7 +438,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     if (!signer) { set({ notice: 'Pick a key first.' }); return false }
     if (shard.vertices.length === 0 && !shard.parts?.length) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
-    const template = objectTemplate(shard, Math.floor(Date.now() / 1000))
+    const template = objectTemplate(shard, Math.floor(Date.now() / 1000), signer.pubkey)
     try {
       const signed = await signEvent(template)
       // A relay that gates reads gates writes, and an unauthenticated publish
@@ -477,7 +508,10 @@ export const useNostr = create<NostrState>((set, get) => ({
     if (!ev) { set({ notice: 'No relay had that object. It may have been deleted, or live on a relay this app does not reach.' }); return null }
     const o = objectFromEvent(ev)
     if (!o) { set({ notice: 'That object could not be read.' }); return null }
-    return o
+    // Where it was seen, as the feed's own objects say: the relay a credit
+    // names when this object is edited into a copy (review of parity #35).
+    const seen = [...(pool.seenOn.get(ev.id) ?? [])].map((r) => r.url)
+    return seen.length ? { ...o, seen } : o
   },
 
   fetchPalette: async (ref) => {
