@@ -598,8 +598,9 @@ export function Workshop(): JSX.Element | null {
   const [askingColor, setAskingColor] = useState(false)
   useEffect(() => { if (selectedFace === null) setAskingColor(false) }, [selectedFace])
   const [viewOpen, setViewOpen] = useState(false)
-  // The question goes with the object, the view and the panel it was asked in.
-  useEffect(() => { setRetractAsk(null) }, [shard?.id, view, panel])
+  // The question goes with the object, the view and the panel it was asked
+  // in, and with the workshop itself (ONOSENDAI resets on open the same way).
+  useEffect(() => { setRetractAsk(null) }, [shard?.id, view, panel, open])
   /** Whether RETRACT's question is up, and about the object open now. */
   const asking = retractAsk !== null && retractAsk === shard?.id
   // On a phone the palette sheet and the TOOLS panel would share the bottom,

@@ -211,7 +211,10 @@ describe('RETRACT', () => {
     it('a publish, or a palette publish, waits its turn: refused while the retraction is out', async () => {
       const { retracting } = await retractingInSignIn()
       expect(await n().publish(shard)).toBe(false)
+      expect(n().notice).toBe('A retraction is going out. Try again once it is done.')
+      useNostr.setState({ notice: null })
       expect(await n().publishPalette('two', [[255, 0, 0], [0, 255, 0]])).toBeNull()
+      expect(n().notice).toBe('A retraction is going out. Try again once it is done.')
       relays.signedIn!()
       expect(await retracting).toBe(true)
     })

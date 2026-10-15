@@ -120,6 +120,12 @@ const RETRACTED_KEEP_S = 24 * 60 * 60
  * When an object was last retracted, in seconds, or 0. The ledger forgets a
  * retracted object, but a publish must still go out newer than its deletion,
  * even after a reload (store/useNostr nextAt; review of parity #36).
+ *
+ * This browser only: it is kept in localStorage, so another device knows
+ * nothing of it, and a publish there from a clock running behind can still go
+ * out older than the deletion, and be dropped by relays that honor it.
+ * Publishing again from here, or once that clock has passed the deletion's
+ * second, puts the object back.
  */
 export function retractedAt(id: string): number {
   return loadRetracted()[id] ?? 0

@@ -404,6 +404,9 @@ function publishFailed(err: unknown, signedIn: boolean): string {
   return `Could not publish: ${why}`
 }
 
+/** What a publish refused while a retraction is in flight says. */
+const RETRACTION_OUT = 'A retraction is going out. Try again once it is done.'
+
 /** What a retraction that failed says: the same cases as a publish, in its own words. */
 function retractFailed(err: unknown, signedIn: boolean, name: string): string {
   const why = err instanceof Error ? err.message : String(err)
@@ -599,7 +602,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   publish: async (shard) => {
     const relays = relaySet()
     // One thing out at a time: they share the chip, and its cancel.
-    if (get().retracting) return false
+    if (get().retracting) { set({ notice: RETRACTION_OUT }); return false }
     if (!signer) { set({ notice: 'Pick a key first.' }); return false }
     if (shard.vertices.length === 0 && !shard.parts?.length) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
@@ -696,7 +699,7 @@ export const useNostr = create<NostrState>((set, get) => ({
 
   publishPalette: async (name, colors, prev) => {
     const relays = relaySet()
-    if (get().retracting) return null
+    if (get().retracting) { set({ notice: RETRACTION_OUT }); return null }
     if (!signer) { set({ notice: 'Pick a key first.' }); return null }
     if (colors.length < 2 || colors.length > 256) { set({ notice: 'A palette is 2 to 256 colors.' }); return null }
     set({ publishing: true, notice: null })

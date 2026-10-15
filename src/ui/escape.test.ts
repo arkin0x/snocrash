@@ -47,6 +47,17 @@ describe('Escape in the workshop', () => {
     expect(WORKSHOP).toMatch(/if \(step === 'confirm'\) setRetractAsk\(null\)/)
   })
 
+  it("RETRACT's question belongs to the object it was asked about (review of parity #36)", () => {
+    // Cleared on any change of object, view, panel, or the workshop itself.
+    expect(WORKSHOP).toMatch(/useEffect\(\(\) => \{ setRetractAsk\(null\) \}, \[shard\?\.id, view, panel, open\]\)/)
+    // Shown only while the object asked about is the one open.
+    expect(WORKSHOP).toMatch(/const asking = retractAsk !== null && retractAsk === shard\?\.id/)
+    expect(WORKSHOP).toMatch(/\{asking && \(\s*<ConfirmModal/)
+    // And the yes goes to that object only.
+    expect(WORKSHOP).toMatch(/if \(retractAsk !== shard\.id\) return\s*void useNostr\.getState\(\)\.retract\(shard\)/)
+    expect(WORKSHOP).toMatch(/onClick=\{\(\) => setRetractAsk\(shard\.id\)\}/)
+  })
+
   it('leaves the key alone while it is WORKING, and everything under it', () => {
     expect(workshopEscape({ ...none, login: true, loginBusy: true, menu: true, panel: true, holding: true })).toBeNull()
     expect(WORKSHOP).toMatch(/loginBusy: useNostr\.getState\(\)\.loggingIn/)
