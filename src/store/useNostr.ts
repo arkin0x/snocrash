@@ -23,9 +23,9 @@ import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRel
 import { SNO_KIND, createFeed, creditAuthor, objectAddress as coordinate, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
-  CANCELLED, GIVEN_UP, HANDSHAKE_LATE, OTHER_KEY, deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
-  prefOf, randomSigner, saveSignerPref, signWithin, signerFromNcryptsec, signerFromNsec,
-  signerFromPref, type Signer, type SignerKind,
+  CANCELLED, GIVEN_UP, HANDSHAKE_LATE, OTHER_KEY, deferredReconnect, forgetSignerPref, loadSignerPref, loginCredentialKind,
+  nip07Signer, nip46Signer, prefOf, randomSigner, saveSignerPref, signWithin, signerFromNcryptsec, signerFromNsec,
+  signerFromPref, type NostrConnectSession, type Signer, type SignerKind,
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
 import { fingerprint, forget, loadLedger, noteRetracted, noteSeen, noteSent, retractedAt, saveLedger, type Ledger } from '../lib/published'
@@ -119,6 +119,14 @@ interface NostrState {
   useNcryptsec: (ncryptsec: string, password: string) => Promise<void>
   useExtension: () => Promise<void>
   useBunker: (uri: string) => Promise<void>
+  /** The one login field: an nsec, an ncryptsec (with its password), or a bunker:// URI. */
+  useLogin: (credential: string, password?: string) => Promise<void>
+  /**
+   * A Nostr Connect QR: wait for a signer app to answer `session`. Leaving the
+   * QR screen is cancelLogin, which gives the wait up; `onConnected` says the
+   * signer answered and its pubkey is being asked for.
+   */
+  useNostrConnect: (session: NostrConnectSession, onConnected?: () => void) => Promise<void>
   /** Forget the key this browser holds, and who is signing. */
   signOut: () => void
   clearLoginError: () => void
@@ -323,7 +331,12 @@ async function adopt(set: (p: Partial<NostrState>) => void, make: (signal: Abort
   try {
     const next = await make(abort.signal)
     // Given up, or overtaken, while it was being made: let it go unused.
-    if (mine !== attempt) { void next.close?.().catch(() => { /* already gone */ }); return }
+    if (mine !== attempt || abort.signal.aborted) { void next.close?.().catch(() => { /* already gone */ }); return }
+    // A signer must name a real key before it becomes who signs (ONOSENDAI's login()).
+    if (!/^[0-9a-f]{64}$/.test(next.pubkey)) {
+      void next.close?.().catch(() => { /* already gone */ })
+      throw new Error('The signer gave a key that is not a valid public key.')
+    }
     const old = signer
     signer = next
     // The one it replaces holds sockets of its own; let them go.
@@ -362,14 +375,23 @@ async function signEvent(template: Parameters<Signer['signEvent']>[0], signal?: 
     // HANDSHAKE_PATIENCE_MS); the signature's starts after it.
     const current = asked.ready ? await asked.ready(signal) : asked
     if (current.kind === 'local') return await current.signEvent(template) as Event
+    let signed: Event
     try {
-      return await untilCancelled(signWithin(current, template), signal) as Event
+      signed = await untilCancelled(signWithin(current, template), signal) as Event
     } catch (err) {
       if (!current.reconnect || (err instanceof Error && err.message === CANCELLED)) throw err
       const fresh = await current.reconnect()
       if (signer === current) signer = fresh
-      return await untilCancelled(signWithin(fresh, template), signal) as Event
+      signed = await untilCancelled(signWithin(fresh, template), signal) as Event
     }
+    // A remote signer signs as whichever account it holds now. A QR session
+    // restored on reload is never asked which one that is, and an extension
+    // or a bunker can switch accounts mid-visit, so the signature itself is
+    // checked here, for every caller: a publish, and a relay's AUTH, which
+    // would otherwise tell the relay this visit is another account (review
+    // of #37).
+    if (signed.pubkey !== asked.pubkey) throw new Error(OTHER_KEY)
+    return signed
   } catch (err) {
     // The key changed (or was signed out) while this was being signed:
     // whatever else went wrong, that is what happened (review of parity #35).
@@ -500,6 +522,11 @@ function wakeSigner(): void {
   // and starting its connect here would put a round trip on the phone
   // nobody asked for (review of parity #35).
   if (!current || current.kind === 'local' || current.ready || pendingSigns > 0) return
+  // Nor while a way in is being tried: its handshake can be on the same
+  // relays (the default QR relays, after an earlier QR login), and dropping
+  // them would lose the answer of somebody who just approved it in the
+  // signer app this tab came back from (review of #37).
+  if (attemptAbort) return
   void current.reconnect?.().then((fresh) => { if (signer === current) signer = fresh }).catch(() => { /* next request retries */ })
 }
 
@@ -571,7 +598,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     saveSignerPref(prefOf(signer))
     set({
       pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null, loggingIn: false,
-      notice: 'A key was made in this browser. Export it before you clear your cache, or it is gone.',
+      notice: 'A key was made in this browser. Back it up before you clear your cache, or it is gone.',
     })
   },
 
@@ -579,6 +606,28 @@ export const useNostr = create<NostrState>((set, get) => ({
   useNcryptsec: async (ncryptsec, password) => { await adopt(set, () => signerFromNcryptsec(ncryptsec, password)) },
   useExtension: async () => { await adopt(set, () => nip07Signer()) },
   useBunker: async (uri) => { await adopt(set, (signal) => nip46Signer(uri, undefined, signal)) },
+  useLogin: async (credential, password = '') => {
+    const kind = loginCredentialKind(credential)
+    await adopt(set, (signal) => {
+      if (kind === 'nsec') return signerFromNsec(credential)
+      if (kind === 'ncryptsec') {
+        if (!password) throw new Error('Enter the password for this ncryptsec.')
+        return signerFromNcryptsec(credential, password)
+      }
+      if (kind === 'bunker') return nip46Signer(credential, undefined, signal)
+      throw new Error('Paste an nsec, ncryptsec, or bunker:// URI.')
+    })
+  },
+  useNostrConnect: async (session, onConnected) => {
+    // Left the QR screen while the signer was answering: no switch, and no
+    // error for a screen that is no longer there (adopt drops both once the
+    // attempt is given up; this closes the session it brought back).
+    await adopt(set, async (signal) => {
+      const next = await session.connect(signal, onConnected)
+      if (signal.aborted) { await next.close?.().catch(() => { /* already gone */ }); throw new Error(GIVEN_UP) }
+      return next
+    })
+  },
 
   signOut: () => {
     giveUpAttempt()

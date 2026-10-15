@@ -89,5 +89,22 @@ describe('the tab coming back', () => {
     page.wake!()
     await vi.waitFor(() => expect(close).toHaveBeenCalledWith(['wss://bunker.invalid']))
     expect(fake.connects).toBe(1)
+    close.mockRestore()
+  })
+
+  it('leaves the sockets alone while a way in is being tried, whose handshake may share them (review of #37)', async () => {
+    // A QR login in flight: the signer app it went to has not answered yet.
+    const session = { uri: 'nostrconnect://x', relay: 'wss://bunker.invalid', connect: (signal: AbortSignal) => new Promise<never>((_, reject) => { signal.addEventListener('abort', () => reject(new Error('given up'))) }) }
+    const working = useNostr.getState().useNostrConnect(session as never)
+    const close = vi.spyOn(pool, 'close')
+    page.wake!()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(close).not.toHaveBeenCalled()
+    // Given up: the next wake refreshes them again.
+    useNostr.getState().cancelLogin()
+    await working
+    page.wake!()
+    await vi.waitFor(() => expect(close).toHaveBeenCalledWith(['wss://bunker.invalid']))
+    close.mockRestore()
   })
 })

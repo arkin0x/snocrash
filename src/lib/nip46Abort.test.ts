@@ -49,7 +49,7 @@ vi.mock('nostr-tools/nip46', async (importOriginal) => {
 
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, type EventTemplate } from 'nostr-tools'
 import { newShard } from 'sno-core/shards'
-import { CANCELLED, GIVEN_UP, HANDSHAKE_LATE, HANDSHAKE_PATIENCE_MS, OTHER_KEY, deferredReconnect, nip46Signer, saveSignerPref, type Signer, type SignerPref } from './signers'
+import { CANCELLED, GIVEN_UP, HANDSHAKE_LATE, HANDSHAKE_PATIENCE_MS, OTHER_KEY, deferredReconnect, nip46Signer, saveSignerPref, signerFromPref, type Signer, type SignerPref } from './signers'
 import { useRelays } from '../store/useRelays'
 import { useNostr } from '../store/useNostr'
 
@@ -92,6 +92,16 @@ describe('a bunker handshake', () => {
     await working
     expect(fake.close).toHaveBeenCalled()
     expect(useNostr.getState().loggingIn).toBe(false)
+    expect(useNostr.getState().loginError).toBeNull()
+  })
+
+  it("the one login field's bunker:// is the same handshake, given up the same way", async () => {
+    const working = useNostr.getState().useLogin('bunker://x')
+    await vi.waitFor(() => expect(fake.answer).not.toBeNull())
+    expect(useNostr.getState().loggingIn).toBe(true)
+    useNostr.getState().cancelLogin()
+    await working
+    expect(fake.close).toHaveBeenCalled()
     expect(useNostr.getState().loginError).toBeNull()
   })
 })
@@ -139,6 +149,14 @@ describe('a saved bunker identity, reconnected later (the real deferredReconnect
     await vi.waitFor(() => expect(fake.answer).not.toBeNull())
     fake.answer!()
     expect((await second).pubkey).toBe('c'.repeat(64))
+  })
+
+  it('restored, a bunker that now holds a different account is refused and closed (ONOSENDAI #196)', async () => {
+    const restoring = signerFromPref({ ...pref, pubkey: 'd'.repeat(64) })
+    await vi.waitFor(() => expect(fake.answer).not.toBeNull())
+    fake.answer!()
+    await expect(restoring).rejects.toThrow(OTHER_KEY)
+    expect(fake.close).toHaveBeenCalled()
   })
 })
 
