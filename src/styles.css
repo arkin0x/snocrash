@@ -1771,6 +1771,18 @@ button:disabled { opacity: 0.35; cursor: default; }
 .btn { display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 9px; letter-spacing: 0.14em; color: var(--fg); background: rgba(6, 14, 22, 0.72); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
 .btn:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.35; cursor: default; }
+/* An object for sale on Fanfares (a listing): its own picture where the 3D
+   preview stands, at the preview's height, the price in the bitcoin orange of --warn, and
+   BUY ON FANFARES across the bottom of the tile. After .btn, which the buy
+   link also is, so its colors win. */
+.tile--sale { border-color: rgba(247, 147, 26, 0.35); }
+.tile--sale:hover { border-color: rgba(247, 147, 26, 0.7); }
+.listing__pic { height: 160px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.listing__pic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.listing__lock { color: var(--dim); }
+.tile__price { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--warn); }
+.tile__buy { justify-content: center; margin-top: 4px; color: var(--warn); border-color: rgba(247, 147, 26, 0.5); text-decoration: none; }
+.tile__buy:hover { border-color: var(--warn); background: rgba(247, 147, 26, 0.12); }
 
 
 /* The login modal, with ONOSENDAI's own rules. */
