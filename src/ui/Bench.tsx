@@ -5,7 +5,8 @@
  * every point, and a ghost of what the next tap would make. Taps do the work:
  * on the grid, STAMP lands a shape and ADD a vertex at the snapped point; on
  * a handle, SELECT picks it and FACE collects it; on a face, FACE selects it
- * so DELETE can take it. Dragging orbits. R3F
+ * and its corners, so the pad moves and turns it and DELETE can take it.
+ * Dragging orbits, and so does the orbit ball beside the pad. R3F
  * reports how far the pointer travelled between down and up, which is what
  * separates a tap from an orbit, so a thumb that wobbles still taps.
  *
@@ -24,7 +25,8 @@ import { useNostr } from '../store/useNostr'
 import { ACCENT, BG, WARN } from '../lib/palette'
 import { glowTexture } from '../lib/glow'
 import { GRID_HALF, TICKS_PER_UNIT, centroid, pointKey, rgbToHex, ticksOf, toRender } from 'sno-core/shards'
-import { benchAxes, benchPose, nudgeFor, planeAfter, sameAxes, useBenchView, type NudgeName } from './benchAxes'
+import { drawnDivision } from './divisions'
+import { benchAxes, benchPose, nudgeFor, orbitOffset, planeAfter, sameAxes, setOrbitSink, useBenchView, type NudgeName } from './benchAxes'
 import { landing, preview, type WorkPlane } from 'sno-core/stamps'
 import { ShardMesh, faceOfHit } from '../scene/ShardMesh'
 import { ShardLights } from '../scene/shardLight'
@@ -106,6 +108,7 @@ function Grid(): JSX.Element {
   const level = useWorkshop((s) => s.level)
   const plane = useWorkshop((s) => s.plane)
   const division = useWorkshop((s) => s.division)
+  const drawn = drawnDivision(division)
   const extent = useWorkshop((s) => s.current()?.extent ?? GRID_HALF)
   const tool = useWorkshop((s) => s.tool)
   const places = tool === 'add' || tool === 'stamp'
@@ -142,7 +145,8 @@ function Grid(): JSX.Element {
       {/* The visible lattice. One cell per unit, so what you tap is what you get. */}
       <gridHelper key={`u${extent}-${division > 1 ? 1 : 0}`} args={[extent * 2, extent * 2, ACCENT, division > 1 ? UNIT_LINE_DIVIDED : UNIT_LINE]} />
       {/* The snap grid between the unit lines when a unit is divided, in the unit lines' plain colour. */}
-      {division > 1 && <gridHelper key={`d${extent}-${division}`} args={[extent * 2, extent * 2 * division, UNIT_LINE, UNIT_LINE]} position={[0, -0.002, 0]} />}
+      {/* Past twelve lines a unit the snap is drawn at a divisor of itself (divisions.ts). */}
+      {drawn > 1 && <gridHelper key={`d${extent}-${drawn}`} args={[extent * 2, extent * 2 * drawn, UNIT_LINE, UNIT_LINE]} position={[0, -0.002, 0]} />}
       {/*
         The surface taps land on, in the placing tools only. In select and face
         mode it carries no handler at all, so the raycaster ignores it: a raised
@@ -568,6 +572,20 @@ function ViewDriver(): null {
     camera.position.copy(controls.target).add(new Vector3(HOME[0], HOME[1], HOME[2]))
     controls.update()
   }, [request]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The orbit ball (Workshop OrbitSphere) turns the camera about the controls'
+  // target through this sink, outside React: a drag arrives at pointer rate.
+  // OrbitControls rebuilds its own angles from the camera's position on every
+  // update, so moving the camera and calling update keeps the two agreed.
+  useEffect(() => {
+    if (!controls) return
+    setOrbitSink((dx, dy) => {
+      const offset = camera.position.clone().sub(controls.target)
+      camera.position.copy(controls.target).add(orbitOffset(offset, dx, dy))
+      camera.lookAt(controls.target)
+      controls.update()
+    })
+    return () => setOrbitSink(null)
+  }, [camera, controls])
   return null
 }
 

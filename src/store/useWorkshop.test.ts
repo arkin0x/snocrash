@@ -28,6 +28,33 @@ describe('workshop', () => {
     w().create('t')
   })
 
+  it('selecting a face selects its corners, every vertex on their points, and selecting it again lets them go (ported from ONOSENDAI, 2026-10-10)', () => {
+    // A square of two triangles, plus a fifth vertex standing on vertex 0's point (a stamp's own corner).
+    const QUAD = JSON.stringify({ v: 1, type: 'shard', name: 'q', unit: 0, extent: 15, mode: 'solid', vertices: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 0]], ticks: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], colors: [[1, 1, 1], [1, 1, 1], [1, 1, 1], [1, 1, 1], [1, 1, 1]], faces: [[0, 1, 2], [0, 2, 3]] })
+    const id = w().importText(QUAD)
+    expect(id).not.toBeNull()
+    w().select(id!)
+    w().selectFace(0)
+    // Corners 0, 1, 2, and vertex 4, which stands on corner 0's point.
+    expect(w().selection).toEqual([0, 1, 2, 4])
+    expect(w().selectedFace).toBe(0)
+    // The second face adds its own corner; the shared ones are already in hand.
+    w().selectFace(1)
+    expect(w().selection).toEqual([0, 1, 2, 3, 4])
+    expect(w().selectedFace).toBe(1)
+    // A face whose corners are all in hand is taken back out, and is no longer the selected face.
+    w().selectFace(1)
+    expect(w().selection).toEqual([1])
+    expect(w().selectedFace).toBeNull()
+    // Then the pad moves what is selected: the face's corners, one unit along X.
+    w().selectFace(0)
+    const before = w().current()!.vertices.map((v) => ticksOf(v))
+    w().moveSelected(0, T)
+    const after = w().current()!.vertices.map((v) => ticksOf(v))
+    for (const i of [0, 1, 2, 4]) expect(after[i][0] - before[i][0]).toBe(T)
+    expect(after[3]).toEqual(before[3])
+  })
+
   it('duplicating the crucifix keeps all 38 vertices, ticks and all, and no face loses its area', () => {
     const id = w().importText(CRUCIFIX)
     expect(id).not.toBeNull()
@@ -563,11 +590,14 @@ describe('faces and palette', () => {
     w().setTool('face')
   })
 
-  it('selects a tapped face instead of the point, and DELETE FACE removes just that face, undoably', () => {
+  it('selects a tapped face with its corners, and DELETE FACE removes just that face, undoably', () => {
     const before = w().current()!.faces.length
     w().selectVertex(0)
     w().selectFace(3)
-    expect(w().selection).toEqual([])
+    // The face's corners join the selection so the pad can move the face
+    // (ported from ONOSENDAI, 2026-10-10); a point already in hand stays.
+    const corners = w().current()!.faces[3]
+    expect(w().selection).toEqual(expect.arrayContaining([0, ...corners]))
     expect(w().selectedFace).toBe(3)
     const gone = w().current()!.faces[3]
     w().deleteSelectedFace()

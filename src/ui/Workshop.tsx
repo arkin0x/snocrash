@@ -24,6 +24,7 @@ import { ArrowLeft, Box, ClipboardPaste, Copy, Eye, FlipVertical2, Globe, Grid3x
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode } from 'sno-core/shards'
+import { stepDivision } from './divisions'
 import { formatCellSize } from 'sno-core/scale'
 import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, type StampKind } from 'sno-core/stamps'
 import { useWorkshop, type Tool } from '../store/useWorkshop'
@@ -51,7 +52,7 @@ function saveFile(text: string, name: string): void {
   a.click()
   URL.revokeObjectURL(url)
 }
-import { benchPose, nudgeFor, nudgeLabel, planeAfter, publishedFrame, requestView, useBenchView, type NudgeName } from './benchAxes'
+import { benchPose, nudgeFor, nudgeLabel, orbitBy, planeAfter, publishedFrame, requestView, useBenchView, type NudgeName } from './benchAxes'
 
 const TOOLS: Tool[] = ['view', 'stamp', 'add', 'select', 'face']
 const TOOL_ICON: Record<Tool, LucideIcon> = { view: Eye, stamp: Stamp, add: Plus, select: MousePointer2, face: Triangle }
@@ -79,7 +80,7 @@ function Intro(): JSX.Element | null {
       <h3 className="workshop__intro-title">MAKE AN OBJECT</h3>
       <ol className="workshop__intro-steps">
         <li><b>STAMP</b> a shape: pick one under TOOLS, tap the grid where the ghost shows.</li>
-        <li>One finger <b>orbits</b>, two fingers <b>pan</b>. GRID raises the level to stack things.</li>
+        <li>One finger <b>orbits</b>, or drag the <b>ORBIT</b> ball; two fingers <b>pan</b>. GRID raises the level to stack things.</li>
         <li><b>PUBLISH</b> sends it to the relays as one event, for anyone to find.</li>
       </ol>
       <button className="workshop__btn workshop__intro-ok" onClick={done}>GOT IT</button>
@@ -102,6 +103,54 @@ function Toast(): JSX.Element | null {
 }
 
 /**
+ * The orbit ball, right of the pad and its size (ported from ONOSENDAI
+ * b82b9bd; arkinox, 2026-10-10: "not being able to orbit hurts"). A drag on
+ * it turns the view about the shard, and pointer capture keeps the drag alive
+ * after the finger leaves the ball, until it lifts. A tap, no drag, sends the
+ * view home. It works with any tool, which is the point: in SELECT a
+ * one-finger drag on the bench is the box, and this is how you orbit meanwhile.
+ */
+function OrbitSphere(): JSX.Element {
+  const last = useRef<{ x: number; y: number } | null>(null)
+  const moved = useRef(false)
+  const down = (e: React.PointerEvent<HTMLButtonElement>): void => {
+    if (!e.isPrimary) return
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    last.current = { x: e.clientX, y: e.clientY }
+    moved.current = false
+  }
+  const move = (e: React.PointerEvent<HTMLButtonElement>): void => {
+    if (!last.current) return
+    const dx = e.clientX - last.current.x
+    const dy = e.clientY - last.current.y
+    if (dx === 0 && dy === 0) return
+    last.current = { x: e.clientX, y: e.clientY }
+    moved.current = true
+    orbitBy(dx, dy)
+  }
+  const up = (): void => {
+    if (!last.current) return
+    last.current = null
+    if (!moved.current) requestView({ kind: 'home' })
+  }
+  return (
+    <button
+      className="benchorb"
+      title="Drag to orbit the view; keep dragging past the ball. Tap to send the view home."
+      aria-label="Orbit the view. Drag to turn, tap for the home view."
+      {...noCallout}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+    >
+      <span className="benchorb__sub">ORBIT</span>
+    </button>
+  )
+}
+
+/**
  * The CONTROLS pad: the main pad's nine cells, for the selection. Arrows move
  * it a unit in screen directions (the sub-label says which world axis that is
  * right now), the corners CONNECT and DELETE, the hub counts the points and
@@ -111,6 +160,9 @@ function ControlsPad({ points, objects = 0 }: { points: number; objects?: number
   // Points and placed objects move, turn, cut and copy together.
   const held = points + objects
   const axes = useBenchView((s) => s.axes)
+  // In FACE the face row has its own DELETE, for the face; the pad's would
+  // take the corners and every face on them, so it stays off there.
+  const tool = useWorkshop((s) => s.tool)
   const bind = useRepeatable()
   const w = useWorkshop.getState
   const move = (name: NudgeName) => () => { const n = nudgeFor(useBenchView.getState().axes, name); w().moveSelected(n.axis, n.delta * w().step()) }
@@ -136,10 +188,12 @@ function ControlsPad({ points, objects = 0 }: { points: number; objects?: number
         <Link size={14} strokeWidth={2.25} aria-hidden />
         <span className="touchpad__sub">JOINED</span>
       </button>
-      <button className="touchpad__key touchpad__key--delete" title="Delete the selected points (Del)" aria-label="Delete selected" {...noCallout} onClick={() => w().deleteSelected()}>
-        <Trash2 size={14} strokeWidth={2.25} aria-hidden />
-        <span className="touchpad__sub">DELETE</span>
-      </button>
+      {tool !== 'face' && (
+        <button className="touchpad__key touchpad__key--delete" title="Delete the selected points (Del)" aria-label="Delete selected" {...noCallout} onClick={() => w().deleteSelected()}>
+          <Trash2 size={14} strokeWidth={2.25} aria-hidden />
+          <span className="touchpad__sub">DELETE</span>
+        </button>
+      )}
       <button className="touchpad__hub" title="Clear the selection (Esc)" aria-label={`${points} points and ${objects} objects selected. Tap to clear.`} {...noCallout} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); w().selectVertex(null) }}>
         {points > 0 && `${points} ${points === 1 ? 'PT' : 'PTS'}`}{points > 0 && objects > 0 && ' · '}{objects > 0 && `${objects} OBJ`}
       </button>
@@ -691,13 +745,13 @@ export function Workshop(): JSX.Element | null {
             <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) + 1))} disabled={shard.unit >= MAX_UNIT} aria-label="Larger unit">+</button>
             <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(shard.unit)}</span>
           </div>
+          {/* A stepper like the rows around it (arkinox, 2026-10-15): fifteen
+              divisions down to a single tick no longer fit as a row of buttons. */}
           <div className="workshop__row" role="group" aria-label="Grid division">
             <span className="workshop__label">DIVISION</span>
-            <div className="workshop__modes workshop__modes--divisions">
-              {DIVISIONS.map((d) => (
-                <button key={d} className={`workshop__mode ${division === d ? 'is-on' : ''}`} aria-pressed={division === d} onClick={() => w().setDivision(d)} title={d === 1 ? 'Snap to whole units' : `Snap to 1/${d} of a unit`}>{d === 1 ? '1' : `1/${d}`}</button>
-              ))}
-            </div>
+            <button className="workshop__btn" onClick={() => w().setDivision(stepDivision(division, -1))} disabled={division === DIVISIONS[0]} aria-label="Coarser division" title="Coarser snap">−</button>
+            <span className="workshop__value" title={division === 1 ? 'Snap to whole units' : `Snap to 1/${division} of a unit`}>{division === 1 ? '1' : `1/${division}`}</span>
+            <button className="workshop__btn" onClick={() => w().setDivision(stepDivision(division, 1))} disabled={division === DIVISIONS[DIVISIONS.length - 1]} aria-label="Finer division" title="Finer snap">+</button>
             <span className="workshop__unit-size" title="Where taps, the box, nudges and the level land. Positions already placed keep their exact spots.">the snap for placing and nudging</span>
           </div>
           <div className="workshop__row">
@@ -763,7 +817,12 @@ export function Workshop(): JSX.Element | null {
             </button>
           </div>
         )}
-        {(selection.length > 0 || partSel.length > 0) && <ControlsPad points={selectedPoints} objects={partSel.length} />}
+        {/* The pad keeps its place with nothing selected (its keys are simply
+            absent), so the orbit ball beside it never moves. */}
+        <div className="benchrow">
+          <ControlsPad points={selectedPoints} objects={partSel.length} />
+          <OrbitSphere />
+        </div>
       {panel === 'tools' && (
         <div className="ws__panel ws__panel--up" role="region" aria-label="Tools">
           <div className="workshop__row" role="group" aria-label="Tool">
