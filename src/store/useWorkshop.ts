@@ -743,6 +743,18 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     if (i < 0) return false
     const next = fn(shards[i])
     if (!next) return false
+    // Backstop (review of parity #33, 2026-10-15): an edit may change a shard
+    // but never turn it into another one. A result built from the feed's copy
+    // of an object rather than the stored one carries the feed's id, and
+    // storing it put the shard under an id the bench no longer pointed at:
+    // the bench went empty, or a local edit was overwritten with the relay's
+    // version. Refuse it and keep the stored shard; loudly in development.
+    if (next.id !== shards[i].id) {
+      const why = `edit refused: the result is shard ${next.id}, the stored one is ${shards[i].id}`
+      if (import.meta.env.DEV) throw new Error(why)
+      console.error(why)
+      return false
+    }
     const list = shards.slice()
     list[i] = { ...next, updatedAt: Date.now() }
     const partSel = get().partSel.filter((k) => k < (next.parts?.length ?? 0))
@@ -750,6 +762,16 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     save(list)
     return true
   }
+
+  /**
+   * The shard an edit is about to be computed from: the stored one. An object
+   * opened from the feed is adopted first, so anything worked out before
+   * calling `edit` (a stamp's result, a weld, a pivot, the indices of a fill)
+   * is worked out on the shard the edit will actually change. `current()`
+   * while viewing is the feed's copy: right for looking, wrong for building
+   * on (review of parity #33: it lost local edits and emptied the bench).
+   */
+  const live = (): ShardModel | null => (get().viewing ? get().adopt() : get().current())
 
   /** Faces show only in SOLID: a shard's first faces switch it there. */
   const solidIfFirstFaces = (before: ShardModel, after: ShardModel): { mode: ShardMode; notice: string | null } =>
@@ -765,8 +787,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    */
   const putDown = (clip: ClipPoints, where: PastePlace, self?: string, as?: { notice: string; name?: string }): boolean => {
     const { plane, level } = get()
-    const s = get().current()
-    if (!s || (clip.points.length === 0 && clip.parts.length === 0)) return false
+    if (clip.points.length === 0 && clip.parts.length === 0) return false
+    const s = live()
+    if (!s) return false
     // A copy of a shard that places this one would make it place itself;
     // placeObject refuses the same thing in the same words.
     const own = self ?? selfAddress(s)
@@ -959,7 +982,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, invert: false, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
     setInvert: (on) => set({ invert: on }),
     setExtent: (extent) => {
-      const s = get().current()
+      const s = live()
       if (!s) return
       const e = Math.max(Math.max(MIN_EXTENT, neededExtent(s)), Math.min(MAX_EXTENT, Math.round(extent)))
       if (e === s.extent) return
@@ -991,7 +1014,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     placeObject: (at, self) => {
       const { stampObject, stampFacing } = get()
-      const s = get().current()
+      const s = live()
       if (!s || !validPoint(at, s.extent)) return
       if (!stampObject) { set({ notice: 'Choose an object to stamp first: tap the slot under OBJECT.' }); return }
       // snocrash knows its own key: an object placing itself is a loop every reader draws as a placeholder (§1.10).
@@ -1004,7 +1027,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     placeStamp: (at) => {
       const { stampKind, stampSize, stampFacing, color, plane } = get()
-      const s = get().current()
+      const s = live()
       if (!s || !validPoint(at, s.extent)) return
       const res = stamp(s, stampKind, stampSize, stampFacing, at, color, plane)
       if (!res) { set({ notice: 'That stamp could not be placed here.' }); return }
@@ -1286,7 +1309,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     rotateSelected: (turns) => {
       const { selection, partSel, turnPivot, plane } = get()
-      const s = get().current()
+      const s = live()
       if (!s || (selection.length === 0 && partSel.length === 0)) return
       const step = get().step()
       const chosen = [...new Set(selection.filter((i) => s.vertices[i]))]
@@ -1337,7 +1360,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       set({ color: clampColor(c) })
       get().rememberColor(rgbToHex(clampColor(c)))
       // With no points selected, a selected face takes the color for its corners.
-      const face = selection.length === 0 && selectedFace !== null ? get().current()?.faces[selectedFace] : undefined
+      const face = selection.length === 0 && selectedFace !== null ? live()?.faces[selectedFace] : undefined
       if (selection.length === 0 && !face) return
       edit((s) => {
         const chosen = new Set((face ?? selection).filter((i) => s.vertices[i]))
@@ -1392,7 +1415,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     weld: () => {
-      const s = get().current()
+      const s = live()
       if (!s) return
       const { selection } = get()
       const res = weld(s, selection.length >= 2 ? new Set(selection) : undefined)
@@ -1403,7 +1426,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     cutSelection: () => {
-      const s = get().current()
+      const s = live()
       const clip = s ? clipOf(s, get().selection, get().partSel) : null
       if (!clip) return
       set({ clip })
@@ -1421,7 +1444,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     clearClip: () => set({ clip: null }),
 
     duplicateSelection: () => {
-      const s = get().current()
+      const s = live()
       const clip = s ? clipOf(s, get().selection, get().partSel) : null
       if (!clip) return
       set({ clip })
@@ -1441,7 +1464,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     insertImport: (model, notice, self) => {
-      const s = get().current()
+      const s = live()
       if (!s) return false
       const clip = clipOf(model, model.vertices.map((_, i) => i))
       if (!clip) { set({ notice: 'That file has nothing in it to put down.' }); return false }
@@ -1467,7 +1490,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     clearFacePick: () => set({ facePick: [] }),
 
     fill: () => {
-      const s = get().current()
+      const s = live()
       const { facePick } = get()
       if (!s || facePick.length < 3) return
       const tris = triangulate(facePick.map((i) => ticksOf(s.vertices[i])))
@@ -1486,7 +1509,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     fillSelection: () => {
-      const s = get().current()
+      const s = live()
       const { selection } = get()
       if (!s) return
       // One vertex per point, so a shared point counts once.
@@ -1515,7 +1538,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     subdivideSelection: () => {
-      const s = get().current()
+      const s = live()
       const { selection } = get()
       if (!s || selection.length === 0) return
       const res = subdivide(s, selection)
@@ -1592,6 +1615,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     importShard: (model, credit, id) => {
+      // An id already stored is that object, here already: taking it again
+      // would put two shards under one id (review of parity #33).
+      if (id && get().shards.some((s) => s.id === id)) return id
       const taken = new Set(get().shards.map((s) => s.name))
       // Your own object comes back under its own name: there is no other to be a copy of.
       const name = !id && taken.has(model.name) ? `${model.name} copy` : model.name
