@@ -38,6 +38,7 @@ import { FACED, FACING_LABEL, FLOOR, MAX_SIZE, MIN_SIZE, STAMPS, STAMP_HELP, typ
 import { useWorkshop, type Tool } from '../store/useWorkshop'
 import { Bench } from './Bench'
 import { Feed } from './Feed'
+import { Guard } from './Guard'
 import { LoginModal } from './LoginModal'
 import { MenuOverlay } from './MenuOverlay'
 import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
@@ -756,7 +757,13 @@ export function Workshop(): JSX.Element | null {
       onDrop={(e) => { if (!draggingFiles(e)) return; e.preventDefault(); setDropping(false); void importFromFiles(e.dataTransfer.files) }}
     >
       <div className="workshop__bench">
-        {view === 'feed' ? <Feed onOpen={() => setView('make')} /> : <Bench />}
+        {view === 'feed'
+          ? (
+            <Guard where="the feed" fallback={(retry) => <p className="empty">The feed could not be drawn. <button className="btn" onClick={retry}>TRY AGAIN</button></p>}>
+              <Feed onOpen={() => setView('make')} />
+            </Guard>
+          )
+          : <Bench />}
       </div>
       {/* IMPORT's picker, kept mounted so a panel closing cannot drop its answer. */}
       <input ref={fileInput} type="file" accept={IMPORT_ACCEPT} multiple hidden aria-hidden tabIndex={-1} onChange={(e) => { const list = e.currentTarget.files; void importFromFiles(list ? Array.from(list) : null); e.currentTarget.value = '' }} />

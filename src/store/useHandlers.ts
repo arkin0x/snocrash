@@ -12,6 +12,12 @@
  * - **Once per app:** a request already answered or in flight is not sent
  *   again, so a feed full of one app's listings asks the relays once.
  * - **Bounded:** at most HANDLERS_KEPT apps are remembered; the oldest go first.
+ * - **A few at a time:** each ask is a subscription on every relay, on the
+ *   sockets the feed uses, and a relay caps how many one socket may hold.
+ *   HANDLERS_ASKING are asked at once and the rest wait their turn, so a page
+ *   of listings naming forty apps never opens forty at once.
+ * - **Small:** a handler is a name and a few templates. One past
+ *   HANDLER_MAX_CHARS, or not shaped as NIP-01 says, is not read or kept.
  * - **Checked:** a handler counts only when its signature verifies and it is
  *   the coordinate's own (its author, kind 31990, its `d`); the newest wins.
  *
@@ -21,7 +27,7 @@
 import { create } from 'zustand'
 import { verifyEvent } from 'nostr-tools/pure'
 import type { Event } from 'nostr-tools'
-import { HANDLER_KIND, handlerFilter, type ListingApp } from 'sno-core/feed'
+import { HANDLER_KIND, handlerFilter, wellFormed, type ListingApp } from 'sno-core/feed'
 import { queryAny } from '../lib/pool'
 import { relaySet } from './useRelays'
 
@@ -29,6 +35,12 @@ import { relaySet } from './useRelays'
 export const HANDLERS_KEPT = 200
 /** How long the relays get to answer, as for a profile. */
 const HANDLER_WAIT_MS = 5000
+/** How many apps are asked for at once. */
+export const HANDLERS_ASKING = 4
+/** The most apps waiting their turn; past it, a listing keeps its fallback link. */
+export const HANDLERS_WAITING = HANDLERS_KEPT
+/** The largest handler read, in characters of content and tags. */
+export const HANDLER_MAX_CHARS = 64 * 1024
 
 interface HandlersState {
   /** Each app's newest valid handler by coordinate; null when the relays had none. */
@@ -37,8 +49,11 @@ interface HandlersState {
   request: (app: ListingApp) => void
 }
 
-/** Coordinates being asked for now. */
+/** Coordinates waiting or being asked for now. */
 const inFlight = new Set<string>()
+/** Apps waiting their turn, in the order their tiles asked. */
+const waiting: ListingApp[] = []
+let asking = 0
 
 /**
  * Whether an event is this app's handler, signed by it. The signature is
@@ -46,19 +61,19 @@ const inFlight = new Set<string>()
  * on the object, under a symbol a spread carries along.
  */
 export function isHandlerOf(ev: Event, app: Pick<ListingApp, 'pubkey' | 'd'>): boolean {
+  if (!ev || !wellFormed(ev) || ev.content.length + JSON.stringify(ev.tags).length > HANDLER_MAX_CHARS) return false
   if (ev.kind !== HANDLER_KIND || ev.pubkey !== app.pubkey || !ev.tags.some((t) => t[0] === 'd' && t[1] === app.d)) return false
   const { id, pubkey, created_at, kind, tags, content, sig } = ev
   return verifyEvent({ id, pubkey, created_at, kind, tags, content, sig })
 }
 
-export const useHandlers = create<HandlersState>((set, get) => ({
-  handlers: {},
-  request: (app) => {
-    if (app.address in get().handlers || inFlight.has(app.address)) return
-    inFlight.add(app.address)
+export const useHandlers = create<HandlersState>((set, get) => {
+  const ask = (app: ListingApp): void => {
+    asking += 1
     void queryAny(relaySet(), handlerFilter(app), HANDLER_WAIT_MS)
       .catch(() => [])
       .then((found) => {
+        asking -= 1
         inFlight.delete(app.address)
         let best: Event | null = null
         for (const { event: ev } of found) {
@@ -70,6 +85,19 @@ export const useHandlers = create<HandlersState>((set, get) => ({
         // Insertion order is arrival order: past the bound, the oldest go.
         for (const k of keys.slice(0, Math.max(0, keys.length - HANDLERS_KEPT))) delete next[k]
         set({ handlers: next })
+        pump()
       })
-  },
-}))
+  }
+  const pump = (): void => {
+    while (asking < HANDLERS_ASKING && waiting.length > 0) ask(waiting.shift()!)
+  }
+  return {
+    handlers: {},
+    request: (app) => {
+      if (app.address in get().handlers || inFlight.has(app.address) || waiting.length >= HANDLERS_WAITING) return
+      inFlight.add(app.address)
+      waiting.push(app)
+      pump()
+    },
+  }
+})

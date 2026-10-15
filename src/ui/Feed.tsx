@@ -23,8 +23,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Copy, Download, ExternalLink, LockKeyhole, RefreshCw, SquarePen } from 'lucide-react'
 import { feedItems, isListing } from 'sno-core/feed'
 import { remixCredit, useNostr, type FeedListing, type FeedObject } from '../store/useNostr'
-import { listingPictures, satsLabel } from '../lib/listing'
+import { domainShown, listingPictures, satsLabel } from '../lib/listing'
 import { useSellerLink } from '../hooks/useSellerLink'
+import { Guard } from './Guard'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload, type ShardModel } from 'sno-core/shards'
 import { fileNameFor, toPly } from '../lib/ply'
@@ -143,8 +144,16 @@ function ListingPic({ listing }: { listing: FeedListing }): JSX.Element {
   )
 }
 
-/** An object for sale: bought from its seller's page, never opened or placed here (no shape until bought). */
+/**
+ * An object for sale: bought from its seller's page, never opened or placed
+ * here (no shape until bought). Guarded on its own, so a listing that throws
+ * while drawing is left out rather than taking the feed with it.
+ */
 export function ListingTile({ listing }: { listing: FeedListing }): JSX.Element {
+  return <Guard where="a listing" fallback={() => null}><ListingCard listing={listing} /></Guard>
+}
+
+function ListingCard({ listing }: { listing: FeedListing }): JSX.Element {
   const authorName = useProfiles((s) => s.profiles[listing.pubkey]?.name ?? null)
   const title = listing.title || 'Untitled'
   const link = useSellerLink(listing)
@@ -167,7 +176,7 @@ export function ListingTile({ listing }: { listing: FeedListing }): JSX.Element 
               <ExternalLink size={14} strokeWidth={2.25} aria-hidden />
               <span className="tile__buy-label">BUY ON {link.label}</span>
             </span>
-            <span className="tile__buy-domain">{link.domain}</span>
+            <span className="tile__buy-domain">{domainShown(link.domain)}</span>
           </a>
         )}
       </div>

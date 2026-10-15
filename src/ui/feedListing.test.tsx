@@ -25,7 +25,7 @@ import { listingFromEvent } from 'sno-core/feed'
 import { ListingTile } from './Feed'
 import SOURCE from './Feed.tsx?raw'
 import { LISTING, listingWith } from '../store/fixtures/listing'
-import { httpsImage, listingNaddr, listingPictures, satsLabel } from '../lib/listing'
+import { DOMAIN_SHOWN_MAX, domainShown, httpsImage, listingNaddr, listingPictures, satsLabel } from '../lib/listing'
 import { useHandlers } from '../store/useHandlers'
 
 const GIF = 'https://cdn.example.com/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.gif'
@@ -49,6 +49,14 @@ describe('a listing as a tile shows it', () => {
     expect(listingPictures(listingFromEvent(LISTING)!)).toEqual([GIF, PNG])
     expect(listingPictures(listingFromEvent(plainHttp)!)).toEqual([])
     for (const bad of ['http://cdn.example.com/a.gif', 'javascript:alert(1)', 'data:image/gif;base64,R0lG', '']) expect(httpsImage(bad), bad).toBeNull()
+  })
+
+  it('shows a long domain by its end, where the name it belongs to is', () => {
+    expect(domainShown('fanfares.io')).toBe('fanfares.io')
+    const shown = domainShown(`fanfares-io-official-${'x'.repeat(40)}-checkout.example`)
+    expect(Array.from(shown)).toHaveLength(DOMAIN_SHOWN_MAX)
+    expect(shown.startsWith('…')).toBe(true)
+    expect(shown.endsWith('-checkout.example')).toBe(true)
   })
 })
 
