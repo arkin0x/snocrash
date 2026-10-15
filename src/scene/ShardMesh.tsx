@@ -294,13 +294,15 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
       {shard.mode === 'solid' && index.length > 0 && (
         <group>
           <mesh name="shard-faces" geometry={indexed} frustumCulled={false} {...pick}>
+            {/* forceSinglePass: three draws a transparent DoubleSide material
+                in two passes, flipping its side and looking the program up
+                again twice per object per frame, which is pure garbage at a
+                high refresh rate (ONOSENDAI's 10 GB desktop tabs, 2026-10-14).
+                These faces write depth at opacity 1, so one pass draws the
+                same picture. A ghost keeps two passes: its back must sort
+                behind. */}
             {lit
               ? <meshLambertMaterial vertexColors flatShading side={FrontSide} toneMapped={SHARD_FACES_TONE_MAPPED} transparent opacity={opacity} />
-              // forceSinglePass: three draws a transparent DoubleSide material
-              // in two passes, flipping its side and recompiling-by-lookup
-              // twice per object per frame, which is pure garbage at a high
-              // refresh rate (ONOSENDAI's 10 GB desktop tabs, 2026-10-14). A
-              // ghost keeps two passes: two passes: its back must sort behind.
               : <meshBasicMaterial vertexColors side={DoubleSide} forceSinglePass={!ghost} toneMapped={SHARD_FACES_TONE_MAPPED} transparent opacity={opacity} {...(world && !ghost ? TAG_BLEND : {})} />}
           </mesh>
           {lit && inside && (

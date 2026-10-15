@@ -12,11 +12,14 @@ import { describe, expect, it } from 'vitest'
  * keeps the two passes says so with `forceSinglePass={...}` (a condition) or
  * a `two passes:` comment.
  */
-const sources = import.meta.glob(['../scene/**/*.tsx', '../scene/**/*.ts', '../ui/**/*.tsx', '../ui/**/*.ts', '!../**/*.test.ts', '!../**/*.test.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+const sources = import.meta.glob(['../**/*.tsx', '../**/*.ts', '!../**/*.test.ts', '!../**/*.test.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
 describe('transparent DoubleSide materials draw in one pass', () => {
-  it('reads the scene and ui sources', () => {
-    expect(Object.keys(sources).length).toBeGreaterThan(5)
+  it('reads every source under src, including the two DoubleSide materials', () => {
+    const files = Object.keys(sources)
+    expect(files.some((f) => f.endsWith('/ShardMesh.tsx'))).toBe(true)
+    expect(files.some((f) => f.endsWith('/Bench.tsx'))).toBe(true)
+    expect(files.some((f) => f.includes('/lib/'))).toBe(true)
   })
 
   it('every one sets forceSinglePass', () => {
