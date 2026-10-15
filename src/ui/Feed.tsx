@@ -6,15 +6,26 @@
  * someone else's object: open it in the editor as your own copy, take the
  * payload to the clipboard, or save it as a PLY that Blender will open.
  *
+ * An object for sale (a listing, sno-core/feed) is a tile among them,
+ * newest first with the rest: the seller's preview GIF, the title, the price,
+ * who sells it, and BUY ON <seller> with the domain the link opens beside it,
+ * which opens the seller's page in a new tab (its NIP-89 handler's, a known
+ * key service's app, or njump: sno-core sellerLink). It has no shape until bought, so it cannot be opened, remixed,
+ * copied, saved or stamped, and its picture is an image, not a 3D preview.
+ *
  * Remixing is a copy and never a reference. The copy gets its own id, so
  * publishing it writes a new addressable object under your key rather than
  * touching theirs, which is what "remix" has to mean when the wire has no
  * notion of a parent.
  */
 
-import { useEffect, useLayoutEffect, useRef } from 'react'
-import { Copy, Download, RefreshCw, SquarePen } from 'lucide-react'
-import { remixCredit, useNostr, type FeedObject } from '../store/useNostr'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Copy, Download, ExternalLink, LockKeyhole, RefreshCw, SquarePen } from 'lucide-react'
+import { feedItems, isListing } from 'sno-core/feed'
+import { remixCredit, useNostr, type FeedListing, type FeedObject } from '../store/useNostr'
+import { domainShown, listingPictures, satsLabel } from '../lib/listing'
+import { useSellerLink } from '../hooks/useSellerLink'
+import { Guard } from './Guard'
 import { useWorkshop } from '../store/useWorkshop'
 import { toPayload, type ShardModel } from 'sno-core/shards'
 import { fileNameFor, toPly } from '../lib/ply'
@@ -115,8 +126,69 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
   )
 }
 
+/**
+ * A listing's picture, where a tile's 3D preview stands and the same height:
+ * the turntable GIF, the still if that fails, a lock if neither loads. A URL
+ * somebody else controls, so https only, lazy, and no referrer (ProfilePic).
+ */
+function ListingPic({ listing }: { listing: FeedListing }): JSX.Element {
+  const pictures = listingPictures(listing)
+  const [tried, setTried] = useState(0)
+  const src = pictures[tried]
+  return (
+    <div className="preview listing__pic">
+      {src
+        ? <img src={src} alt={listing.alt ?? ''} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setTried((n) => n + 1)} />
+        : <LockKeyhole size={28} strokeWidth={2} className="listing__lock" aria-hidden />}
+    </div>
+  )
+}
+
+/**
+ * An object for sale: bought from its seller's page, never opened or placed
+ * here (no shape until bought). Guarded on its own, so a listing that throws
+ * while drawing is left out rather than taking the feed with it.
+ */
+export function ListingTile({ listing }: { listing: FeedListing }): JSX.Element {
+  return <Guard where="a listing" fallback={() => null}><ListingCard listing={listing} /></Guard>
+}
+
+function ListingCard({ listing }: { listing: FeedListing }): JSX.Element {
+  const authorName = useProfiles((s) => s.profiles[listing.pubkey]?.name ?? null)
+  const title = listing.title || 'Untitled'
+  const link = useSellerLink(listing)
+  return (
+    <article className="tile tile--sale" title="For sale: its shape is sealed until bought">
+      <ListingPic listing={listing} />
+      <div className="tile__bar">
+        <span className="tile__name" title={title}>{title}</span>
+        <span className="tile__price">{satsLabel(listing.priceSats)}</span>
+        <div className="tile__row">
+          <div className="tile__who">
+            <ProfilePic pubkey={listing.pubkey} size={24} />
+            <span className="tile__author">{authorName ?? shortKey(listing.pubkey)}</span>
+          </div>
+        </div>
+        {/* The domain is the link's own, so a seller's chosen name cannot hide where it goes. */}
+        {link && (
+          <a className="btn tile__buy" href={link.url} target="_blank" rel="noopener noreferrer" title={link.url}>
+            <span className="tile__buy-main">
+              <ExternalLink size={14} strokeWidth={2.25} aria-hidden />
+              <span className="tile__buy-label">BUY ON {link.label}</span>
+            </span>
+            <span className="tile__buy-domain">{domainShown(link.domain)}</span>
+          </a>
+        )}
+      </div>
+    </article>
+  )
+}
+
 export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
   const feed = useNostr((s) => s.feed)
+  const listings = useNostr((s) => s.listings)
+  // Objects and listings, newest first, merged once per change.
+  const items = useMemo(() => feedItems({ objects: feed, listings }), [feed, listings])
   const loading = useNostr((s) => s.loading)
   const load = useNostr((s) => s.loadFeed)
   const scope = useNostr((s) => s.scope)
@@ -169,18 +241,20 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
           <button className={`workshop__mode ${scope === 'mine' ? 'is-on' : ''}`} aria-pressed={scope === 'mine'} onClick={() => setScope('mine')}>MINE</button>
           <button className={`workshop__mode ${scope === 'global' ? 'is-on' : ''}`} aria-pressed={scope === 'global'} onClick={() => setScope('global')}>GLOBAL</button>
         </div>
-        <h2>{loading ? 'Reading the relays' : `${feed.length} object${feed.length === 1 ? '' : 's'}`}</h2>
+        <h2>{loading ? 'Reading the relays' : `${feed.length} object${feed.length === 1 ? '' : 's'}${listings.length ? ` · ${listings.length} for sale` : ''}`}</h2>
         <button className="btn" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={16} strokeWidth={2.25} /> REFRESH
         </button>
       </header>
-      {!loading && feed.length === 0 && (
+      {!loading && items.length === 0 && (
         <p className="empty">
           Nothing yet. Make something and publish it, and it will be the first object here.
         </p>
       )}
       <div className="grid">
-        {feed.map((o) => <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => (picking ? choose(o) : view(o))} />)}
+        {items.map((o) => isListing(o)
+          ? <ListingTile key={`${o.pubkey}:${o.d}`} listing={o} />
+          : <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => (picking ? choose(o) : view(o))} />)}
         {drafts.map((sh) => <DraftTile key={`draft:${sh.id}`} shard={sh} picking={picking} />)}
       </div>
     </section>

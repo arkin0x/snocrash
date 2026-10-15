@@ -20,7 +20,7 @@
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
 import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRelay, pool, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
-import { SNO_KIND, createFeed, creditAuthor, objectAddress as coordinate, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedObject } from 'sno-core/feed'
+import { SNO_KIND, createFeed, creditAuthor, objectAddress as coordinate, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedListing, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
   CANCELLED, GIVEN_UP, HANDSHAKE_LATE, OTHER_KEY, deferredReconnect, forgetSignerPref, loadSignerPref, loginCredentialKind,
@@ -66,7 +66,7 @@ let feedGen = 0
 let currentFeed: Feed | null = null
 
 /** An object someone published, with the event it came from (sno-core/feed, shared with ONOSENDAI). */
-export type { FeedObject } from 'sno-core/feed'
+export type { FeedListing, FeedObject } from 'sno-core/feed'
 
 /** Who signs right now. Not in the store: it holds a key and React state is copied. */
 let signer: Signer | null = null
@@ -95,6 +95,13 @@ interface NostrState {
   pubkey: string | null
   signer: SignerKind
   feed: FeedObject[]
+  /**
+   * Objects for sale (a 33331 sealed with any seller's key service,
+   * NIP-FF-1): a title, a price and a picture, no shape until bought. Kept
+   * apart from `feed`, so nothing that opens, remixes or stamps an object is
+   * handed one.
+   */
+  listings: FeedListing[]
   /** Whose objects the feed shows: everyone's, or only this key's. */
   scope: FeedScope
   loading: boolean
@@ -542,6 +549,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   loginError: null,
   loggingIn: false,
   feed: [],
+  listings: [],
   scope: 'global',
   loading: false,
   publishing: false,
@@ -864,7 +872,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     const gen = ++feedGen
     const mineOnly = get().scope === 'mine'
     const me = get().pubkey
-    set({ loading: true, feed: [] })
+    set({ loading: true, feed: [], listings: [] })
     if (mineOnly && !me) { set({ loading: false, notice: 'Choose a key in the menu to see your own objects.' }); return }
     // A switch of scope mid-read stops the old read rather than letting it run on.
     currentFeed?.close()
@@ -877,7 +885,7 @@ export const useNostr = create<NostrState>((set, get) => ({
       // The connect bounded on its own, the auth on its own allowance (a
       // signer may be a person approving it): sno-core/feed ReadOptions.
       read: { connect: connectRelay, auth: authForRead, connectMs: CONNECT_DEADLINE_MS, deadlineMs: READ_DEADLINE_MS },
-      onChange: (st) => { if (gen === feedGen) set({ feed: st.objects }) },
+      onChange: (st) => { if (gen === feedGen) set({ feed: st.objects, listings: st.listings }) },
     })
     currentFeed = feed
     await feed.more()
