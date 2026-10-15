@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { TICKS_PER_UNIT as T, hexToRgb, newShard, ticksOf, type ShardModel } from 'sno-core/shards'
-import { DEFAULT_PALETTE, useWorkshop } from './useWorkshop'
+import { TICKS_PER_UNIT as T, hexToRgb, newShard, ticksOf, vertexAt, type ShardModel } from 'sno-core/shards'
+import { DEFAULT_PALETTE, settleSelection, tapSelection, useWorkshop } from './useWorkshop'
 import { BUILT_IN, hexAt, snapHex } from 'sno-core/snoPalette'
 
 const w = () => useWorkshop.getState()
@@ -955,5 +955,84 @@ describe('REMIX keeps the credit on the copy (DECK-0003 crediting)', () => {
     const shards = useWorkshop.getState().shards
     expect(creditOf(shards.find((s) => s.id === credited)!)).toEqual({ address: `33331:${'d'.repeat(64)}:chair` })
     expect(creditOf(shards.find((s) => s.id === plain)!)).toBeUndefined()
+  })
+})
+
+/**
+ * Ported from ONOSENDAI #311 (arkinox, 2026-10-12): a lone rectangle above a
+ * cube, moved down until its bottom corners stand on the cube's top corners.
+ * The next write to the selection (a box growing, a pan putting the box back,
+ * a tap on a lit stacked spot) used to widen it to everything on those spots,
+ * and the next nudge tore the cube's corners off with the rectangle.
+ * Stacked is not welded.
+ */
+describe('stacked by a move is not welded', () => {
+  // Cube: vertices 0..7. Rectangle: vertices 8..11, standing in z = 0 from y = 3 to y = 4.
+  const SCENE = JSON.stringify({
+    v: 1, type: 'shard', name: 'stack', unit: 0, extent: 15, mode: 'solid',
+    vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1], [0, 3, 0], [1, 3, 0], [1, 4, 0], [0, 4, 0]],
+    ticks: Array.from({ length: 12 }, () => [0, 0, 0]),
+    colors: Array.from({ length: 12 }, () => [1, 1, 1]),
+    faces: [[0, 1, 3], [0, 3, 2], [4, 6, 7], [4, 7, 5], [2, 3, 7], [2, 7, 6], [8, 9, 10], [8, 10, 11]],
+  })
+  const RECT = [8, 9, 10, 11]
+  const at = (): string[] => w().current()!.vertices.map((v) => ticksOf(v).join())
+  const stacked = (): number => {
+    const seen = new Map<string, number>()
+    for (const k of at()) seen.set(k, (seen.get(k) ?? 0) + 1)
+    return [...seen.values()].filter((n) => n > 1).length
+  }
+  beforeEach(() => {
+    useWorkshop.setState({ shards: [], currentId: null, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], aim: null, notice: null, tool: 'select', division: 1 })
+    const id = w().importText(SCENE)
+    expect(id).not.toBeNull()
+    w().select(id!)
+  })
+  const land = (): string[] => {
+    w().setSelection(RECT)
+    expect(w().selection).toEqual(RECT)
+    const start = at()
+    w().moveSelected(1, -w().step()); w().moveSelected(1, -w().step())
+    expect(stacked()).toBe(2)
+    return start
+  }
+
+  it('settleSelection widens only what is new, never what is held', () => {
+    const s = { vertices: [vertexAt([0, 0, 0], [1, 1, 1]), vertexAt([0, 0, 0], [1, 1, 1]), vertexAt([T, 0, 0], [1, 1, 1])] }
+    expect(settleSelection(s, [], [0])).toEqual([0, 1])
+    expect(settleSelection(s, [1], [1])).toEqual([1])
+    expect(settleSelection(s, [1], [1, 2])).toEqual([1, 2])
+    expect(settleSelection(s, [], [9])).toEqual([])
+  })
+
+  it('the selection stays the rectangle after it lands, through a box rewrite', () => {
+    land()
+    w().setSelection([...w().selection])
+    expect(w().selection).toEqual(RECT)
+  })
+
+  it('moving on down leaves the cube whole', () => {
+    land()
+    const cube = at().slice(0, 8)
+    w().setSelection([...w().selection])
+    w().moveSelected(1, -w().step())
+    expect(at().slice(0, 8)).toEqual(cube)
+    expect(at().slice(8)).toEqual(['0,0,0', `${T},0,0`, `${T},${T},0`, `0,${T},0`])
+  })
+
+  it('a tap on a lit stacked spot lets go of what is held there and never adds the cube corner', () => {
+    land()
+    expect(tapSelection(w().current()!, w().selection, 2)).toEqual([9, 10, 11])
+    w().toggleVertex(2)
+    expect(w().selection).toEqual([9, 10, 11])
+    w().toggleVertex(2)
+    expect(w().selection).toEqual([2, 8, 9, 10, 11])
+  })
+
+  it('undo puts every point back exactly', () => {
+    const start = land()
+    w().moveSelected(1, -w().step())
+    w().undo(); w().undo(); w().undo()
+    expect(at()).toEqual(start)
   })
 })

@@ -299,10 +299,12 @@ export interface WorkshopState {
   open: boolean
   tool: Tool
   /**
-   * Selected vertex indices, always whole points: selecting a vertex selects
-   * every vertex on its point, and the nudge pad, the color and DELETE act on
-   * all of them together. Built by tapping points, dragging a box on the
-   * bench, or CONNECTED.
+   * Selected vertex indices. Picking a point (a tap, a box) takes every
+   * vertex standing on it then, and the nudge pad, the color and DELETE act
+   * on all of them together. Built by tapping points, dragging a box on the
+   * bench, or CONNECTED. Once held, a vertex set is never widened again by
+   * what comes to stand on the same spot later: a stack made by a move stays
+   * two points until the author picks the spot or welds it (settleSelection).
    */
   selection: number[]
   /** Selected placed objects (DECK-0003 §1.10), indices into the shard's parts. Each is one whole thing: selected or not. */
@@ -550,8 +552,46 @@ function savePalette(palette: string[]): void {
   try { localStorage.setItem(PALETTE_STORAGE, JSON.stringify(palette)) } catch { /* quota or private mode */ }
 }
 
+/**
+ * The selection `indices` asks for, given what is `held` now. A vertex that
+ * is new to the selection brings every vertex standing on its point, as a tap
+ * does; a vertex already held is kept exactly as it is and never widened.
+ *
+ * Picking is the one moment a spot's stack is taken whole. Before (ported
+ * from ONOSENDAI #311, arkinox, 2026-10-12) every write widened all of it
+ * again, so a shape moved onto another's corners took those corners the next
+ * time anything rewrote the selection (a box growing, a pan putting the box
+ * back), and the next nudge tore them off. Points that came to share a spot
+ * by a move stay apart until the author picks that spot or welds it.
+ * Pure: sorted, deduped, and only real vertices.
+ */
+export function settleSelection(s: Pick<ShardModel, 'vertices'>, held: readonly number[], indices: readonly number[]): number[] {
+  const had = new Set(held)
+  const out = new Set<number>()
+  for (const i of indices) {
+    if (!s.vertices[i]) continue
+    if (had.has(i)) out.add(i)
+    else for (const j of group(s, i)) out.add(j)
+  }
+  return [...out].sort((a, b) => a - b)
+}
+
+/**
+ * The selection after a tap on the point vertex `index` stands on. Anything
+ * of that point in hand: what is in hand there comes out. Nothing in hand:
+ * the whole point goes in. A spot is lit when any vertex on it is held, so a
+ * tap on a lit spot lets go; asking only about `index` (the first vertex on
+ * the spot) took the rest of a stack instead (ONOSENDAI #311). Pure.
+ */
+export function tapSelection(s: Pick<ShardModel, 'vertices'>, held: readonly number[], index: number): number[] {
+  const g = group(s, index)
+  const release = g.some((i) => held.includes(i))
+  const out = release ? held.filter((i) => !g.includes(i)) : [...new Set([...held, ...g])]
+  return out.sort((a, b) => a - b)
+}
+
 /** Every vertex on the same point as vertex `index`, itself included. */
-function group(s: ShardModel, index: number): number[] {
+function group(s: Pick<ShardModel, 'vertices'>, index: number): number[] {
   const v = s.vertices[index]
   if (!v) return []
   const key = pointKey(ticksOf(v))
@@ -908,17 +948,17 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     toggleVertex: (index) => {
       const s = get().current()
       if (!s || !s.vertices[index]) return
-      const g = group(s, index)
-      const has = get().selection.includes(index)
-      set({ selection: has ? get().selection.filter((i) => !g.includes(i)) : [...get().selection, ...g], selectedFace: null })
+      // The whole point goes in, or what is held of it comes out (tapSelection).
+      set({ selection: tapSelection(s, get().selection, index), selectedFace: null })
     },
 
     setSelection: (indices) => {
       const s = get().current()
       if (!s) { set({ selection: [] }); return }
-      const out = new Set<number>()
-      for (const i of indices) if (s.vertices[i]) for (const j of group(s, i)) out.add(j)
-      set({ selection: [...out].sort((a, b) => a - b), selectedFace: null })
+      // Only what is new to the selection is widened to whole points
+      // (settleSelection): a box growing or a pan putting it back rewrites
+      // the held vertices as they are.
+      set({ selection: settleSelection(s, get().selection, indices), selectedFace: null })
     },
 
     selectConnected: () => {
