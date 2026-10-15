@@ -736,8 +736,15 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    * enforce it earlier.
    */
   const edit = (fn: (s: ShardModel) => ShardModel | null, notice: string | null = null): boolean => {
-    // An object opened from the feed becomes yours on its first change.
-    if (get().viewing) get().adopt()
+    // An object opened from the feed becomes yours on its first change, and
+    // only on a change: the edit is tried on the feed's copy first, and a
+    // refusal or a no-op leaves it un-adopted, so jumping in and out of the
+    // feed leaves nothing behind (review of parity #33).
+    const viewing = get().viewing
+    if (viewing) {
+      if (!fn(viewing.shard)) return false
+      get().adopt()
+    }
     const { shards, currentId, past } = get()
     const i = shards.findIndex((s) => s.id === currentId)
     if (i < 0) return false
@@ -764,14 +771,45 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
   }
 
   /**
-   * The shard an edit is about to be computed from: the stored one. An object
-   * opened from the feed is adopted first, so anything worked out before
-   * calling `edit` (a stamp's result, a weld, a pivot, the indices of a fill)
-   * is worked out on the shard the edit will actually change. `current()`
-   * while viewing is the feed's copy: right for looking, wrong for building
-   * on (review of parity #33: it lost local edits and emptied the bench).
+   * The shard an action that computes before `edit` is computed on.
+   *
+   * While an object from the feed is open, `current()` is the feed's copy:
+   * right for looking, wrong for building on, since its id is the feed's.
+   * Results built on it and stored lost local edits and emptied the bench
+   * (review of parity #33). So an action works itself out on the object on
+   * the bench without adopting it, and only when it will change something
+   * adopts it and works it out again on the stored shard. `plan` returns
+   * null for a refusal or a no-op (setting its own notice), so a refused
+   * action on an object opened from the feed leaves nothing behind in your
+   * objects. The second run matters for your own object with an unpublished
+   * local edit, where the stored shard is not the relay's copy on view.
    */
-  const live = (): ShardModel | null => (get().viewing ? get().adopt() : get().current())
+  const onLive = <R,>(plan: (s: ShardModel) => R | null): { s: ShardModel; r: R } | null => {
+    const peek = get().current()
+    if (!peek) return null
+    const first = plan(peek)
+    if (first === null) return null
+    if (!get().viewing) return { s: peek, r: first }
+    const s = get().adopt()
+    if (!s) return null
+    const r = plan(s)
+    return r === null ? null : { s, r }
+  }
+
+  /**
+   * A shard's own address, for the self-placement check. The feed's copy of
+   * your own object is stored under its `d` once adopted, so that is its
+   * address; anyone else's object becomes a new object of yours, which
+   * nothing places yet.
+   */
+  const selfOf = (s: ShardModel): string | undefined => {
+    const v = get().viewing
+    if (v && v.shard === s) {
+      const pk = useNostr.getState().pubkey
+      return v.own && pk ? ownAddress(pk, v.d) : undefined
+    }
+    return selfAddress(s)
+  }
 
   /** Faces show only in SOLID: a shard's first faces switch it there. */
   const solidIfFirstFaces = (before: ShardModel, after: ShardModel): { mode: ShardMode; notice: string | null } =>
@@ -788,43 +826,50 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
   const putDown = (clip: ClipPoints, where: PastePlace, self?: string, as?: { notice: string; name?: string }): boolean => {
     const { plane, level } = get()
     if (clip.points.length === 0 && clip.parts.length === 0) return false
-    const s = live()
-    if (!s) return false
-    // A copy of a shard that places this one would make it place itself;
-    // placeObject refuses the same thing in the same words.
-    const own = self ?? selfAddress(s)
-    if (own && clip.parts.some((q) => q.ref[1] === own)) { set({ notice: 'An object cannot place itself.' }); return false }
-    // A whole shard keeps its true size. Its ticks are its own unit's, so in
-    // a shard on another unit they scale about the origin by the difference,
-    // and an empty shard, whose unit measures nothing yet, takes the copied
-    // one's instead. A placed object's own size is its unit plus its step
-    // whatever places it (sno-core partMatrix), so only where it stands moves.
-    const whole = clip.unit !== undefined
-    const empty = s.vertices.length === 0 && !s.parts?.length
-    const unit = whole && empty ? clip.unit! : s.unit
-    const k = whole ? clip.unit! - unit : 0
-    const points = clip.points.map((q) => ({ at: scaleTicks(q.at, k), c: q.c }))
-    const parts = clip.parts.map((q) => ({ ...q, at: scaleTicks(q.at, k) }))
-    // Where they came from, to the tick, which is what a copy is for: the
-    // shape returns to the place you took it from and the nudges carry it
-    // off from there. FLOOR is the other answer: the same shape, slid along
-    // the working plane's normal until its lowest point rests on the level
-    // the grid is at. Neither one flattens anything.
-    let low = Infinity
-    for (const q of [...points, ...parts]) low = Math.min(low, q.at[plane])
-    const shift = where === 'floor' ? level - low : 0
-    const slide = (p: P3): P3 => { const at = [...p] as P3; at[plane] = at[plane] + shift; return at }
-    const placed = points.map((q) => ({ at: slide(q.at), c: q.c }))
-    const objects = parts.map((q) => ({ ...q, at: slide(q.at) }))
-    // A whole shard brings its own grid, so this one grows to hold it, as
-    // far as a grid goes. A selection asks first, as it always has.
-    let reach = 0
-    for (const q of [...placed, ...objects]) for (const n of q.at) reach = Math.max(reach, Math.ceil(Math.abs(n) / TICKS_PER_UNIT))
-    const extent = whole ? Math.min(MAX_EXTENT, Math.max(s.extent, reach)) : s.extent
-    if (placed.some((q) => !validPoint(q.at, extent)) || objects.some((q) => !validPoint(q.at, extent))) {
-      set({ notice: 'Those would land off the grid. Move the level, or grow the grid.' })
-      return false
-    }
+    // Every refusal is decided on the object on the bench before anything
+    // is adopted (onLive), and the landing is worked out again on the
+    // stored shard once it is.
+    const got = onLive((s) => {
+      // A copy of a shard that places this one would make it place itself;
+      // placeObject refuses the same thing in the same words.
+      const own = self ?? selfOf(s)
+      if (own && clip.parts.some((q) => q.ref[1] === own)) { set({ notice: 'An object cannot place itself.' }); return null }
+      // A whole shard keeps its true size. Its ticks are its own unit's, so in
+      // a shard on another unit they scale about the origin by the difference,
+      // and an empty shard, whose unit measures nothing yet, takes the copied
+      // one's instead. A placed object's own size is its unit plus its step
+      // whatever places it (sno-core partMatrix), so only where it stands moves.
+      const whole = clip.unit !== undefined
+      const empty = s.vertices.length === 0 && !s.parts?.length
+      const unit = whole && empty ? clip.unit! : s.unit
+      const k = whole ? clip.unit! - unit : 0
+      const points = clip.points.map((q) => ({ at: scaleTicks(q.at, k), c: q.c }))
+      const parts = clip.parts.map((q) => ({ ...q, at: scaleTicks(q.at, k) }))
+      // Where they came from, to the tick, which is what a copy is for: the
+      // shape returns to the place you took it from and the nudges carry it
+      // off from there. FLOOR is the other answer: the same shape, slid along
+      // the working plane's normal until its lowest point rests on the level
+      // the grid is at. Neither one flattens anything.
+      let low = Infinity
+      for (const q of [...points, ...parts]) low = Math.min(low, q.at[plane])
+      const shift = where === 'floor' ? level - low : 0
+      const slide = (p: P3): P3 => { const at = [...p] as P3; at[plane] = at[plane] + shift; return at }
+      const placed = points.map((q) => ({ at: slide(q.at), c: q.c }))
+      const objects = parts.map((q) => ({ ...q, at: slide(q.at) }))
+      // A whole shard brings its own grid, so this one grows to hold it, as
+      // far as a grid goes. A selection asks first, as it always has.
+      let reach = 0
+      for (const q of [...placed, ...objects]) for (const n of q.at) reach = Math.max(reach, Math.ceil(Math.abs(n) / TICKS_PER_UNIT))
+      const extent = whole ? Math.min(MAX_EXTENT, Math.max(s.extent, reach)) : s.extent
+      if (placed.some((q) => !validPoint(q.at, extent)) || objects.some((q) => !validPoint(q.at, extent))) {
+        set({ notice: 'Those would land off the grid. Move the level, or grow the grid.' })
+        return null
+      }
+      return { whole, empty, unit, k, placed, objects, extent }
+    })
+    if (!got) return false
+    const s = got.s
+    const { empty, unit, k, placed, objects, extent } = got.r
     const base = s.vertices.length
     const firstPart = s.parts?.length ?? 0
     const many = clip.points.length + clip.parts.length > 1
@@ -982,11 +1027,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, invert: false, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
     setInvert: (on) => set({ invert: on }),
     setExtent: (extent) => {
-      const s = live()
-      if (!s) return
-      const e = Math.max(Math.max(MIN_EXTENT, neededExtent(s)), Math.min(MAX_EXTENT, Math.round(extent)))
-      if (e === s.extent) return
-      edit((cur) => ({ ...cur, extent: e }))
+      // Worked out on the stored shard inside the edit, so a no-op adopts nothing.
+      const fit = (s: ShardModel): number => Math.max(Math.max(MIN_EXTENT, neededExtent(s)), Math.min(MAX_EXTENT, Math.round(extent)))
+      if (!edit((cur) => { const e = fit(cur); return e === cur.extent ? null : { ...cur, extent: e } })) return
+      const e = get().current()?.extent ?? GRID_HALF
       set({ level: Math.max(-e * TICKS_PER_UNIT, Math.min(e * TICKS_PER_UNIT, get().level)) })
     },
     setPlane: (plane) => set({ plane, aim: null }),
@@ -1014,25 +1058,30 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     placeObject: (at, self) => {
       const { stampObject, stampFacing } = get()
-      const s = live()
-      if (!s || !validPoint(at, s.extent)) return
       if (!stampObject) { set({ notice: 'Choose an object to stamp first: tap the slot under OBJECT.' }); return }
-      // snocrash knows its own key: an object placing itself is a loop every reader draws as a placeholder (§1.10).
-      const own = self ?? selfAddress(s)
-      if (own && stampObject.ref[1] === own) { set({ notice: 'An object cannot place itself.' }); return }
-      const { shard } = addPart(s, stampObject.ref, { at: [...at] as P3, turn: [0, (90 * stampFacing) % 360, 0], step: 0 })
-      edit(() => shard, `"${stampObject.name}" placed. It is one object: SELECT it to move, turn or copy it.`)
+      const got = onLive((s) => {
+        if (!validPoint(at, s.extent)) return null
+        // snocrash knows its own key: an object placing itself is a loop every reader draws as a placeholder (§1.10).
+        const own = self ?? selfOf(s)
+        if (own && stampObject.ref[1] === own) { set({ notice: 'An object cannot place itself.' }); return null }
+        return addPart(s, stampObject.ref, { at: [...at] as P3, turn: [0, (90 * stampFacing) % 360, 0], step: 0 }).shard
+      })
+      if (!got) return
+      edit(() => got.r, `"${stampObject.name}" placed. It is one object: SELECT it to move, turn or copy it.`)
       set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
     placeStamp: (at) => {
       const { stampKind, stampSize, stampFacing, color, plane } = get()
-      const s = live()
-      if (!s || !validPoint(at, s.extent)) return
-      const res = stamp(s, stampKind, stampSize, stampFacing, at, color, plane)
-      if (!res) { set({ notice: 'That stamp could not be placed here.' }); return }
-      const { mode, notice } = solidIfFirstFaces(s, res.shard)
-      edit(() => ({ ...res.shard, mode }), notice)
+      const got = onLive((s) => {
+        if (!validPoint(at, s.extent)) return null
+        const res = stamp(s, stampKind, stampSize, stampFacing, at, color, plane)
+        if (!res) { set({ notice: 'That stamp could not be placed here.' }); return null }
+        const { mode, notice } = solidIfFirstFaces(s, res.shard)
+        return { shard: { ...res.shard, mode }, notice }
+      })
+      if (!got) return
+      edit(() => got.r.shard, got.r.notice)
       set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
@@ -1040,6 +1089,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       if (!validPoint(p, get().current()?.extent ?? GRID_HALF)) return
       let added = -1
       edit((s) => {
+        // Bounds again on the shard the edit is made to (the check above read the one on the bench).
+        if (!validPoint(p, s.extent)) return null
         // One vertex per point by hand: adding where one already is selects it instead.
         const existing = s.vertices.findIndex((v) => pointKey(ticksOf(v)) === pointKey(p))
         if (existing >= 0) { added = existing; return null }
@@ -1309,50 +1360,46 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     rotateSelected: (turns) => {
       const { selection, partSel, turnPivot, plane } = get()
-      const s = live()
-      if (!s || (selection.length === 0 && partSel.length === 0)) return
+      if (selection.length === 0 && partSel.length === 0) return
       const step = get().step()
-      const chosen = [...new Set(selection.filter((i) => s.vertices[i]))]
-      const placed = [...new Set(partSel.filter((i) => s.parts?.[i]))]
-      if (chosen.length === 0 && placed.length === 0) return
-      // A placed object turns about the same pivot as the points, from where it
-      // stands: its origin counts toward the pivot like a point does.
-      const pts = [...chosen.map((i) => ticksOf(s.vertices[i])), ...placed.map((i) => [...s.parts![i].at] as P3)]
-      // The same selection turned again turns about the same point; any other
-      // edit forgets it (edit() clears it), and so does a change of DIVISION.
-      // The plane is part of the key: turning, tipping the grid on its side and
-      // turning again are two different turns about two different axes.
       const axes = turnAxes(plane)
-      const key = `${step}:${plane}:${[...chosen].sort((a, b) => a - b).join(',')}:${placed.join(',')}`
-      const at = turnPivot?.key === key ? turnPivot.at : turnPivotFor(pts, step, axes)
-      const [ca, cb] = at
       const [ax, bx] = axes
       let refused = false
-      edit((m) => {
-        const vertices = m.vertices.slice()
+      // The whole turn is worked out, refusal included, before anything is
+      // adopted (onLive): a turn off the grid leaves a feed object alone.
+      const got = onLive((s) => {
+        const chosen = [...new Set(selection.filter((i) => s.vertices[i]))]
+        const placed = [...new Set(partSel.filter((i) => s.parts?.[i]))]
+        if (chosen.length === 0 && placed.length === 0) return null
+        // A placed object turns about the same pivot as the points, from where it
+        // stands: its origin counts toward the pivot like a point does.
+        const pts = [...chosen.map((i) => ticksOf(s.vertices[i])), ...placed.map((i) => [...s.parts![i].at] as P3)]
+        const key = `${step}:${plane}:${[...chosen].sort((a, b) => a - b).join(',')}:${placed.join(',')}`
+        const at = turnPivot?.key === key ? turnPivot.at : turnPivotFor(pts, step, axes)
+        const [ca, cb] = at
+        refused = false
+        const vertices = s.vertices.slice()
         chosen.forEach((i, k) => {
-          // Only the two axes in the plane move; the one along its normal is
-          // what the turn goes around, so a point never leaves the plane it
-          // was built on.
           const p = [...pts[k]] as P3
           const da = pts[k][ax] - ca, db = pts[k][bx] - cb
           p[ax] = turns === 1 ? ca - db : ca + db
           p[bx] = turns === 1 ? cb + da : cb - da
-          if (!validPoint(p, m.extent)) refused = true
+          if (!validPoint(p, s.extent)) refused = true
           vertices[i] = vertexAt(p, vertices[i].c)
         })
-        // Each placed object swings about the pivot and takes the same quarter
-        // turn itself (sno-core quarterTurnPart), so it turns with the points.
-        const parts = (m.parts ?? []).slice()
+        const parts = (s.parts ?? []).slice()
         for (const i of placed) {
           const q = turns === 1 ? quarterTurnPart(parts[i], ax, bx, [ca, cb]) : quarterTurnPart(parts[i], bx, ax, [cb, ca])
-          if (!q || !validPoint(q.at, m.extent)) { refused = true; continue }
+          if (!q || !validPoint(q.at, s.extent)) { refused = true; continue }
           parts[i] = q
         }
-        return refused ? null : placed.length ? { ...m, vertices, parts } : { ...m, vertices }
+        if (refused) return null
+        return { shard: placed.length ? { ...s, vertices, parts } : { ...s, vertices }, key, at }
       })
-      if (refused) set({ notice: 'That turn would carry a point or an object off the grid.' })
-      else set({ turnPivot: { key, at } })
+      if (refused) { set({ notice: 'That turn would carry a point or an object off the grid.' }); return }
+      if (!got) return
+      edit(() => got.r.shard)
+      set({ turnPivot: { key: got.r.key, at: got.r.at } })
     },
 
     colorSelected: (c) => {
@@ -1360,9 +1407,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       set({ color: clampColor(c) })
       get().rememberColor(rgbToHex(clampColor(c)))
       // With no points selected, a selected face takes the color for its corners.
-      const face = selection.length === 0 && selectedFace !== null ? live()?.faces[selectedFace] : undefined
-      if (selection.length === 0 && !face) return
+      if (selection.length === 0 && (selectedFace === null || !get().current()?.faces[selectedFace])) return
       edit((s) => {
+        const face = selection.length === 0 && selectedFace !== null ? s.faces[selectedFace] : undefined
         const chosen = new Set((face ?? selection).filter((i) => s.vertices[i]))
         if (chosen.size === 0) return null
         const vertices = s.vertices.slice()
@@ -1415,20 +1462,24 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     weld: () => {
-      const s = live()
-      if (!s) return
       const { selection } = get()
-      const res = weld(s, selection.length >= 2 ? new Set(selection) : undefined)
-      if (!res) { set({ notice: 'Nothing to weld: no two points stand on the same spot.' }); return }
+      // Decided before anything is adopted: nothing to weld leaves a feed object alone.
+      const got = onLive((s) => {
+        const r = weld(s, selection.length >= 2 ? new Set(selection) : undefined)
+        if (!r) set({ notice: 'Nothing to weld: no two points stand on the same spot.' })
+        return r
+      })
+      if (!got) return
+      const res = got.r
       const n = res.shard.vertices.length
       edit(() => res.shard, `${res.merged} point${res.merged === 1 ? '' : 's'} welded${res.colored ? ', and the faces keep their own colors now' : ''}. ${n} vert${n === 1 ? 'ex' : 'ices'}.`)
       set({ selection: [], partSel: [], selectedFace: null, facePick: [] })
     },
 
     cutSelection: () => {
-      const s = live()
-      const clip = s ? clipOf(s, get().selection, get().partSel) : null
-      if (!clip) return
+      const got = onLive((s) => clipOf(s, get().selection, get().partSel))
+      if (!got) return
+      const clip = got.r
       set({ clip })
       get().deleteSelected()
       set({ notice: `${countLabel(clip)} cut. PASTE asks where to put ${clip.points.length === 1 ? 'it' : 'them'} back.` })
@@ -1444,9 +1495,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     clearClip: () => set({ clip: null }),
 
     duplicateSelection: () => {
-      const s = live()
-      const clip = s ? clipOf(s, get().selection, get().partSel) : null
-      if (!clip) return
+      const got = onLive((s) => clipOf(s, get().selection, get().partSel))
+      if (!got) return
+      const clip = got.r
       set({ clip })
       get().pasteClip('exact')
     },
@@ -1464,7 +1515,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     insertImport: (model, notice, self) => {
-      const s = live()
+      const s = get().current()
       if (!s) return false
       const clip = clipOf(model, model.vertices.map((_, i) => i))
       if (!clip) { set({ notice: 'That file has nothing in it to put down.' }); return false }
@@ -1490,59 +1541,63 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     clearFacePick: () => set({ facePick: [] }),
 
     fill: () => {
-      const s = live()
       const { facePick } = get()
-      if (!s || facePick.length < 3) return
-      const tris = triangulate(facePick.map((i) => ticksOf(s.vertices[i])))
-      if (!tris) { set({ notice: 'Those corners do not make a face. Pick them in order around its edge.' }); return }
-      edit((cur) => {
-        const have = new Set(cur.faces.map(faceKey))
+      if (facePick.length < 3) return
+      let notAFace = false
+      // Worked out on the bench's shard first, so a fill that is refused or
+      // adds nothing leaves a feed object alone (onLive).
+      const got = onLive((s) => {
+        const tris = triangulate(facePick.map((i) => ticksOf(s.vertices[i])))
+        notAFace = !tris
+        if (!tris) { set({ notice: 'Those corners do not make a face. Pick them in order around its edge.' }); return null }
+        const have = new Set(s.faces.map(faceKey))
         const faces = tris
           .map((t) => [facePick[t[0]], facePick[t[1]], facePick[t[2]]] as [number, number, number])
-          .filter((f) => validFace(f, cur.vertices.length) && !have.has(faceKey(f)))
+          .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(f)))
         if (!faces.length) return null
-        // Wound outward, or to agree with a face it closes onto (sno-core winding).
-        const next = windAdded({ ...cur, faces: [...cur.faces, ...faces] }, cur.faces.length)
-        return { ...next, mode: solidIfFirstFaces(cur, next).mode }
-      }, solidIfFirstFaces(s, { ...s, faces: [[0, 0, 0]] }).notice)
+        const next = windAdded({ ...s, faces: [...s.faces, ...faces] }, s.faces.length)
+        return { ...next, mode: solidIfFirstFaces(s, next).mode }
+      })
+      if (notAFace) return
+      if (got) edit(() => got.r, solidIfFirstFaces(got.s, got.r).notice)
       set({ facePick: [] })
     },
 
     fillSelection: () => {
-      const s = live()
       const { selection } = get()
-      if (!s) return
-      // One vertex per point, so a shared point counts once.
-      const firstAt = new Map<string, number>()
-      for (const i of selection) { const v = s.vertices[i]; if (v && !firstAt.has(pointKey(ticksOf(v)))) firstAt.set(pointKey(ticksOf(v)), i) }
-      const idx = [...firstAt.values()]
-      if (idx.length < 3) { set({ notice: 'Select three or more points to fill.' }); return }
-      const pts = idx.map((i) => ticksOf(s.vertices[i]))
-      const faces = facesFor(pts)
-      if (!faces) { set({ notice: 'Those points do not make a face: they lie on one line.' }); return }
-      const before = s.faces.length
-      edit((cur) => {
-        const have = new Set(cur.faces.map(faceKey))
+      // Worked out on the bench's shard first, so a fill that is refused or
+      // adds nothing leaves a feed object alone (onLive).
+      const got = onLive((s) => {
+        const firstAt = new Map<string, number>()
+        for (const i of selection) { const v = s.vertices[i]; if (v && !firstAt.has(pointKey(ticksOf(v)))) firstAt.set(pointKey(ticksOf(v)), i) }
+        const idx = [...firstAt.values()]
+        if (idx.length < 3) { set({ notice: 'Select three or more points to fill.' }); return null }
+        const faces = facesFor(idx.map((i) => ticksOf(s.vertices[i])))
+        if (!faces) { set({ notice: 'Those points do not make a face: they lie on one line.' }); return null }
+        const have = new Set(s.faces.map(faceKey))
         const fresh = faces
           .map((t) => [idx[t[0]], idx[t[1]], idx[t[2]]] as [number, number, number])
-          .filter((f) => validFace(f, cur.vertices.length) && !have.has(faceKey(f)))
-        if (!fresh.length) return null
-        // Wound outward, on the wire where the front is read (DECK-0003 §1.4),
-        // or to agree with a face it closes onto. Measured in model ticks, as
-        // this once was, outward came out inward: the model frame is a mirror.
-        const next = windAdded({ ...cur, faces: [...cur.faces, ...fresh] }, cur.faces.length)
-        return { ...next, mode: solidIfFirstFaces(cur, next).mode }
+          .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(f)))
+        if (!fresh.length) { set({ notice: 'Those faces are already there.' }); return null }
+        const next = windAdded({ ...s, faces: [...s.faces, ...fresh] }, s.faces.length)
+        return { shard: { ...next, mode: solidIfFirstFaces(s, next).mode }, added: fresh.length, hull: faces.hull, points: idx.length }
       })
-      const added = (get().current()?.faces.length ?? before) - before
-      set({ notice: added ? `${added} face${added === 1 ? '' : 's'} ${faces.hull ? 'around' : 'across'} ${idx.length} points.` : 'Those faces are already there.' })
+      if (!got) return
+      const { shard, added, hull, points } = got.r
+      edit(() => shard, `${added} face${added === 1 ? '' : 's'} ${hull ? 'around' : 'across'} ${points} points.`)
     },
 
     subdivideSelection: () => {
-      const s = live()
       const { selection } = get()
-      if (!s || selection.length === 0) return
-      const res = subdivide(s, selection)
-      if ('refused' in res) { set({ notice: res.refused }); return }
+      if (selection.length === 0) return
+      // Decided before anything is adopted: a refused cut leaves a feed object alone.
+      const got = onLive((s) => {
+        const r = subdivide(s, selection)
+        if ('refused' in r) { set({ notice: r.refused }); return null }
+        return r
+      })
+      if (!got) return
+      const res = got.r
       edit(() => res.shard, subdivideNotice(res))
       // Whole points, as every selection is, so a midpoint that landed on an
       // occupied spot is in hand with what stands there.

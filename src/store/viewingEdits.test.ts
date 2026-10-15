@@ -151,6 +151,68 @@ describe('editing an object opened from the feed', () => {
     })
   })
 
+  describe("refused or no-op actions on someone else's object leave nothing behind", () => {
+    /** Open someone else's object from the feed; nothing of yours yet. */
+    const openTheirs = (): void => {
+      w().view(feedCopy(THEM, 'theirs'), { d: 'theirs', own: false, address: 'naddr-theirs' })
+      expect(w().shards).toHaveLength(0)
+    }
+    const nothingAdopted = (): void => {
+      expect(w().shards).toHaveLength(0)
+      expect(w().viewing?.d).toBe('theirs')
+    }
+
+    it('an OBJECT tap with no object chosen', () => {
+      openTheirs()
+      w().setStampMode('object')
+      w().placeObject([T, 0, T])
+      expect(w().notice).toMatch(/Choose an object/)
+      nothingAdopted()
+    })
+
+    it('WELD with nothing to weld', () => {
+      w().view(feedCopy(THEM, 'theirs', { ...SQUARE, vertices: SQUARE.vertices.slice(0, 4), colors: SQUARE.colors.slice(0, 4) }), { d: 'theirs', own: false, address: 'naddr-theirs' })
+      w().weld()
+      expect(w().notice).toMatch(/Nothing to weld/)
+      nothingAdopted()
+    })
+
+    it('FILL with fewer than three points, and with faces already there', () => {
+      openTheirs()
+      w().setSelection([0, 1])
+      w().fillSelection()
+      expect(w().notice).toMatch(/three or more/)
+      nothingAdopted()
+      w().setSelection([0, 1, 2])
+      w().fillSelection()
+      expect(w().notice).toMatch(/already there/)
+      nothingAdopted()
+    })
+
+    it('a stamp off the grid, a refused SUBDIVIDE, a turn or cut with nothing selected, a no-op grid size, a move off the grid, an ADD on a point already there', () => {
+      openTheirs()
+      w().placeStamp([99 * T, 0, 0])
+      w().setSelection([0])
+      w().subdivideSelection()
+      w().setSelection([])
+      w().rotateSelected(1)
+      w().cutSelection()
+      w().duplicateSelection()
+      w().setExtent(w().current()!.extent)
+      w().setSelection([1])
+      w().moveSelected(0, 99 * T)
+      w().addVertex([0, 0, 0])
+      nothingAdopted()
+    })
+
+    it('a real change still adopts, once', () => {
+      openTheirs()
+      w().placeStamp([4 * T, 0, 0])
+      expect(w().viewing).toBeNull()
+      expect(w().shards).toHaveLength(1)
+    })
+  })
+
   it('edit() refuses a result that is a different shard, loudly in development, and keeps the stored one', () => {
     const id = w().importText(JSON.stringify(SQUARE))!
     w().select(id)
