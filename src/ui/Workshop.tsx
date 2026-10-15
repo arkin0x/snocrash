@@ -23,7 +23,7 @@ import { Compass3D } from './Compass3D'
 import { ArrowLeft, Box, ChevronDown, ChevronUp, ClipboardCopy, ClipboardPaste, Copy, CopyPlus, Eraser, Eye, FlipVertical2, Globe, Grid2x2Plus, Grid3x3, Link, Merge, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { PaletteModal } from './PaletteModal'
-import { benchEscape, holding, letGo, typingIn } from './escape'
+import { holding, letGo, typingIn, workshopEscape } from './escape'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
 import { stepDivision } from './divisions'
@@ -507,7 +507,7 @@ function useOpenAddress(address: string | null): void {
       if (own && w.shards.some((x) => x.id === where.d)) { w.select(where.d, address); return }
       const o = await n.fetchObject(address)
       if (cancelled || !o) return
-      w.view(o.shard, { d: o.d, own: o.pubkey === useNostr.getState().pubkey, address })
+      w.view(o.shard, { d: o.d, own: o.pubkey === useNostr.getState().pubkey, address, credit: { address: o.address, relay: o.seen?.[0] } })
     })()
     return () => { cancelled = true }
   }, [address])
@@ -613,25 +613,28 @@ export function Workshop(): JSX.Element | null {
   const bind = useRepeatable()
   const stacked = useMemo(() => (shard ? stackedSpots(shard) : { spots: 0, points: 0 }), [shard])
   // Esc, in ONOSENDAI's order (escape.ts): the palette sheet folds itself
-  // (its own confirmations first) and the menu and the key take the press, so
-  // the bench is left alone under any of them; then the open panel, then the
-  // view pad, then what is in hand. Never the workshop itself.
-  const escape = useRef<() => void>(() => {})
-  escape.current = () => {
-    const step = benchEscape({ covered: pickerOpen || menuOpen || loginOpen, panel: panel !== null, viewOpen, holding: holding() })
-    if (step === 'panel') setPanel(null)
+  // (its own confirmations first), then the key, then the menu, then on the
+  // bench the open panel, the view pad and what is in hand. Never the
+  // workshop itself.
+  const escape = useRef<(typing: boolean) => void>(() => {})
+  escape.current = (typing) => {
+    const step = workshopEscape({
+      sheet: pickerOpen, login: loginOpen, menu: menuOpen,
+      making: view === 'make', typing,
+      panel: panel !== null, viewOpen, holding: holding(),
+    })
+    if (step === 'login') setLoginOpen(false)
+    else if (step === 'menu') setMenuOpen(false)
+    else if (step === 'panel') setPanel(null)
     else if (step === 'view') setViewOpen(false)
     else if (step === 'selection') letGo()
   }
   useEffect(() => {
-    if (!open || view !== 'make') return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'Escape' || typingIn(e.target)) return
-      escape.current()
-    }
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => { if (e.code === 'Escape') escape.current(typingIn(e.target)) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, view])
+  }, [open])
   // Every hook above this line, none below it: the early return that follows
   // changes which hooks run, and React counts them (ONOSENDAI, 2026-09-24).
 
@@ -696,7 +699,9 @@ export function Workshop(): JSX.Element | null {
    */
   const importFromFiles = async (list: FileList | File[] | null): Promise<void> => {
     const files = list ? Array.from(list) : []
-    const s = w().current()
+    // Sized and colored for the shard it lands in (target), not the copy on
+    // view: your own object can differ from what the relay returned.
+    const s = w().target()
     if (!files.length || importing || !s) return
     if (view !== 'make') setView('make')
     setImporting(true)
@@ -886,9 +891,9 @@ export function Workshop(): JSX.Element | null {
           <div className="workshop__row">
             <span className="workshop__label">SCALE</span>
             <span className="workshop__value">2^</span>
-            <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) - 1))} disabled={shard.unit <= 0} aria-label="Smaller unit">−</button>
+            <button className="workshop__btn" {...bind(() => w().stepUnit(-1))} disabled={shard.unit <= 0} aria-label="Smaller unit">−</button>
             <span className="workshop__value">{shard.unit}</span>
-            <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) + 1))} disabled={shard.unit >= MAX_UNIT} aria-label="Larger unit">+</button>
+            <button className="workshop__btn" {...bind(() => w().stepUnit(1))} disabled={shard.unit >= MAX_UNIT} aria-label="Larger unit">+</button>
             <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(shard.unit)}</span>
           </div>
           {/* A stepper like the rows around it (arkinox, 2026-10-15): fifteen
@@ -902,9 +907,9 @@ export function Workshop(): JSX.Element | null {
           </div>
           <div className="workshop__row">
             <span className="workshop__label">GRID SIZE</span>
-            <button className="workshop__btn" {...bind(() => w().setExtent((w().current()?.extent ?? MIN_EXTENT) - 1))} disabled={extent <= minExtent} aria-label="Smaller grid">−</button>
+            <button className="workshop__btn" {...bind(() => w().stepExtent(-1))} disabled={extent <= minExtent} aria-label="Smaller grid">−</button>
             <span className="workshop__value">{extent}</span>
-            <button className="workshop__btn" {...bind(() => w().setExtent((w().current()?.extent ?? MIN_EXTENT) + 1))} disabled={extent >= MAX_EXTENT} aria-label="Larger grid">+</button>
+            <button className="workshop__btn" {...bind(() => w().stepExtent(1))} disabled={extent >= MAX_EXTENT} aria-label="Larger grid">+</button>
             <span className="workshop__unit-size" title="Saved with the object. Never below what its points need.">units each side of each axis</span>
           </div>
         </div>

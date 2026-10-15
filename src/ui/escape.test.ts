@@ -1,12 +1,12 @@
 /**
  * Escape in the workshop (escape.ts), in ONOSENDAI's order: the palette
- * sheet's confirmation, the sheet, the open panel, the view pad, what is in
- * hand, and then nothing. Never the workshop itself.
+ * sheet's confirmation, the sheet, the key, the menu, the open panel, the
+ * view pad, what is in hand, and then nothing. Never the workshop itself.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useWorkshop } from '../store/useWorkshop'
-import { benchEscape, holding, letGo, sheetEscape, typingIn } from './escape'
+import { holding, letGo, sheetEscape, typingIn, workshopEscape } from './escape'
 import BENCH from './Bench.tsx?raw'
 import ESCAPE from './escape.ts?raw'
 import PALETTE from './PaletteModal.tsx?raw'
@@ -20,22 +20,36 @@ describe('Escape in the workshop', () => {
     useWorkshop.setState({ shards: [], currentId: null, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], aim: null, notice: null, tool: 'select' })
   })
 
-  it('closes one thing per press, topmost first: the panel, then the view pad, then what is in hand', () => {
+  const none = { sheet: false, login: false, menu: false, making: true, typing: false, panel: false, viewOpen: false, holding: false }
+
+  it('closes one thing per press, topmost first: the key, the menu, the panel, the view pad, what is in hand', () => {
     // Everything up at once, then each press with the one above it gone.
-    let s = { covered: false, panel: true, viewOpen: true, holding: true }
+    // (The menu's CHANGE closes the menu as it opens the key, so the two are
+    // never up together in the app; the order still says which goes first.)
+    let s = { ...none, login: true, menu: true, panel: true, viewOpen: true, holding: true }
     const order: string[] = []
-    for (let step = benchEscape(s); step !== null; step = benchEscape(s)) {
+    for (let step = workshopEscape(s); step !== null; step = workshopEscape(s)) {
       order.push(step)
+      if (step === 'login') s = { ...s, login: false }
+      if (step === 'menu') s = { ...s, menu: false }
       if (step === 'panel') s = { ...s, panel: false }
       if (step === 'view') s = { ...s, viewOpen: false }
       if (step === 'selection') s = { ...s, holding: false }
     }
-    expect(order).toEqual(['panel', 'view', 'selection'])
-    expect(benchEscape({ covered: false, panel: false, viewOpen: false, holding: false })).toBeNull()
+    expect(order).toEqual(['login', 'menu', 'panel', 'view', 'selection'])
+    expect(workshopEscape(none)).toBeNull()
   })
 
-  it('leaves the bench alone while the palette sheet, the menu or the key is over it', () => {
-    expect(benchEscape({ covered: true, panel: true, viewOpen: true, holding: true })).toBeNull()
+  it('leaves everything to the palette sheet while it is up', () => {
+    expect(workshopEscape({ ...none, sheet: true, login: true, menu: true, panel: true, viewOpen: true, holding: true })).toBeNull()
+  })
+
+  it('closes the menu and the key from the feed too, and from their own fields, but leaves the bench alone off it', () => {
+    expect(workshopEscape({ ...none, making: false, menu: true })).toBe('menu')
+    expect(workshopEscape({ ...none, making: false, login: true })).toBe('login')
+    expect(workshopEscape({ ...none, typing: true, menu: true })).toBe('menu')
+    expect(workshopEscape({ ...none, typing: true, login: true })).toBe('login')
+    expect(workshopEscape({ ...none, making: false, panel: true, holding: true })).toBeNull()
   })
 
   it('in the palette sheet, closes a confirmation before the sheet, then folds the sheet', () => {
@@ -43,16 +57,17 @@ describe('Escape in the workshop', () => {
     expect(sheetEscape(false)).toBe('fold')
     // The sheet listens for the key itself, and the workshop counts it as cover.
     expect(PALETTE).toMatch(/sheetEscape\(switching !== null \|\| forgetting !== null\)/)
-    expect(WORKSHOP).toMatch(/covered: pickerOpen \|\| menuOpen \|\| loginOpen/)
+    expect(WORKSHOP).toMatch(/sheet: pickerOpen, login: loginOpen, menu: menuOpen/)
   })
 
-  it('leaves a key typed into a field alone', () => {
+  it('on the bench, leaves a key typed into a field alone', () => {
+    expect(workshopEscape({ ...none, typing: true, panel: true, holding: true })).toBeNull()
     expect(typingIn({ tagName: 'INPUT' } as unknown as EventTarget)).toBe(true)
     expect(typingIn({ tagName: 'TEXTAREA' } as unknown as EventTarget)).toBe(true)
     expect(typingIn({ tagName: 'DIV', isContentEditable: true } as unknown as EventTarget)).toBe(true)
     expect(typingIn({ tagName: 'CANVAS', isContentEditable: false } as unknown as EventTarget)).toBe(false)
     expect(typingIn(null)).toBe(false)
-    expect(WORKSHOP).toMatch(/e\.code !== 'Escape' \|\| typingIn\(e\.target\)/)
+    expect(WORKSHOP).toMatch(/escape\.current\(typingIn\(e\.target\)\)/)
   })
 
   it('lets go of points and a face, and the workshop stays open', () => {
