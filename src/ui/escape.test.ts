@@ -43,8 +43,8 @@ describe('Escape in the workshop', () => {
   it("RETRACT's confirmation closes first, as its CANCEL would, and stays while its deletion is going out", () => {
     expect(workshopEscape({ ...none, confirm: true, menu: true, panel: true, holding: true })).toBe('confirm')
     expect(workshopEscape({ ...none, confirm: true, confirmBusy: true, panel: true, holding: true })).toBeNull()
-    expect(WORKSHOP).toMatch(/confirm: retractAsk, confirmBusy: retracting/)
-    expect(WORKSHOP).toMatch(/if \(step === 'confirm'\) setRetractAsk\(false\)/)
+    expect(WORKSHOP).toMatch(/confirm: asking, confirmBusy: retracting/)
+    expect(WORKSHOP).toMatch(/if \(step === 'confirm'\) setRetractAsk\(null\)/)
   })
 
   it('leaves the key alone while it is WORKING, and everything under it', () => {
@@ -69,7 +69,7 @@ describe('Escape in the workshop', () => {
     expect(sheetEscape(false)).toBe('fold')
     // The sheet listens for the key itself, and the workshop counts it as cover.
     expect(PALETTE).toMatch(/sheetEscape\(switching !== null \|\| forgetting !== null\)/)
-    expect(WORKSHOP).toMatch(/sheet: pickerOpen, confirm: retractAsk/)
+    expect(WORKSHOP).toMatch(/sheet: pickerOpen, confirm: asking/)
     expect(WORKSHOP).toMatch(/login: loginOpen, loginBusy: [^,]+, menu: menuOpen/)
   })
 

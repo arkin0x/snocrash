@@ -550,9 +550,11 @@ export function Workshop(): JSX.Element | null {
   const publishing = useNostr((s) => s.publishing)
   const sending = useNostr((s) => s.sending)
   // RETRACT asks first, so the asking is state here; the yes goes to the
-  // store (ONOSENDAI's Workshop, the same split).
+  // store (ONOSENDAI's Workshop, the same split). The asking names the object
+  // it was asked about: a question left standing must never become one about
+  // whatever object is open next (review of parity #36).
   const retracting = useNostr((s) => s.retracting)
-  const [retractAsk, setRetractAsk] = useState(false)
+  const [retractAsk, setRetractAsk] = useState<string | null>(null)
   const nostrNotice = useNostr((s) => s.notice)
   // Where you are is the address bar's business (lib/route), so a link can
   // land on the feed or on one object, and the phone's back gesture works.
@@ -596,6 +598,10 @@ export function Workshop(): JSX.Element | null {
   const [askingColor, setAskingColor] = useState(false)
   useEffect(() => { if (selectedFace === null) setAskingColor(false) }, [selectedFace])
   const [viewOpen, setViewOpen] = useState(false)
+  // The question goes with the object, the view and the panel it was asked in.
+  useEffect(() => { setRetractAsk(null) }, [shard?.id, view, panel])
+  /** Whether RETRACT's question is up, and about the object open now. */
+  const asking = retractAsk !== null && retractAsk === shard?.id
   // On a phone the palette sheet and the TOOLS panel would share the bottom,
   // so opening the sheet puts the panel away.
   const [narrow, setNarrow] = useState<boolean>(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches)
@@ -636,12 +642,12 @@ export function Workshop(): JSX.Element | null {
   const escape = useRef<(typing: boolean) => void>(() => {})
   escape.current = (typing) => {
     const step = workshopEscape({
-      sheet: pickerOpen, confirm: retractAsk, confirmBusy: retracting,
+      sheet: pickerOpen, confirm: asking, confirmBusy: retracting,
       login: loginOpen, loginBusy: useNostr.getState().loggingIn, menu: menuOpen,
       making: view === 'make', typing,
       panel: panel !== null, viewOpen, holding: holding(),
     })
-    if (step === 'confirm') setRetractAsk(false)
+    if (step === 'confirm') setRetractAsk(null)
     else if (step === 'login') setLoginOpen(false)
     else if (step === 'menu') setMenuOpen(false)
     else if (step === 'panel') setPanel(null)
@@ -852,8 +858,8 @@ export function Workshop(): JSX.Element | null {
               {(pubState === 'published' || pubState === 'edited') && (
                 <button
                   className="workshop__btn workshop__btn--danger"
-                  disabled={publishing || retracting}
-                  onClick={() => setRetractAsk(true)}
+                  disabled={publishing || retracting || !signedIn}
+                  onClick={() => setRetractAsk(shard.id)}
                   title="Ask your relays to drop the published object (NIP-09). Copies others made stay theirs. The object stays here."
                 >{retracting ? 'RETRACTING' : 'RETRACT'}</button>
               )}
@@ -861,14 +867,20 @@ export function Workshop(): JSX.Element | null {
             </div>
             <span className="workshop__work">{wireBytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES{shard.parts?.length ? ` + ${shard.parts.length} PLACED` : ''}</span>
           </div>
-          {retractAsk && (
+          {asking && (
             <ConfirmModal
               title={`Retract "${shard.name}"?`}
               body={<>A deletion goes to your relays, naming the object&apos;s address (NIP-09). Relays that honor it drop the object and the feed stops listing it; a relay that does not may keep handing it out. Copies others made, and objects that place this one, stay theirs. The object stays in your workshop, and PUBLISH puts it back.</>}
               confirmLabel="RETRACT"
               busy={retracting}
-              onConfirm={() => { void useNostr.getState().retract(shard).then(() => setRetractAsk(false)) }}
-              onCancel={() => setRetractAsk(false)}
+              // While it is being signed, CANCEL calls it off as the chip does; once it is going out, nothing can.
+              onBusyCancel={sending ? undefined : () => useNostr.getState().cancelPublish()}
+              onConfirm={() => {
+                // Only the object it was asked about, and only while it is the one open.
+                if (retractAsk !== shard.id) return
+                void useNostr.getState().retract(shard).then(() => setRetractAsk(null))
+              }}
+              onCancel={() => setRetractAsk(null)}
             />
           )}
           <div className="ws__panel-title">OBJECTS ({shards.length})</div>

@@ -112,6 +112,38 @@ export function noteSeen(ledger: Ledger, id: string, pubkey: string, at: number,
   return { ...ledger, [id]: { at, fp: '', pubkey, ...(eventId ? { id: eventId } : {}) } }
 }
 
+const RETRACTED = 'snocrash:retracted'
+/** How long a retraction's second is kept: well past any clock skew between a deletion and the next publish. */
+const RETRACTED_KEEP_S = 24 * 60 * 60
+
+/**
+ * When an object was last retracted, in seconds, or 0. The ledger forgets a
+ * retracted object, but a publish must still go out newer than its deletion,
+ * even after a reload (store/useNostr nextAt; review of parity #36).
+ */
+export function retractedAt(id: string): number {
+  return loadRetracted()[id] ?? 0
+}
+
+/** Remember a retraction's second, and let go of the ones old enough not to matter. */
+export function noteRetracted(id: string, at: number): void {
+  const now = Math.floor(Date.now() / 1000)
+  const kept: Record<string, number> = {}
+  for (const [k, v] of Object.entries(loadRetracted())) if (v > now - RETRACTED_KEEP_S) kept[k] = v
+  kept[id] = Math.max(at, kept[id] ?? 0)
+  try { localStorage.setItem(RETRACTED, JSON.stringify(kept)) } catch { /* quota or private mode */ }
+}
+
+function loadRetracted(): Record<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RETRACTED) ?? '{}') as unknown
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'number') out[k] = v
+    return out
+  } catch { return {} }
+}
+
 /**
  * Forget an object, after a retraction the relays took: it reads as never
  * published again, and PUBLISH puts it back. A relay that ignores deletions

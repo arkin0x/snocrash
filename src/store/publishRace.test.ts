@@ -42,7 +42,7 @@ import { useRelays } from './useRelays'
 
 const n = () => useNostr.getState()
 const shard = { ...newShard('probe'), vertices: [{ p: [0, 0, 0] as [number, number, number], c: [1, 1, 1] as [number, number, number] }] }
-const KEY_CHANGED = 'Not published: the key changed while it was being signed. Publish again to sign it with the current key.'
+const KEY_CHANGED = 'Not published: the key changed while it was going out. Publish again to sign it with the current key.'
 
 describe('between the signature and the send', () => {
   beforeEach(() => {

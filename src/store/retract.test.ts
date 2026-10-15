@@ -31,6 +31,12 @@ const relays = vi.hoisted(() => ({
   takes: true,
 }))
 
+const refs = vi.hoisted(() => ({ forgotten: [] as unknown[] }))
+vi.mock('../lib/parts', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../lib/parts')>()
+  return { ...real, forgetRef: (ref: Parameters<typeof real.forgetRef>[0]) => { refs.forgotten.push(ref); real.forgetRef(ref) } }
+})
+
 vi.mock('../lib/pool', async (importOriginal) => {
   const real = await importOriginal<typeof import('../lib/pool')>()
   return {
@@ -111,6 +117,43 @@ describe('RETRACT', () => {
     expect(again.created_at).toBeGreaterThan(del.created_at)
   })
 
+  it('forgets the placement cache for the address, so objects placing it stop drawing it', async () => {
+    await published()
+    refs.forgotten = []
+    await n().retract(shard)
+    expect(refs.forgotten).toContainEqual(['a', `33331:${n().pubkey}:lamp-d`])
+  })
+
+  it('refuses an object this browser has no record of publishing, and sends nothing (review of #36)', async () => {
+    expect(await n().retract(shard)).toBe(false)
+    expect(relays.sent).toHaveLength(0)
+    expect(n().notice).toBe('"lamp" has not been published from here, so there is nothing to retract.')
+  })
+
+  it('a publish after a reload still lands newer than the deletion, inside the same second (review of #36)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2027-01-01T00:00:00Z'))
+      await published()
+      await n().retract(shard)
+      const del = relays.sent[relays.sent.length - 1]
+      // A reload: a fresh store and a fresh session clock; the ledger has forgotten the lamp.
+      vi.resetModules()
+      const fresh = (await import('./useNostr')).useNostr
+      fresh.setState({ loadFeed: async () => {} })
+      // The floor is the object's, whoever signs next.
+      fresh.getState().useNewKey()
+      const { pool: freshPool } = await import('../lib/pool')
+      const sentAfter: Array<{ created_at: number }> = []
+      vi.spyOn(freshPool, 'publish').mockImplementation((_u, ev) => { sentAfter.push(ev as { created_at: number }); return [Promise.resolve('ok')] })
+      await fresh.getState().publish(shard)
+      expect(sentAfter.length).toBe(1)
+      expect(sentAfter[0].created_at).toBeGreaterThan(del.created_at)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('refuses an object published under another key, and sends nothing', async () => {
     useNostr.setState({ published: { [shard.id]: { at: 1, fp: '', pubkey: 'b'.repeat(64) } } })
     expect(await n().retract(shard)).toBe(false)
@@ -142,7 +185,7 @@ describe('RETRACT', () => {
       relays.signedIn!()
       expect(await retracting).toBe(false)
       expect(relays.sent).toHaveLength(before)
-      expect(n().notice).toBe('Not retracted: the key changed while the deletion was being signed. Only the key that published "lamp" can retract it.')
+      expect(n().notice).toBe('Not retracted: the key changed while it was going out. Only the key that published "lamp" can retract it.')
     })
 
     it('a sign-out sends nothing, and says only that', async () => {
@@ -165,11 +208,23 @@ describe('RETRACT', () => {
       expect(n().published[shard.id]).toBeDefined()
     })
 
-    it('a publish waits its turn: refused while the retraction is out', async () => {
+    it('a publish, or a palette publish, waits its turn: refused while the retraction is out', async () => {
       const { retracting } = await retractingInSignIn()
       expect(await n().publish(shard)).toBe(false)
+      expect(await n().publishPalette('two', [[255, 0, 0], [0, 255, 0]])).toBeNull()
       relays.signedIn!()
       expect(await retracting).toBe(true)
+    })
+
+    it('a retraction waits for a publish in flight, and says so', async () => {
+      await published()
+      relays.hold = true
+      const publishing = n().publish(shard)
+      await vi.waitFor(() => expect(relays.signedIn).not.toBeNull())
+      expect(await n().retract(shard)).toBe(false)
+      expect(n().notice).toBe('Something is being published. Retract once it is done.')
+      relays.signedIn!()
+      expect(await publishing).toBe(true)
     })
   })
 })
