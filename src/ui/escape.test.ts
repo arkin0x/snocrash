@@ -20,7 +20,7 @@ describe('Escape in the workshop', () => {
     useWorkshop.setState({ shards: [], currentId: null, selection: [], partSel: [], selectedFace: null, facePick: [], past: [], future: [], aim: null, notice: null, tool: 'select' })
   })
 
-  const none = { sheet: false, login: false, loginBusy: false, menu: false, making: true, typing: false, panel: false, viewOpen: false, holding: false }
+  const none = { sheet: false, confirm: false, confirmBusy: false, login: false, loginBusy: false, menu: false, making: true, typing: false, panel: false, viewOpen: false, holding: false }
 
   it('closes one thing per press, topmost first: the key, the menu, the panel, the view pad, what is in hand', () => {
     // Everything up at once, then each press with the one above it gone.
@@ -38,6 +38,13 @@ describe('Escape in the workshop', () => {
     }
     expect(order).toEqual(['login', 'menu', 'panel', 'view', 'selection'])
     expect(workshopEscape(none)).toBeNull()
+  })
+
+  it("RETRACT's confirmation closes first, as its CANCEL would, and stays while its deletion is going out", () => {
+    expect(workshopEscape({ ...none, confirm: true, menu: true, panel: true, holding: true })).toBe('confirm')
+    expect(workshopEscape({ ...none, confirm: true, confirmBusy: true, panel: true, holding: true })).toBeNull()
+    expect(WORKSHOP).toMatch(/confirm: retractAsk, confirmBusy: retracting/)
+    expect(WORKSHOP).toMatch(/if \(step === 'confirm'\) setRetractAsk\(false\)/)
   })
 
   it('leaves the key alone while it is WORKING, and everything under it', () => {
@@ -62,7 +69,8 @@ describe('Escape in the workshop', () => {
     expect(sheetEscape(false)).toBe('fold')
     // The sheet listens for the key itself, and the workshop counts it as cover.
     expect(PALETTE).toMatch(/sheetEscape\(switching !== null \|\| forgetting !== null\)/)
-    expect(WORKSHOP).toMatch(/sheet: pickerOpen, login: loginOpen, loginBusy: [^,]+, menu: menuOpen/)
+    expect(WORKSHOP).toMatch(/sheet: pickerOpen, confirm: retractAsk/)
+    expect(WORKSHOP).toMatch(/login: loginOpen, loginBusy: [^,]+, menu: menuOpen/)
   })
 
   it('on the bench, leaves a key typed into a field alone', () => {

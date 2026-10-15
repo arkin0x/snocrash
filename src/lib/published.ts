@@ -42,6 +42,14 @@ export interface PublishRecord {
   fp: string
   /** Who signed it. Half of the object's address, so a change of key matters. */
   pubkey: string
+  /**
+   * The event id of the version that went out, or was seen, when known: what
+   * a retraction names in its `e` tag beside the address. Optional, because
+   * a record written before this field existed has none, and a retraction by
+   * address alone is still a retraction (NIP-09). ONOSENDAI's record, field
+   * for field.
+   */
+  id?: string
 }
 
 export type Ledger = Record<string, PublishRecord>
@@ -74,7 +82,7 @@ export function loadLedger(): Ledger {
     for (const [id, rec] of Object.entries(raw as Record<string, unknown>)) {
       const r = rec as Partial<PublishRecord>
       if (typeof r?.at !== 'number' || typeof r?.pubkey !== 'string') continue
-      out[id] = { at: r.at, fp: typeof r.fp === 'string' ? r.fp : '', pubkey: r.pubkey }
+      out[id] = { at: r.at, fp: typeof r.fp === 'string' ? r.fp : '', pubkey: r.pubkey, ...(typeof r.id === 'string' ? { id: r.id } : {}) }
     }
     return out
   } catch { return {} }
@@ -88,8 +96,8 @@ export function saveLedger(ledger: Ledger): void {
  * Note a publish. Later word wins: republishing is exactly how an addressable
  * object is corrected, so the newest send is the one worth remembering.
  */
-export function noteSent(ledger: Ledger, id: string, fp: string, pubkey: string, at: number): Ledger {
-  return { ...ledger, [id]: { at, fp, pubkey } }
+export function noteSent(ledger: Ledger, id: string, fp: string, pubkey: string, at: number, eventId?: string): Ledger {
+  return { ...ledger, [id]: { at, fp, pubkey, ...(eventId ? { id: eventId } : {}) } }
 }
 
 /**
@@ -98,10 +106,22 @@ export function noteSent(ledger: Ledger, id: string, fp: string, pubkey: string,
  * it carries a fingerprint and this does not, and losing that would turn a
  * known "edited" into an unknowable "published".
  */
-export function noteSeen(ledger: Ledger, id: string, pubkey: string, at: number): Ledger {
+export function noteSeen(ledger: Ledger, id: string, pubkey: string, at: number, eventId?: string): Ledger {
   const prev = ledger[id]
   if (prev && (prev.fp !== '' || prev.at >= at)) return ledger
-  return { ...ledger, [id]: { at, fp: '', pubkey } }
+  return { ...ledger, [id]: { at, fp: '', pubkey, ...(eventId ? { id: eventId } : {}) } }
+}
+
+/**
+ * Forget an object, after a retraction the relays took: it reads as never
+ * published again, and PUBLISH puts it back. A relay that ignores deletions
+ * may still hand it back, and a sighting then records it again, which is the
+ * truth about that relay.
+ */
+export function forget(ledger: Ledger, id: string): Ledger {
+  if (!(id in ledger)) return ledger
+  const { [id]: _gone, ...rest } = ledger
+  return rest
 }
 
 /** Where an object stands, given the ledger, its current payload and who signs. */
