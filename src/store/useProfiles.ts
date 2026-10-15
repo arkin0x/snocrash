@@ -96,7 +96,7 @@ export const useProfiles = create<ProfilesState>((set, get) => {
     for (let i = 0; i < want.length; i += CHUNK) {
       const authors = want.slice(i, i + CHUNK)
       let events: Event[] = []
-      try { events = await queryAny(relaySet(), { kinds: [0], authors }, PROFILE_WAIT_MS) } catch { /* relays down */ }
+      try { events = (await queryAny(relaySet(), { kinds: [0], authors }, PROFILE_WAIT_MS)).map((f) => f.event) } catch { /* relays down */ }
 
       const newest = new Map<string, Profile>()
       for (const ev of events) {

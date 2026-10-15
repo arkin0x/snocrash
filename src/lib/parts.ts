@@ -36,7 +36,7 @@ export function fetchRef(ref: Ref): Promise<unknown> {
       if (!a) return null
       filter = { kinds: [a.kind], authors: [a.pubkey], '#d': [a.d] }
     } else filter = { ids: [ref[1]] }
-    const found = await queryAny(relays, filter)
+    const found = (await queryAny(relays, filter)).map((f) => f.event)
     // Several relays may each hold a different edit; the newest is the object.
     const ev = found.sort((x, y) => y.created_at - x.created_at)[0]
     if (!ev || ev.kind !== SNO_KIND) return null

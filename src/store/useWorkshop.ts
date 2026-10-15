@@ -289,7 +289,7 @@ export interface WorkshopState {
    * as its id, so publishing the edit replaces the original in place rather
    * than putting a second object beside it.
    */
-  viewing: { shard: ShardModel; d: string; own: boolean } | null
+  viewing: { shard: ShardModel; d: string; own: boolean; credit?: Credit } | null
   /**
    * The naddr the object on the bench was opened from, or null. Kept through
    * the copy made on the first edit, because it is still that object; cleared
@@ -390,7 +390,8 @@ export interface WorkshopState {
   create: (name?: string) => string
   select: (id: string | null, address?: string | null) => void
   /** Put an object from the feed on the bench without making it yours. See `viewing`. */
-  view: (shard: ShardModel, source: { d: string; own: boolean; address: string }) => void
+  /** `credit` goes on the copy the first edit makes: for someone else's object, theirs, as REMIX gives it (the coordinate and a relay); for your own, the credit it was published with, if any. */
+  view: (shard: ShardModel, source: { d: string; own: boolean; address: string; credit?: Credit }) => void
   /** Make the object on the bench yours, if it is not already, and return it. */
   adopt: () => ShardModel | null
   rename: (id: string, name: string) => void
@@ -398,8 +399,12 @@ export interface WorkshopState {
   remove: (id: string) => void
   setMode: (mode: ShardMode) => void
   setUnit: (unit: number) => void
+  /** One step of unit up or down, on the shard an edit lands on (the − and + buttons). */
+  stepUnit: (by: 1 | -1) => void
   /** The build grid's half-width for the current shard, never below what its vertices need. */
   setExtent: (extent: number) => void
+  /** One step of grid up or down, on the shard an edit lands on (the − and + buttons). */
+  stepExtent: (by: 1 | -1) => void
   setTool: (tool: Tool) => void
   setLevel: (level: number) => void
   setPlane: (plane: WorkPlane) => void
@@ -541,6 +546,13 @@ export interface WorkshopState {
    */
   importShard: (model: ShardModel, credit?: Credit, id?: string) => string
   current: () => ShardModel | null
+  /**
+   * The shard an edit would land on, without adopting anything: the stored
+   * one, or for an object opened from the feed, what adopting it gives (your
+   * own copy still in this browser, else the feed's). What a computation for
+   * an edit reads its sizes and palette from, where current() is for looking.
+   */
+  target: () => ShardModel | null
 }
 
 /** Whose object a model was made from (REMIX): sno-core's, shared with snocrash. */
@@ -558,20 +570,46 @@ function load(): ShardModel[] {
 }
 
 /**
+ * Whether two shards are the same object: every field of the model, exactly,
+ * whatever their ids, names or edit times. An action whose result is the
+ * shard it started from changed nothing (review of parity #33).
+ *
+ * The model, not the wire: the wire snaps each color to its nearest palette
+ * entry, so a color off the palette (a SUBDIVIDE midpoint, a corner average,
+ * a v1 literal) painted with that entry read as unchanged and the paint was
+ * dropped; the snap also searched the palette per color, hundreds of
+ * milliseconds an edit on a big object (review of parity #35). Colors,
+ * paletteName and credit count as they are. A field set to undefined is the
+ * same as one left out.
+ */
+export function sameContent(a: ShardModel, b: ShardModel): boolean {
+  return sameValue(a, b, SHARD_IDENTITY)
+}
+
+/** Fields that say which object and when, not what it is. */
+const SHARD_IDENTITY = new Set(['id', 'name', 'updatedAt'])
+
+function sameValue(a: unknown, b: unknown, skip?: Set<string>): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (!sameValue(a[i], b[i])) return false
+    return true
+  }
+  const x = a as Record<string, unknown>, y = b as Record<string, unknown>
+  for (const k in x) if (!skip?.has(k) && !sameValue(x[k], y[k])) return false
+  for (const k in y) if (!skip?.has(k) && !(k in x) && y[k] !== undefined) return false
+  return true
+}
+
+/**
  * The object edited most recently: the one at the top of the workshop's list.
  *
  * The stored list is in the order objects were made, so its first entry is the
  * oldest, and opening that on every fresh load kept bringing back the same old
  * object (arkinox, 2026-09-27).
  */
-/**
- * Whether two shards are the same object in content: what the wire carries,
- * whatever their ids, names or edit times. An action whose result is the
- * shard it started from changed nothing (review of parity #33).
- */
-export function sameContent(a: ShardModel, b: ShardModel): boolean {
-  return JSON.stringify(toPayload({ ...a, name: b.name })) === JSON.stringify(toPayload(b))
-}
 
 export function newestId(shards: ShardModel[]): string | null {
   let best: ShardModel | null = null
@@ -763,6 +801,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     if (i < 0) return false
     const next = fn(shards[i])
     if (!next) return false
+    // A no-op on the stored shard is not a step: no undo entry, no save. The
+    // feed's copy can differ from your stored one (an unpublished local
+    // edit), so the check above does not settle it (review of parity #33).
+    if (sameContent(next, shards[i])) return false
     // Backstop (review of parity #33, 2026-10-15): an edit may change a shard
     // but never turn it into another one. A result built from the feed's copy
     // of an object rather than the stored one carries the feed's id, and
@@ -807,8 +849,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     if (!get().viewing) return { s: peek, r: first }
     const s = get().adopt()
     if (!s) return null
+    // Worked out again on the stored shard, and asked again whether it
+    // changes anything: that shard can differ from the copy on view.
     const r = plan(s)
-    return r === null ? null : { s, r }
+    return r === null || (changed && !changed(s, r)) ? null : { s, r }
   }
 
   /**
@@ -824,6 +868,18 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return v.own && pk ? ownAddress(pk, v.d) : undefined
     }
     return selfAddress(s)
+  }
+
+  /**
+   * The grid's half-width set from the stored shard inside the edit (`to`
+   * reads it), never below what its vertices need, so a no-op adopts
+   * nothing; the level is pulled back inside the new edge.
+   */
+  const extentTo = (to: (cur: ShardModel) => number): void => {
+    const fit = (cur: ShardModel): number => Math.max(Math.max(MIN_EXTENT, neededExtent(cur)), Math.min(MAX_EXTENT, Math.round(to(cur))))
+    if (!edit((cur) => { const e = fit(cur); return e === cur.extent ? null : { ...cur, extent: e } })) return
+    const e = get().current()?.extent ?? GRID_HALF
+    set({ level: Math.max(-e * TICKS_PER_UNIT, Math.min(e * TICKS_PER_UNIT, get().level)) })
   }
 
   /** Faces show only in SOLID: a shard's first faces switch it there. */
@@ -982,8 +1038,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     select: (id, address = null) => set({ currentId: id, viewing: null, address, aimKey: id, selection: [], partSel: [], selectedFace: null, facePick: [], turnPivot: null, past: [], future: [], notice: null }),
 
-    view: (shard, { d, own, address }) => set({
-      viewing: { shard, d, own }, address, aimKey: shard.id,
+    view: (shard, { d, own, address, credit }) => set({
+      viewing: { shard, d, own, credit }, address, aimKey: shard.id,
       selection: [], partSel: [], selectedFace: null, facePick: [], turnPivot: null, past: [], future: [], notice: null,
     }),
 
@@ -1000,12 +1056,17 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const id = v.own ? v.d : uuid()
       const taken = new Set(get().shards.map((s) => s.name))
       const name = v.own || !taken.has(v.shard.name) ? v.shard.name : `${v.shard.name} copy`
-      const copy: ShardModel = {
+      const base: ShardModel = {
         ...v.shard, id, name,
         vertices: v.shard.vertices.map(cloneVertex),
         faces: v.shard.faces.map((f) => [...f] as [number, number, number]),
         updatedAt: Date.now(),
       }
+      // Someone else's object becomes yours on the first edit, and says whose
+      // it was, as REMIX does (importShard with credit): publishing the edit
+      // credits its author (review of parity #33). Your own keeps the credit
+      // it was published with, when it is a remix itself (review of #35).
+      const copy: ShardModel = v.credit ? withCredit(base, v.credit) : base
       const list = [...get().shards, copy]
       // aimKey and address stay as they are: see their comments.
       set({ shards: list, currentId: id, viewing: null })
@@ -1014,10 +1075,17 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     rename: (id, name) => {
-      // Renaming an opened object is changing it, so it is copied first.
+      // Renaming an opened object is changing it, so it is copied first; a
+      // name it already has changes nothing and copies nothing (review of
+      // parity #33).
+      name = name.slice(0, 64)
       const v = get().viewing
-      if (v && v.shard.id === id) id = get().adopt()?.id ?? id
-      const list = get().shards.map((s) => (s.id === id ? { ...s, name: name.slice(0, 64), updatedAt: Date.now() } : s))
+      if (v && v.shard.id === id) {
+        if (get().target()?.name === name) return
+        id = get().adopt()?.id ?? id
+      }
+      if (get().shards.find((s) => s.id === id)?.name === name) return
+      const list = get().shards.map((s) => (s.id === id ? { ...s, name, updatedAt: Date.now() } : s))
       set({ shards: list }); save(list)
     },
 
@@ -1039,6 +1107,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     setMode: (mode) => edit((s) => ({ ...s, mode })),
     setUnit: (unit) => edit((s) => ({ ...s, unit: clampUnit(unit) })),
+    // From the shard the edit lands on, not the copy on view: your stored
+    // object can be a step away from what the relay returned (review of
+    // parity #33).
+    stepUnit: (by) => edit((s) => { const unit = clampUnit(s.unit + by); return unit === s.unit ? null : { ...s, unit } }),
     // FACE works on corners it picks itself, and its panel only appears with
     // nothing else selected, so a point still held from SELECT hid FILL behind
     // it and the tool looked broken. Taking the tool clears the selection.
@@ -1046,13 +1118,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     // the key that shows it is only drawn there.
     setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, invert: false, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
     setInvert: (on) => set({ invert: on }),
-    setExtent: (extent) => {
-      // Worked out on the stored shard inside the edit, so a no-op adopts nothing.
-      const fit = (s: ShardModel): number => Math.max(Math.max(MIN_EXTENT, neededExtent(s)), Math.min(MAX_EXTENT, Math.round(extent)))
-      if (!edit((cur) => { const e = fit(cur); return e === cur.extent ? null : { ...cur, extent: e } })) return
-      const e = get().current()?.extent ?? GRID_HALF
-      set({ level: Math.max(-e * TICKS_PER_UNIT, Math.min(e * TICKS_PER_UNIT, get().level)) })
-    },
+    setExtent: (extent) => extentTo(() => extent),
+    stepExtent: (by) => extentTo((cur) => cur.extent + by),
     setPlane: (plane) => set({ plane, aim: null }),
     setLevel: (level) => {
       const e = (get().current()?.extent ?? GRID_HALF) * TICKS_PER_UNIT
@@ -1397,7 +1464,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         // A placed object turns about the same pivot as the points, from where it
         // stands: its origin counts toward the pivot like a point does.
         const pts = [...chosen.map((i) => ticksOf(s.vertices[i])), ...placed.map((i) => [...s.parts![i].at] as P3)]
-        const key = `${step}:${plane}:${[...chosen].sort((a, b) => a - b).join(',')}:${placed.join(',')}`
+        // The shard's own id is in the key: the same indices in another object
+        // are other points, and must not inherit this one's pivot (review of
+        // parity #33).
+        const key = `${s.id}:${step}:${plane}:${[...chosen].sort((a, b) => a - b).join(',')}:${placed.join(',')}`
         const at = turnPivot?.key === key ? turnPivot.at : turnPivotFor(pts, step, axes)
         const [ca, cb] = at
         refused = false
@@ -1706,6 +1776,12 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     current: () => get().viewing?.shard ?? get().shards.find((s) => s.id === get().currentId) ?? null,
+
+    target: () => {
+      const v = get().viewing
+      if (!v) return get().current()
+      return (v.own ? get().shards.find((s) => s.id === v.d) : undefined) ?? v.shard
+    },
   }
 })
 

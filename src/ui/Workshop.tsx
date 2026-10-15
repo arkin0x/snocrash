@@ -23,11 +23,12 @@ import { Compass3D } from './Compass3D'
 import { ArrowLeft, Box, ChevronDown, ChevronUp, ClipboardCopy, ClipboardPaste, Copy, CopyPlus, Eraser, Eye, FlipVertical2, Globe, Grid2x2Plus, Grid3x3, Link, Merge, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { PaletteModal } from './PaletteModal'
-import { benchEscape, holding, letGo, typingIn } from './escape'
+import { holding, letGo, typingIn, workshopEscape } from './escape'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
 import { stepDivision } from './divisions'
 import { IMPORT_ACCEPT, IMPORT_FORMATS_LABEL } from 'sno-core/importFile'
+import { readCredit } from 'sno-core/feed'
 import { importFitFor } from 'sno-core/meshToShard'
 import { BUILT_IN } from 'sno-core/snoPalette'
 import { importFiles } from '../lib/meshImport'
@@ -114,7 +115,7 @@ function Toast(): JSX.Element | null {
 function LevelStack(): JSX.Element {
   const level = useWorkshop((s) => s.level)
   const plane = useWorkshop((s) => s.plane)
-  const extentTicks = useWorkshop((s) => (s.current()?.extent ?? 0) * TICKS_PER_UNIT)
+  const extentTicks = useWorkshop((s) => (s.target()?.extent ?? 0) * TICKS_PER_UNIT)
   const bind = useRepeatable()
   const w = useWorkshop.getState
   return (
@@ -507,7 +508,13 @@ function useOpenAddress(address: string | null): void {
       if (own && w.shards.some((x) => x.id === where.d)) { w.select(where.d, address); return }
       const o = await n.fetchObject(address)
       if (cancelled || !o) return
-      w.view(o.shard, { d: o.d, own: o.pubkey === useNostr.getState().pubkey, address })
+      // The credit the copy an edit makes will carry: someone else's object
+      // credits them, as REMIX does; your own keeps the credit it was
+      // published with, which the model read back from the event does not
+      // carry (review of parity #35).
+      const mine = o.pubkey === useNostr.getState().pubkey
+      const credit = mine ? readCredit(o.event.tags) ?? undefined : { address: o.address, relay: o.seen?.[0] }
+      w.view(o.shard, { d: o.d, own: mine, address, credit })
     })()
     return () => { cancelled = true }
   }, [address])
@@ -523,6 +530,10 @@ function useOpenAddress(address: string | null): void {
 export function Workshop(): JSX.Element | null {
   const open = useWorkshop((s) => s.open)
   const shard = useWorkshop((s) => s.current())
+  // What the unit and grid steppers change: your stored object while its
+  // relay copy is on view, so they show and stop at its sizes (review of
+  // parity #35).
+  const held = useWorkshop((s) => s.target())
   const shards = useWorkshop((s) => s.shards)
   const tool = useWorkshop((s) => s.tool)
   const selection = useWorkshop((s) => s.selection)
@@ -536,6 +547,7 @@ export function Workshop(): JSX.Element | null {
   const showAvatar = useWorkshop((s) => s.showAvatar)
   const signedIn = useNostr((s) => s.signedIn)
   const publishing = useNostr((s) => s.publishing)
+  const sending = useNostr((s) => s.sending)
   const nostrNotice = useNostr((s) => s.notice)
   // Where you are is the address bar's business (lib/route), so a link can
   // land on the feed or on one object, and the phone's back gesture works.
@@ -613,25 +625,28 @@ export function Workshop(): JSX.Element | null {
   const bind = useRepeatable()
   const stacked = useMemo(() => (shard ? stackedSpots(shard) : { spots: 0, points: 0 }), [shard])
   // Esc, in ONOSENDAI's order (escape.ts): the palette sheet folds itself
-  // (its own confirmations first) and the menu and the key take the press, so
-  // the bench is left alone under any of them; then the open panel, then the
-  // view pad, then what is in hand. Never the workshop itself.
-  const escape = useRef<() => void>(() => {})
-  escape.current = () => {
-    const step = benchEscape({ covered: pickerOpen || menuOpen || loginOpen, panel: panel !== null, viewOpen, holding: holding() })
-    if (step === 'panel') setPanel(null)
+  // (its own confirmations first), then the key, then the menu, then on the
+  // bench the open panel, the view pad and what is in hand. Never the
+  // workshop itself.
+  const escape = useRef<(typing: boolean) => void>(() => {})
+  escape.current = (typing) => {
+    const step = workshopEscape({
+      sheet: pickerOpen, login: loginOpen, loginBusy: useNostr.getState().loggingIn, menu: menuOpen,
+      making: view === 'make', typing,
+      panel: panel !== null, viewOpen, holding: holding(),
+    })
+    if (step === 'login') setLoginOpen(false)
+    else if (step === 'menu') setMenuOpen(false)
+    else if (step === 'panel') setPanel(null)
     else if (step === 'view') setViewOpen(false)
     else if (step === 'selection') letGo()
   }
   useEffect(() => {
-    if (!open || view !== 'make') return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'Escape' || typingIn(e.target)) return
-      escape.current()
-    }
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => { if (e.code === 'Escape') escape.current(typingIn(e.target)) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, view])
+  }, [open])
   // Every hook above this line, none below it: the early return that follows
   // changes which hooks run, and React counts them (ONOSENDAI, 2026-09-24).
 
@@ -642,8 +657,9 @@ export function Workshop(): JSX.Element | null {
 
   const selectedPoints = shard ? new Set(selection.map((i) => { const v = shard.vertices[i]; return v ? ticksOf(v).join(',') : '' })).size : 0
   const one = selection.length === 1 && shard ? shard.vertices[selection[0]] : null
-  const extent = shard?.extent ?? MIN_EXTENT
-  const minExtent = shard ? Math.max(MIN_EXTENT, neededExtent(shard)) : MIN_EXTENT
+  const extent = held?.extent ?? MIN_EXTENT
+  const minExtent = held ? Math.max(MIN_EXTENT, neededExtent(held)) : MIN_EXTENT
+  const unit = held?.unit ?? 0
   const hex = rgbToHex(color)
 
   /**
@@ -696,7 +712,9 @@ export function Workshop(): JSX.Element | null {
    */
   const importFromFiles = async (list: FileList | File[] | null): Promise<void> => {
     const files = list ? Array.from(list) : []
-    const s = w().current()
+    // Sized and colored for the shard it lands in (target), not the copy on
+    // view: your own object can differ from what the relay returned.
+    const s = w().target()
     if (!files.length || importing || !s) return
     if (view !== 'make') setView('make')
     setImporting(true)
@@ -759,9 +777,20 @@ export function Workshop(): JSX.Element | null {
             <Grid3x3 size={12} strokeWidth={2.25} aria-hidden />GRID
           </button>
         )}
+        {/* A tap calls the publish off: a bunker that never answers would
+            otherwise hold it, and every PUBLISH, for good. Once it is going out
+            to the relays it is too late, and the chip says so (review of
+            parity #35). */}
         {making && publishing && (
-          <button className="chip ws__chip ws__chip--work" aria-live="polite">
-            <Pickaxe size={12} strokeWidth={2.25} aria-hidden />PUBLISHING
+          <button
+            className="chip ws__chip ws__chip--work"
+            aria-live="polite"
+            disabled={sending}
+            aria-label={sending ? 'Sending to the relays. Too late to cancel.' : 'Publishing. Tap to cancel.'}
+            title={sending ? 'Too late to cancel: it is going out.' : 'Tap to cancel'}
+            onClick={() => useNostr.getState().cancelPublish()}
+          >
+            <Pickaxe size={12} strokeWidth={2.25} aria-hidden />{sending ? 'SENDING' : 'PUBLISHING'}
           </button>
         )}
         {/* Out of the way while a panel is open: on a phone they wrapped the chip
@@ -781,7 +810,7 @@ export function Workshop(): JSX.Element | null {
         <div className="ws__panel" role="region" aria-label="Menu">
           <input className="workshop__name" value={shard.name} onChange={(e) => w().rename(shard.id, e.target.value)} aria-label="Object name" spellCheck={false} />
           <div className="ws__stats">
-            {shard.vertices.length} vertices · {shard.faces.length} faces{shard.parts?.length ? ` · ${shard.parts.length} placed objects` : ''} · unit 2^{shard.unit} = {formatCellSize(shard.unit)}
+            {shard.vertices.length} vertices · {shard.faces.length} faces{shard.parts?.length ? ` · ${shard.parts.length} placed objects` : ''} · unit 2^{unit} = {formatCellSize(unit)}
             {shard.mode !== 'solid' && shard.faces.length > 0 && <> · faces draw in SOLID</>}
             {shard.facecolors && <> · <button className="workshop__link" onClick={() => w().clearFaceColors()} title="Give every face back to its corners, so colors blend across them again">{shard.facecolors.length} face colors, clear</button></>}
           </div>
@@ -886,10 +915,10 @@ export function Workshop(): JSX.Element | null {
           <div className="workshop__row">
             <span className="workshop__label">SCALE</span>
             <span className="workshop__value">2^</span>
-            <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) - 1))} disabled={shard.unit <= 0} aria-label="Smaller unit">−</button>
-            <span className="workshop__value">{shard.unit}</span>
-            <button className="workshop__btn" {...bind(() => w().setUnit((w().current()?.unit ?? 0) + 1))} disabled={shard.unit >= MAX_UNIT} aria-label="Larger unit">+</button>
-            <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(shard.unit)}</span>
+            <button className="workshop__btn" {...bind(() => w().stepUnit(-1))} disabled={unit <= 0} aria-label="Smaller unit">−</button>
+            <span className="workshop__value">{unit}</span>
+            <button className="workshop__btn" {...bind(() => w().stepUnit(1))} disabled={unit >= MAX_UNIT} aria-label="Larger unit">+</button>
+            <span className="workshop__unit-size" title="How big one grid unit is. It is saved with the object, so anyone who opens it sees it at this size.">one unit = {formatCellSize(unit)}</span>
           </div>
           {/* A stepper like the rows around it (arkinox, 2026-10-15): fifteen
               divisions down to a single tick no longer fit as a row of buttons. */}
@@ -902,9 +931,9 @@ export function Workshop(): JSX.Element | null {
           </div>
           <div className="workshop__row">
             <span className="workshop__label">GRID SIZE</span>
-            <button className="workshop__btn" {...bind(() => w().setExtent((w().current()?.extent ?? MIN_EXTENT) - 1))} disabled={extent <= minExtent} aria-label="Smaller grid">−</button>
+            <button className="workshop__btn" {...bind(() => w().stepExtent(-1))} disabled={extent <= minExtent} aria-label="Smaller grid">−</button>
             <span className="workshop__value">{extent}</span>
-            <button className="workshop__btn" {...bind(() => w().setExtent((w().current()?.extent ?? MIN_EXTENT) + 1))} disabled={extent >= MAX_EXTENT} aria-label="Larger grid">+</button>
+            <button className="workshop__btn" {...bind(() => w().stepExtent(1))} disabled={extent >= MAX_EXTENT} aria-label="Larger grid">+</button>
             <span className="workshop__unit-size" title="Saved with the object. Never below what its points need.">units each side of each axis</span>
           </div>
         </div>

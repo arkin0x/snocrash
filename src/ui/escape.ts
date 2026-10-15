@@ -4,10 +4,11 @@
  * close ui overlay chips").
  *
  * ONOSENDAI keeps a stack every closable thing registers on (useEscape).
- * snocrash has few enough of them to name: the palette sheet, with its own
- * confirmations over it, then the open panel, then the view pad, then what
- * is in hand. One press closes one of them, the topmost. Nothing past that:
- * the workshop is this app's home, so Escape never closes it.
+ * snocrash has few enough of them to name: a modal first (the palette sheet,
+ * with its own confirmations over it, or the key), then the menu, then on
+ * the bench the open panel, then the view pad, then what is in hand. One
+ * press closes one of them, the topmost. Nothing past that: the workshop is
+ * this app's home, so Escape never closes it.
  *
  * The decisions are plain functions so they can be tested without a page;
  * Workshop and PaletteModal listen for the key and do what they say.
@@ -16,16 +17,28 @@
 import { useWorkshop } from '../store/useWorkshop'
 
 /** What the workshop's own Escape closes, or null when it leaves the press alone. */
-export type BenchEscape = 'panel' | 'view' | 'selection' | null
+export type WorkshopEscape = 'login' | 'menu' | 'panel' | 'view' | 'selection' | null
 
 /**
- * The workshop's step, under whatever sits over the bench. `covered` is
- * anything that owns Escape while it is up (the palette sheet folds itself;
- * the menu and the key take the press and do nothing with it), so the bench
- * behind it is left alone.
+ * The workshop's step. The palette sheet listens for the key itself, so
+ * while it is up the press is its alone. The key (LoginModal) is a modal and
+ * the menu sits under the modals, as in ONOSENDAI (useEscape 'modal' over
+ * 'menu'); both close from their own fields too, as ONOSENDAI's do. The key
+ * stays while it is WORKING (`loginBusy`): closing it then would leave the
+ * attempt running behind it, so Escape does nothing and its ✕ is the way to
+ * give the attempt up (review of parity #35). The bench
+ * comes after them, and only on the bench (`making`): there a key typed into
+ * a field is left alone (`typing`).
  */
-export function benchEscape(s: { covered: boolean; panel: boolean; viewOpen: boolean; holding: boolean }): BenchEscape {
-  if (s.covered) return null
+export function workshopEscape(s: {
+  sheet: boolean; login: boolean; loginBusy: boolean; menu: boolean
+  making: boolean; typing: boolean
+  panel: boolean; viewOpen: boolean; holding: boolean
+}): WorkshopEscape {
+  if (s.sheet) return null
+  if (s.login) return s.loginBusy ? null : 'login'
+  if (s.menu) return 'menu'
+  if (!s.making || s.typing) return null
   if (s.panel) return 'panel'
   if (s.viewOpen) return 'view'
   if (s.holding) return 'selection'
@@ -43,8 +56,8 @@ export function sheetEscape(confirming: boolean): 'confirm' | 'fold' {
 
 /**
  * Whether a key is typing into a field rather than meant for the bench. The
- * bench's keys, Escape among them, leave a field alone; the palette sheet is
- * a modal and folds from its own fields too, as ONOSENDAI's does.
+ * bench's keys, Escape among them, leave a field alone; the palette sheet,
+ * the key and the menu close from their own fields too, as ONOSENDAI's do.
  */
 export function typingIn(target: EventTarget | null): boolean {
   const el = target as { tagName?: string; isContentEditable?: boolean } | null

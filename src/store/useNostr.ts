@@ -20,10 +20,10 @@
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
 import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRelay, pool, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
-import { SNO_KIND, createFeed, creditOf, creditTags, objectFromEvent, type Feed, type FeedObject } from 'sno-core/feed'
+import { SNO_KIND, createFeed, creditAuthor, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
-  deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
+  CANCELLED, GIVEN_UP, HANDSHAKE_LATE, OTHER_KEY, deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
   prefOf, randomSigner, saveSignerPref, signWithin, signerFromNcryptsec, signerFromNsec,
   signerFromPref, type Signer, type SignerKind,
 } from '../lib/signers'
@@ -70,6 +70,23 @@ export type { FeedObject } from 'sno-core/feed'
 
 /** Who signs right now. Not in the store: it holds a key and React state is copied. */
 let signer: Signer | null = null
+/**
+ * Which way in is the live one. Each attempt takes the next number; one
+ * that comes back after another has started, or after it was given up
+ * (cancelLogin, a new key, signing out), is dropped: a bunker or an
+ * extension approved later must not switch who signs behind a closed
+ * modal, and its late error must not linger (review of parity #35).
+ */
+let attempt = 0
+/** Gives the live attempt up where it can be (a bunker's handshake); see `attempt`. */
+let attemptAbort: AbortController | null = null
+
+/** Give up the attempt in flight, if any: the next one, a new key, sign-out, or ✕. */
+function giveUpAttempt(): void {
+  attempt++
+  attemptAbort?.abort()
+  attemptAbort = null
+}
 
 /** The current signer, for the one thing outside this module that needs it. */
 export function currentSigner(): Signer | null { return signer }
@@ -82,6 +99,8 @@ interface NostrState {
   scope: FeedScope
   loading: boolean
   publishing: boolean
+  /** The publish is past signing and going out to the relays: too late to cancel. */
+  sending: boolean
   notice: string | null
   /** Whether an identity has been chosen at all. */
   signedIn: boolean
@@ -89,6 +108,10 @@ interface NostrState {
   published: Ledger
   /** The last thing that went wrong while choosing one. */
   loginError: string | null
+  /** Whether a way in (a key, an extension, a bunker) is being tried now. */
+  loggingIn: boolean
+  /** Give up the way in being tried: whatever it brings back later is dropped. */
+  cancelLogin: () => void
   /** Pick up a key this browser already holds, without prompting for anything. */
   init: () => Promise<void>
   useNewKey: () => void
@@ -103,6 +126,8 @@ interface NostrState {
   exportKey: (password: string, again: string) => string
   npub: () => string | null
   publish: (shard: ShardModel) => Promise<boolean>
+  /** Call off the publish in flight (the PUBLISHING chip): it sends nothing, and a reconnect it was waiting on is given up. */
+  cancelPublish: () => void
   /**
    * Publish a palette as its own event, or edit one already published.
    *
@@ -124,10 +149,18 @@ interface NostrState {
   say: (note: string | null) => void
 }
 
-/** The event an object goes out as. Pure, so the shape is testable without a relay. */
-export function objectTemplate(shard: ShardModel, createdAt: number): { kind: number; created_at: number; tags: string[][]; content: string } {
+/**
+ * The event an object goes out as. Pure, so the shape is testable without a
+ * relay. `author` is the key that will sign it: a credit naming that key
+ * keeps its q, which says what the object was made from, and drops the p,
+ * since nobody needs telling that they copied their own object (one opened
+ * from the feed while signed out, or under another key, and edited, credits
+ * whoever published it, who may be you; review of parity #35).
+ */
+export function objectTemplate(shard: ShardModel, createdAt: number, author?: string): { kind: number; created_at: number; tags: string[][]; content: string } {
   const payload = toPayload(shard)
   const credit = creditOf(shard)
+  const notify = !credit || !author || creditAuthor(credit) !== author
   return {
     kind: SNO_KIND,
     created_at: createdAt,
@@ -144,10 +177,21 @@ export function objectTemplate(shard: ShardModel, createdAt: number): { kind: nu
       // A remix credits the object it was made from: the q tag naming it,
       // and, since this is published for everyone, the p that tells its
       // author (DECK-0003, crediting; arkinox, 2026-10-08).
-      ...(credit ? creditTags(credit, { notify: true }) : []),
+      ...(credit ? creditTags(credit, { notify }) : []),
     ],
     content: JSON.stringify(payload),
   }
+}
+
+/**
+ * The credit a copy of a feed object carries (REMIX). Someone else's object
+ * is credited, with a relay it was seen on. A copy of your own remix keeps
+ * the credit that remix was published with; a copy of your own original
+ * credits the original, which goes out as the q alone, since the p would only
+ * tell you (objectTemplate; review of parity #35).
+ */
+export function remixCredit(o: FeedObject, me: string | null): Credit {
+  return (o.pubkey === me ? readCredit(o.event.tags) : null) ?? { address: o.address, ...(o.seen?.[0] ? { relay: o.seen[0] } : {}) }
 }
 
 /**
@@ -217,7 +261,7 @@ export function paletteNevent(event: PublishedPalette): string {
  * whose relays never carried it.
  */
 export function objectAddress(o: FeedObject): string {
-  const relays = [...(pool.seenOn.get(o.id) ?? [])].map((r) => r.url).slice(0, 2)
+  const relays = (o.seen ?? []).slice(0, 2)
   return nip19.naddrEncode({ kind: SNO_KIND, pubkey: o.pubkey, identifier: o.d, relays })
 }
 
@@ -245,9 +289,16 @@ export { objectFromEvent } from 'sno-core/feed'
  * shown where it was asked for. A half-adopted signer would leave the app
  * signing as somebody it no longer is.
  */
-async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer | Promise<Signer>): Promise<void> {
+async function adopt(set: (p: Partial<NostrState>) => void, make: (signal: AbortSignal) => Signer | Promise<Signer>): Promise<void> {
+  giveUpAttempt()
+  const mine = attempt
+  const abort = new AbortController()
+  attemptAbort = abort
+  set({ loggingIn: true })
   try {
-    const next = await make()
+    const next = await make(abort.signal)
+    // Given up, or overtaken, while it was being made: let it go unused.
+    if (mine !== attempt) { void next.close?.().catch(() => { /* already gone */ }); return }
     const old = signer
     signer = next
     // The one it replaces holds sockets of its own; let them go.
@@ -255,7 +306,10 @@ async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer |
     saveSignerPref(prefOf(next))
     set({ pubkey: next.pubkey, signer: next.kind, signedIn: true, loginError: null })
   } catch (err) {
+    if (mine !== attempt) return
     set({ loginError: err instanceof Error ? err.message : String(err) })
+  } finally {
+    if (mine === attempt) { attemptAbort = null; set({ loggingIn: false }) }
   }
 }
 
@@ -267,22 +321,88 @@ async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer |
  * phone leaves behind after the tab has sat in another app: the sockets look
  * open and the request goes into the void. So they are dropped and the same
  * signer is asked once more over fresh ones.
+ *
+ * A saved identity reconnects first (deferredReconnect), and the patience
+ * starts once that handshake is done: a slow one is somebody approving the
+ * connection on their phone, not a dead channel, and taking it for one asked
+ * them a second time (review of parity #35).
  */
-async function signEvent(template: Parameters<Signer['signEvent']>[0]): Promise<Event> {
-  const current = signer
-  if (!current) throw new Error('Pick a key first.')
-  if (current.kind === 'local') return current.signEvent(template) as Promise<Event>
+async function signEvent(template: Parameters<Signer['signEvent']>[0], signal?: AbortSignal): Promise<Event> {
+  const asked = signer
+  if (!asked) throw new Error('Pick a key first.')
+  if (asked.kind === 'local' && !asked.ready) return asked.signEvent(template) as Promise<Event>
   pendingSigns++
   try {
-    return await signWithin(current, template) as Event
+    // A saved identity's handshake first, on its own clock (a minute,
+    // HANDSHAKE_PATIENCE_MS); the signature's starts after it.
+    const current = asked.ready ? await asked.ready(signal) : asked
+    if (current.kind === 'local') return await current.signEvent(template) as Event
+    try {
+      return await untilCancelled(signWithin(current, template), signal) as Event
+    } catch (err) {
+      if (!current.reconnect || (err instanceof Error && err.message === CANCELLED)) throw err
+      const fresh = await current.reconnect()
+      if (signer === current) signer = fresh
+      return await untilCancelled(signWithin(fresh, template), signal) as Event
+    }
   } catch (err) {
-    if (!current.reconnect) throw err
-    const fresh = await current.reconnect()
-    if (signer === current) signer = fresh
-    return await signWithin(fresh, template) as Event
+    // The key changed (or was signed out) while this was being signed:
+    // whatever else went wrong, that is what happened (review of parity #35).
+    if (signer?.pubkey !== asked.pubkey) throw new Error(GIVEN_UP)
+    throw err
   } finally {
     pendingSigns--
   }
+}
+
+/** A promise, or CANCELLED as soon as `signal` fires. */
+function untilCancelled<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p
+  if (signal.aborted) return Promise.reject(new Error(CANCELLED))
+  return new Promise<T>((resolve, reject) => {
+    const cancel = (): void => reject(new Error(CANCELLED))
+    signal.addEventListener('abort', cancel, { once: true })
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', cancel))
+  })
+}
+
+/** What a publish that went out signed by a key that is no longer this one says. */
+const KEY_CHANGED = 'Not published: the key changed while it was being signed. Publish again to sign it with the current key.'
+
+/** What a publish that failed says. */
+function publishFailed(err: unknown, signedIn: boolean): string {
+  const why = err instanceof Error ? err.message : String(err)
+  if (why === CANCELLED) return 'Publishing cancelled. Nothing went out.'
+  if (why === HANDSHAKE_LATE || why === OTHER_KEY) return why
+  // Signed out meanwhile: that was the point, so nothing more to say.
+  if (why === GIVEN_UP) return signedIn ? KEY_CHANGED : 'Signed out, so nothing was published.'
+  return `Could not publish: ${why}`
+}
+
+/**
+ * The last word before an event goes out: not cancelled, and still signed by
+ * the key this app is now. A key change or a sign-out during the relays'
+ * sign-in comes after the signature, so it is checked here, right before
+ * sending (review of parity #35).
+ */
+function readyToSend(signed: Event, signal: AbortSignal, currentPubkey: () => string | null): void {
+  if (signal.aborted) throw new Error(CANCELLED)
+  if (signed.pubkey !== currentPubkey()) throw new Error(GIVEN_UP)
+}
+
+/** The publish in flight, so the PUBLISHING chip can call it off. */
+let publishAbort: AbortController | null = null
+
+/**
+ * Sign for a publish, and check it is still yours to send: an extension or a
+ * bunker that answers after the key was changed signed as the old key, and
+ * that must not go out (review of parity #35).
+ */
+async function signForPublish(template: Parameters<Signer['signEvent']>[0], signal: AbortSignal, currentPubkey: () => string | null): Promise<Event> {
+  const signed = await signEvent(template, signal)
+  if (signal.aborted) throw new Error(CANCELLED)
+  if (signed.pubkey !== currentPubkey()) throw new Error(GIVEN_UP)
+  return signed
 }
 
 /**
@@ -317,7 +437,10 @@ let pendingSigns = 0
  */
 function wakeSigner(): void {
   const current = signer
-  if (!current || current.kind === 'local' || pendingSigns > 0) return
+  // A saved identity that has not connected yet has no sockets to refresh,
+  // and starting its connect here would put a round trip on the phone
+  // nobody asked for (review of parity #35).
+  if (!current || current.kind === 'local' || current.ready || pendingSigns > 0) return
   void current.reconnect?.().then((fresh) => { if (signer === current) signer = fresh }).catch(() => { /* next request retries */ })
 }
 
@@ -331,10 +454,12 @@ export const useNostr = create<NostrState>((set, get) => ({
   signedIn: false,
   published: loadLedger(),
   loginError: null,
+  loggingIn: false,
   feed: [],
   scope: 'global',
   loading: false,
   publishing: false,
+  sending: false,
   notice: null,
 
   init: async () => {
@@ -344,9 +469,17 @@ export const useNostr = create<NostrState>((set, get) => ({
       // pubkey now and reconnected on the first thing that needs a signature,
       // so opening the app never waits on somebody's phone.
       try {
-        signer = pref.kind === 'local'
+        // The live signer a later handshake brings back replaces the deferred
+        // one only while that is still who signs: an identity chosen in the
+        // meantime stays chosen, and the late one is let go (review of
+        // parity #35).
+        const lazy: Signer = pref.kind === 'local'
           ? await signerFromPref(pref)
-          : deferredReconnect(pref, (live) => { signer = live })
+          : deferredReconnect(pref, (live) => {
+            if (signer === lazy) signer = live
+            else void live.close?.().catch(() => { /* already gone */ })
+          })
+        signer = lazy
         set({ pubkey: signer.pubkey, signer: signer.kind, signedIn: true })
         return
       } catch {
@@ -371,12 +504,13 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   useNewKey: () => {
+    giveUpAttempt()
     const old = signer
     signer = randomSigner()
     if (old) void old.close?.().catch(() => { /* already gone */ })
     saveSignerPref(prefOf(signer))
     set({
-      pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null,
+      pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null, loggingIn: false,
       notice: 'A key was made in this browser. Export it before you clear your cache, or it is gone.',
     })
   },
@@ -384,16 +518,19 @@ export const useNostr = create<NostrState>((set, get) => ({
   useNsec: async (nsec) => { await adopt(set, () => signerFromNsec(nsec)) },
   useNcryptsec: async (ncryptsec, password) => { await adopt(set, () => signerFromNcryptsec(ncryptsec, password)) },
   useExtension: async () => { await adopt(set, () => nip07Signer()) },
-  useBunker: async (uri) => { await adopt(set, () => nip46Signer(uri)) },
+  useBunker: async (uri) => { await adopt(set, (signal) => nip46Signer(uri, undefined, signal)) },
 
   signOut: () => {
+    giveUpAttempt()
     void signer?.close?.().catch(() => { /* already gone */ })
     signer = null
     forgetSignerPref()
-    set({ pubkey: null, signedIn: false, signer: 'local', loginError: null, notice: 'Signed out. The key this browser held is gone.' })
+    set({ pubkey: null, signedIn: false, signer: 'local', loginError: null, loggingIn: false, notice: 'Signed out. The key this browser held is gone.' })
   },
 
   clearLoginError: () => set({ loginError: null }),
+
+  cancelLogin: () => { giveUpAttempt(); set({ loggingIn: false, loginError: null }) },
 
   exportKey: (password, again) => exportNcryptsec(signer?.secretKey, password, again),
 
@@ -407,12 +544,16 @@ export const useNostr = create<NostrState>((set, get) => ({
     if (!signer) { set({ notice: 'Pick a key first.' }); return false }
     if (shard.vertices.length === 0 && !shard.parts?.length) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
-    const template = objectTemplate(shard, Math.floor(Date.now() / 1000))
+    const template = objectTemplate(shard, Math.floor(Date.now() / 1000), signer.pubkey)
+    const abort = new AbortController()
+    publishAbort = abort
     try {
-      const signed = await signEvent(template)
+      const signed = await signForPublish(template, abort.signal, () => get().pubkey)
       // A relay that gates reads gates writes, and an unauthenticated publish
       // is refused rather than queued.
-      await authAll(relays)
+      await untilCancelled(authAll(relays), abort.signal)
+      readyToSend(signed, abort.signal, () => get().pubkey)
+      set({ sending: true })
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = results.filter((r) => r.status === 'fulfilled').length
       if (took > 0) {
@@ -432,19 +573,28 @@ export const useNostr = create<NostrState>((set, get) => ({
       if (took > 0) void get().loadFeed()
       return took > 0
     } catch (err) {
-      set({ publishing: false, notice: `Could not publish: ${err instanceof Error ? err.message : String(err)}` })
+      set({ publishing: false, notice: publishFailed(err, get().signedIn) })
       return false
+    } finally {
+      if (publishAbort === abort) publishAbort = null
+      set({ sending: false })
     }
   },
+
+  cancelPublish: () => { publishAbort?.abort() },
 
   publishPalette: async (name, colors, prev) => {
     const relays = relaySet()
     if (!signer) { set({ notice: 'Pick a key first.' }); return null }
     if (colors.length < 2 || colors.length > 256) { set({ notice: 'A palette is 2 to 256 colors.' }); return null }
     set({ publishing: true, notice: null })
+    const abort = new AbortController()
+    publishAbort = abort
     try {
-      const signed = await signEvent(paletteTemplate(name, colors, Math.floor(Date.now() / 1000), prev))
-      await authAll(relays)
+      const signed = await signForPublish(paletteTemplate(name, colors, Math.floor(Date.now() / 1000), prev), abort.signal, () => get().pubkey)
+      await untilCancelled(authAll(relays), abort.signal)
+      readyToSend(signed, abort.signal, () => get().pubkey)
+      set({ sending: true })
       const results = await Promise.allSettled(pool.publish(relays, signed))
       const took = relays.filter((_, i) => results[i]?.status === 'fulfilled')
       if (took.length === 0) {
@@ -461,8 +611,11 @@ export const useNostr = create<NostrState>((set, get) => ({
       // not is worse than no hint, because a reader spends its fetch there.
       return { id: signed.id, genesis: prev?.genesis ?? signed.id, relays: took }
     } catch (err) {
-      set({ publishing: false, notice: `Could not publish: ${err instanceof Error ? err.message : String(err)}` })
+      set({ publishing: false, notice: publishFailed(err, get().signedIn) })
       return null
+    } finally {
+      if (publishAbort === abort) publishAbort = null
+      set({ sending: false })
     }
   },
 
@@ -473,11 +626,14 @@ export const useNostr = create<NostrState>((set, get) => ({
     if (held) return held
     const found = await queryAny(withHints(where.relays), { kinds: [SNO_KIND], authors: [where.pubkey], '#d': [where.d] })
     // Several relays may each hold a different edit; the newest is the object.
-    const ev = found.sort((a, b) => b.created_at - a.created_at)[0]
+    const newest = found.sort((a, b) => b.event.created_at - a.event.created_at)[0]
+    const ev = newest?.event
     if (!ev) { set({ notice: 'No relay had that object. It may have been deleted, or live on a relay this app does not reach.' }); return null }
     const o = objectFromEvent(ev)
     if (!o) { set({ notice: 'That object could not be read.' }); return null }
-    return o
+    // Where it was seen, as the feed's own objects say: the relay a credit
+    // names when this object is edited into a copy (review of parity #35).
+    return { ...o, seen: newest.relays }
   },
 
   fetchPalette: async (ref) => {
@@ -503,7 +659,8 @@ export const useNostr = create<NostrState>((set, get) => ({
     const found = await queryAny(relays, filter)
     // The newest, for an naddr that several relays answer with different
     // versions of. An nevent can only match one event, so this is a no-op there.
-    const ev = found.sort((a, b) => b.created_at - a.created_at)[0]
+    const newest = found.sort((a, b) => b.event.created_at - a.event.created_at)[0]
+    const ev = newest?.event
     if (!ev) {
       // Which relays, because "no relay had it" is unactionable and the usual
       // cause is that the pointer named none. An nevent with no relay hint can
@@ -528,7 +685,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     }
     // Where it was actually seen, not where it was looked for, because that is
     // what a relay hint is for.
-    const seen = [...(pool.seenOn.get(ev.id) ?? [])].map((r) => r.url)
+    const seen = newest.relays
     return {
       colors,
       name: ev.tags.find((t) => t[0] === 'name')?.[1] ?? null,
