@@ -23,6 +23,7 @@ import { rgbToHex } from 'sno-core/shards'
 import { paletteNevent, useNostr } from '../store/useNostr'
 import { useWorkshop, type NamedPalette } from '../store/useWorkshop'
 import { ConfirmModal } from './ConfirmModal'
+import { sheetEscape } from './escape'
 
 /** How the built-in is laid out, so the sheet can be read rather than scanned. */
 const BANDS = [
@@ -206,6 +207,20 @@ export function PaletteModal({ onClose }: { onClose: () => void }): JSX.Element 
   }
 
   const sheet = making ? BUILT_IN : active
+
+  // Escape folds the sheet as the close button does, back into the chip; a
+  // confirmation over it closes first (escape.ts, ONOSENDAI's sheet). The
+  // workshop leaves the press alone while the sheet is up.
+  const escape = useRef<() => void>(() => {})
+  escape.current = () => {
+    if (sheetEscape(switching !== null || forgetting !== null) === 'fold') fold()
+    else { setSwitching(null); setForgetting(null) }
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => { if (e.code === 'Escape') escape.current() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Through a portal, for the reason ConfirmModal gives: this is rendered from
   // inside .ws__corner, which has a z-index and a backdrop-filter and is
