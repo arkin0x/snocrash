@@ -31,13 +31,13 @@ const PROBE_MS = 4000
 const SIGNER_LABEL: Record<string, string> = {
   local: 'LOCAL KEY',
   nip07: 'EXTENSION',
-  nip46: 'BUNKER',
+  nip46: 'REMOTE SIGNER',
 }
 
 const SIGNER_NOTE: Record<string, string> = {
   local: 'A key in this browser, and nowhere else.',
   nip07: 'Your browser extension signs, and keeps the key.',
-  nip46: 'A bunker signs, on another machine, and keeps the key.',
+  nip46: 'A remote signer (a bunker, or a signer app reached by QR) signs, on another machine, and keeps the key.',
 }
 
 /**
@@ -218,8 +218,8 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
             There is no account here and no server that knows you. There is a key, and whoever
             holds it is you: an object you publish is an event signed by that key, and the key
             plus the object's own id is its address on every relay. A key this app makes lives in
-            this browser only, so export it (CHANGE, then EXPORT THIS KEY) before you clear your
-            cache; an extension or a bunker keeps its own key and this app never sees it.
+            this browser only, so back it up (CHANGE, then BACK UP CURRENT KEY) before you clear your
+            cache; an extension or a remote signer keeps its own key and this app never sees it.
           </Explanation>
         </section>
 

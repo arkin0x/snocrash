@@ -4,7 +4,8 @@
  * Four ways in, which are the four ways nostr has: a key this app makes and
  * keeps in the browser, an nsec pasted in, an encrypted ncryptsec unlocked
  * with its password, or a signer that is not this app at all, a browser
- * extension (NIP-07) or a remote bunker (NIP-46). They differ only in how
+ * extension (NIP-07) or a remote bunker (NIP-46), reached by its bunker:// URI
+ * or by a Nostr Connect QR this app shows. They differ only in how
  * signEvent works and whether the pubkey is known at once, so the rest of the
  * app talks to one shape and awaits every signature.
  *
@@ -33,6 +34,8 @@ import * as nip46 from 'nostr-tools/nip46'
 import * as nip49 from 'nostr-tools/nip49'
 import { pool } from './pool'
 import { attributed } from './client'
+import { DEFAULT_SIGNER_RELAY, normalizeSignerRelay, signerRelays } from './loginCredentials'
+export { BACKUP_SIGNER_RELAY, DEFAULT_SIGNER_RELAY, loginCredentialKind, normalizeSignerRelay, signerRelays } from './loginCredentials'
 
 export type SignerKind = 'local' | 'nip07' | 'nip46'
 export { SIGN_PATIENCE_MS, SignerTimeout, signWithin } from './signWithin'
@@ -45,6 +48,8 @@ export interface Signer {
   /** For a bunker: what to persist so the same connection can be re-made. */
   bunkerUri?: string
   clientSecretKey?: Uint8Array
+  /** A client-initiated Nostr Connect session (the QR) does not repeat the bunker connect handshake. */
+  nostrConnectSession?: boolean
   signEvent: (template: EventTemplate) => Promise<NostrEvent>
   close?: () => Promise<void>
   /** Drop the sockets and come back with a working signer. */
@@ -103,9 +108,33 @@ export function signerFromNcryptsec(ncryptsec: string, password: string): Signer
   return localSigner(sk)
 }
 
-/** The browser extension, which keeps its own key and prompts for each signature. */
-export async function nip07Signer(): Promise<Signer> {
-  const ext = windowNostr()
+/**
+ * How long a reconnect waits for an extension to appear. Extensions inject
+ * `window.nostr` from a content script some time after the page starts, and
+ * a reload can ask for a signature at once (a relay's NIP-42 challenge
+ * arrives with the first socket), so asking only once found no extension and
+ * the whole visit signed nothing. ONOSENDAI's (#321).
+ */
+export const NIP07_WAIT_MS = 4000
+
+/** `window.nostr`, once it appears, or null after `waitMs` or once `signal` gives the wait up. */
+async function waitForWindowNostr(waitMs: number, signal?: AbortSignal): Promise<Nip07 | null> {
+  const start = Date.now()
+  for (;;) {
+    const ext = windowNostr()
+    if (ext || signal?.aborted || Date.now() - start >= waitMs) return ext
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
+/**
+ * The browser extension, which keeps its own key and prompts for each
+ * signature. A reload waits up to `waitMs` for it to be injected; a choice
+ * made in the modal does not, since the button is only offered once it is.
+ */
+export async function nip07Signer(waitMs = 0, signal?: AbortSignal): Promise<Signer> {
+  const ext = await waitForWindowNostr(waitMs, signal)
+  if (signal?.aborted) throw new Error(GIVEN_UP)
   if (!ext) throw new Error('No nostr extension found in this browser.')
   const pubkey = await ext.getPublicKey()
   return { kind: 'nip07', pubkey, signEvent: (t) => ext.signEvent(attributed(t)) }
@@ -165,6 +194,134 @@ export async function nip46Signer(bunkerUri: string, clientSecretKey?: Uint8Arra
   return signer
 }
 
+/*
+ * Nostr Connect: the QR. ONOSENDAI's (hzrd149, ONOSENDAI #196).
+ *
+ * The other way round from a bunker:// URI. This app makes a one-time client
+ * key and a nostrconnect:// URI naming it, shows that as a QR, and waits on
+ * the URI's relays for a signer app to answer with the secret it carries.
+ * The answer is the approval, so there is no connect handshake to repeat:
+ * a reload rebuilds the session from the client key and the remote key, and
+ * uses the pubkey saved at login.
+ */
+
+function randomHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/** How long a signer that has answered the QR gets to say which key it holds. */
+export const PUBLIC_KEY_WAIT_MS = 30_000
+
+/** The signer's pubkey, or an error once PUBLIC_KEY_WAIT_MS has passed or `signal` gives it up. */
+async function waitForPublicKey(bunker: nip46.BunkerSigner, signal?: AbortSignal): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  let abort: (() => void) | undefined
+  const stopped = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error('Signer connected but did not return its public key. Try the QR flow again.')), PUBLIC_KEY_WAIT_MS)
+    if (signal) {
+      abort = (): void => reject(new Error(GIVEN_UP))
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+    }
+  })
+  try {
+    return await Promise.race([bunker.getPublicKey(), stopped])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+    if (signal && abort) signal.removeEventListener('abort', abort)
+  }
+}
+
+/** A connected BunkerSigner as a Signer, with the pubkey it is known to hold. */
+function wrapBunkerSigner(bunker: nip46.BunkerSigner, clientSecretKey: Uint8Array, pubkey: string, bunkerUri: string): Signer {
+  const signer: Signer = {
+    kind: 'nip46',
+    pubkey,
+    bunkerUri,
+    clientSecretKey,
+    nostrConnectSession: true,
+    signEvent: (t) => bunker.signEvent(attributed(t)) as Promise<NostrEvent>,
+    close: () => bunker.close(),
+    // Half-open sockets, as nip46Signer's reconnect: dropped, and the same
+    // signer opens fresh ones on its next request.
+    reconnect: async () => {
+      pool.close([...bunker.bp.relays])
+      return signer
+    },
+  }
+  return signer
+}
+
+/** A QR login is made synchronously so its URI can be painted while the connection waits. */
+export interface NostrConnectSession {
+  uri: string
+  relay: string
+  /**
+   * Wait for a signer to answer the QR. `signal` gives the wait up (leaving
+   * the QR screen); `onConnected` says the signer answered and its pubkey is
+   * being asked for.
+   */
+  connect: (signal?: AbortSignal, onConnected?: () => void) => Promise<Signer>
+}
+
+/** A new QR session on `relayInput` (the default carries a backup relay too). Throws a readable error for a bad relay. */
+export function createNostrConnectSession(relayInput = DEFAULT_SIGNER_RELAY): NostrConnectSession {
+  const relay = normalizeSignerRelay(relayInput)
+  const clientSecretKey = generateSecretKey()
+  const uri = nip46.createNostrConnectURI({
+    clientPubkey: getPublicKey(clientSecretKey),
+    relays: signerRelays(relay),
+    secret: randomHex(generateSecretKey()),
+    // This app only signs: no encryption is asked for.
+    perms: ['get_public_key', 'sign_event'],
+    name: 'snocrash',
+    ...(typeof location !== 'undefined' ? { url: location.origin } : {}),
+  })
+
+  return {
+    uri,
+    relay,
+    connect: async (signal, onConnected) => {
+      const bunker = await nip46.BunkerSigner.fromURI(
+        clientSecretKey,
+        uri,
+        // Keep the whole login handshake on the relays encoded in the QR.
+        // Automatic switch_relays interoperability varies between signers and
+        // can strand the get_public_key response on a relay we never selected;
+        // the QR names two relays by default so neither is a single point.
+        { pool: pool as never, skipSwitchRelays: true },
+        signal ?? 300_000,
+      )
+      onConnected?.()
+      let pubkey: string
+      try { pubkey = await waitForPublicKey(bunker, signal) }
+      catch (err) {
+        await bunker.close().catch(() => { /* already gone */ })
+        throw err
+      }
+      // The approved client key is the durable session identity. Rebuild from
+      // the remote key and relay on reload; do not replay the one-time QR secret.
+      const sessionUri = nip46.toBunkerURL({ ...bunker.bp, secret: null })
+      return wrapBunkerSigner(bunker, clientSecretKey, pubkey, sessionUri)
+    },
+  }
+}
+
+/**
+ * Restore a previously approved Nostr Connect session.
+ *
+ * The pubkey is the one saved at login, not asked for again: asking on every
+ * reload needs the signer app awake before anything can sign, with no bound on
+ * the wait, and an answer naming another account (the app switched accounts)
+ * would put a different key behind the identity on screen.
+ */
+async function nostrConnectSessionSigner(bunkerUri: string, clientSecretKey: Uint8Array, pubkey: string): Promise<Signer> {
+  const bp = await nip46.parseBunkerInput(bunkerUri)
+  if (!bp) throw new Error('The saved Nostr Connect session is invalid.')
+  const bunker = nip46.BunkerSigner.fromBunker(clientSecretKey, bp, { pool: pool as never })
+  return wrapBunkerSigner(bunker, clientSecretKey, pubkey, bunkerUri)
+}
+
 /** What is kept so a signer can come back on reload. */
 export interface SignerPref {
   kind: SignerKind
@@ -174,6 +331,8 @@ export interface SignerPref {
   /** nip46 only. */
   bunkerUri?: string
   clientNsec?: string
+  /** nip46 only: the session came from the QR, so a reload asks the signer nothing. */
+  nostrConnectSession?: boolean
 }
 
 export function prefOf(signer: Signer): SignerPref {
@@ -182,17 +341,34 @@ export function prefOf(signer: Signer): SignerPref {
   if (signer.kind === 'nip46') {
     base.bunkerUri = signer.bunkerUri
     if (signer.clientSecretKey) base.clientNsec = nip19.nsecEncode(signer.clientSecretKey)
+    if (signer.nostrConnectSession) base.nostrConnectSession = true
   }
   return base
 }
 
-/** Rebuild a signer from a kept preference. Local is instant; the others reconnect. */
+/**
+ * Rebuild a signer from a kept preference. Local is instant; the others
+ * reconnect. An extension or a bunker that answers as another key than the
+ * one saved is refused with OTHER_KEY (closed, for a bunker): signing as it
+ * would publish under a key the app does not show. A QR session is the
+ * exception that cannot be asked: it is rebuilt with the saved pubkey.
+ */
 export async function signerFromPref(pref: SignerPref, signal?: AbortSignal): Promise<Signer> {
   if (pref.kind === 'local' && pref.nsec) return signerFromNsec(pref.nsec)
-  if (pref.kind === 'nip07') return nip07Signer()
+  if (pref.kind === 'nip07') {
+    const signer = await nip07Signer(NIP07_WAIT_MS, signal)
+    if (signer.pubkey !== pref.pubkey) throw new Error(OTHER_KEY)
+    return signer
+  }
   if (pref.kind === 'nip46' && pref.bunkerUri) {
     const clientSk = pref.clientNsec ? (nip19.decode(pref.clientNsec).data as Uint8Array) : undefined
-    return nip46Signer(pref.bunkerUri, clientSk, signal)
+    if (pref.nostrConnectSession && clientSk) return nostrConnectSessionSigner(pref.bunkerUri, clientSk, pref.pubkey)
+    const signer = await nip46Signer(pref.bunkerUri, clientSk, signal)
+    if (signer.pubkey !== pref.pubkey) {
+      await signer.close?.().catch(() => { /* already gone */ })
+      throw new Error(OTHER_KEY)
+    }
+    return signer
   }
   throw new Error('That stored identity cannot be rebuilt.')
 }
@@ -325,6 +501,10 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
       live = s
       onReady(s)
       return s
+    }, (err: unknown) => {
+      // signerFromPref refused another key itself (and closed it): remembered the same way.
+      if (err instanceof Error && err.message === OTHER_KEY) otherKey = true
+      throw err
     })
     a.done = Promise.race([made, deadline]).then((s) => { clearTimeout(a.timer); return s }, (err: unknown) => {
       // A failed connect is not remembered: the next signature tries again.
