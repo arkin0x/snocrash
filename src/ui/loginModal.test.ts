@@ -58,6 +58,12 @@ describe('the identity modal', () => {
     expect(LOGIN).toMatch(/normalizeSignerRelay\(relay\) === activeRelay/)
   })
 
+  it('a mistyped relay is refused before the QR on screen is given up, and is shown where it can be put right (review of #37)', () => {
+    // Nothing stops the live wait until a session on the new relay exists.
+    expect(LOGIN).toMatch(/const startQr = (?:(?!stopQr\(\))[^])*?createNostrConnectSession\(relayInput\)/)
+    expect(LOGIN).toMatch(/setQrError\(err instanceof Error \? err\.message : String\(err\)\)\s*setView\('qr'\)\s*return/)
+  })
+
   it('a QR its relay stopped can be tried again on the same relay', () => {
     expect(LOGIN).toMatch(/disabled=\{!relay\.trim\(\) \|\| \(busy === 'qr' && sameRelay\)\}/)
     expect(LOGIN).toMatch(/busy !== 'qr' && sameRelay \? 'TRY AGAIN' : 'USE THIS RELAY'/)

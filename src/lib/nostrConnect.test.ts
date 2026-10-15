@@ -28,6 +28,8 @@ const fake = vi.hoisted(() => ({
   close: null as unknown as ReturnType<typeof import('vitest').vi.fn>,
   asked: 0,
   connects: 0,
+  /** How the signer app signs; by default it is never asked. */
+  sign: null as null | ((t: unknown) => Promise<unknown>),
   restoredWith: null as null | { clientSecretKey: Uint8Array; relays: string[] },
 }))
 
@@ -37,7 +39,7 @@ vi.mock('nostr-tools/nip46', async (importOriginal) => {
     bp: { pubkey: fake.remote, relays, secret: 'one-time' },
     connect: async () => { fake.connects++ },
     getPublicKey: () => { fake.asked++; return fake.pubkey ? Promise.resolve(fake.pubkey) : new Promise<string>(() => { /* silent */ }) },
-    signEvent: async () => { throw new Error('unused') },
+    signEvent: (t: unknown) => (fake.sign ? fake.sign(t) : Promise.reject(new Error('unused'))),
     close: fake.close,
   })
   return {
@@ -58,9 +60,12 @@ vi.mock('nostr-tools/nip46', async (importOriginal) => {
   }
 })
 
-import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
-import { GIVEN_UP, PUBLIC_KEY_WAIT_MS, createNostrConnectSession, loadSignerPref, prefOf, saveSignerPref, signerFromPref } from './signers'
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19, type Event, type EventTemplate } from 'nostr-tools'
+import { newShard } from 'sno-core/shards'
+import { GIVEN_UP, OTHER_KEY, PUBLIC_KEY_WAIT_MS, createNostrConnectSession, loadSignerPref, prefOf, saveSignerPref, signerFromPref } from './signers'
+import { pool } from './pool'
 import { currentSigner, useNostr } from '../store/useNostr'
+import { useRelays } from '../store/useRelays'
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
@@ -70,6 +75,7 @@ beforeEach(() => {
   fake.signal = null
   fake.asked = 0
   fake.connects = 0
+  fake.sign = null
   fake.restoredWith = null
   fake.pubkey = getPublicKey(generateSecretKey())
 })
@@ -225,5 +231,43 @@ describe('the QR in the store', () => {
     expect(n().pubkey).toBe(before)
     expect(n().loginError).toMatch(/not a valid public key/)
     expect(fake.close).toHaveBeenCalled()
+  })
+})
+
+describe('a restored QR session whose signer app has switched accounts (review of #37)', () => {
+  const n = () => useNostr.getState()
+  const saved = generateSecretKey()
+  const shard = { ...newShard('probe'), vertices: [{ p: [0, 0, 0] as [number, number, number], c: [1, 1, 1] as [number, number, number] }] }
+  /** The relay's NIP-42 challenge, answered the way the pool answers it. */
+  const auth = (template: EventTemplate): Promise<Event> =>
+    (pool as unknown as { automaticallyAuth: (url: string) => (t: EventTemplate) => Promise<Event> }).automaticallyAuth('wss://relay.example.com')(template)
+  const challenge: EventTemplate = { kind: 22242, created_at: 1, tags: [['relay', 'wss://relay.example.com'], ['challenge', 'c']], content: '' }
+
+  beforeEach(async () => {
+    useRelays.setState({ relays: [] } as never)
+    saveSignerPref({
+      kind: 'nip46', pubkey: getPublicKey(saved), nostrConnectSession: true,
+      bunkerUri: `bunker://${fake.remote}?relay=wss://relay.example.com`, clientNsec: nip19.nsecEncode(generateSecretKey()),
+    })
+    await n().init()
+  })
+
+  it('signing as the saved key, publishes and answers a relay as before', async () => {
+    fake.sign = async (t) => finalizeEvent(t as EventTemplate, saved)
+    expect(await n().publish(shard)).toBe(false)
+    expect(n().notice).toBe('No relay took it.')
+    expect((await auth(challenge)).pubkey).toBe(getPublicKey(saved))
+  })
+
+  it('signing as another key, publishes nothing and answers no relay as that key', async () => {
+    const other = generateSecretKey()
+    fake.sign = async (t) => finalizeEvent(t as EventTemplate, other)
+    const sent = vi.spyOn(pool, 'publish')
+    expect(await n().publish(shard)).toBe(false)
+    expect(n().notice).toBe(OTHER_KEY)
+    expect(sent).not.toHaveBeenCalled()
+    await expect(auth(challenge)).rejects.toThrow(OTHER_KEY)
+    expect(n().pubkey).toBe(getPublicKey(saved))
+    sent.mockRestore()
   })
 })

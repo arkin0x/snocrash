@@ -375,14 +375,23 @@ async function signEvent(template: Parameters<Signer['signEvent']>[0], signal?: 
     // HANDSHAKE_PATIENCE_MS); the signature's starts after it.
     const current = asked.ready ? await asked.ready(signal) : asked
     if (current.kind === 'local') return await current.signEvent(template) as Event
+    let signed: Event
     try {
-      return await untilCancelled(signWithin(current, template), signal) as Event
+      signed = await untilCancelled(signWithin(current, template), signal) as Event
     } catch (err) {
       if (!current.reconnect || (err instanceof Error && err.message === CANCELLED)) throw err
       const fresh = await current.reconnect()
       if (signer === current) signer = fresh
-      return await untilCancelled(signWithin(fresh, template), signal) as Event
+      signed = await untilCancelled(signWithin(fresh, template), signal) as Event
     }
+    // A remote signer signs as whichever account it holds now. A QR session
+    // restored on reload is never asked which one that is, and an extension
+    // or a bunker can switch accounts mid-visit, so the signature itself is
+    // checked here, for every caller: a publish, and a relay's AUTH, which
+    // would otherwise tell the relay this visit is another account (review
+    // of #37).
+    if (signed.pubkey !== asked.pubkey) throw new Error(OTHER_KEY)
+    return signed
   } catch (err) {
     // The key changed (or was signed out) while this was being signed:
     // whatever else went wrong, that is what happened (review of parity #35).
@@ -513,6 +522,11 @@ function wakeSigner(): void {
   // and starting its connect here would put a round trip on the phone
   // nobody asked for (review of parity #35).
   if (!current || current.kind === 'local' || current.ready || pendingSigns > 0) return
+  // Nor while a way in is being tried: its handshake can be on the same
+  // relays (the default QR relays, after an earlier QR login), and dropping
+  // them would lose the answer of somebody who just approved it in the
+  // signer app this tab came back from (review of #37).
+  if (attemptAbort) return
   void current.reconnect?.().then((fresh) => { if (signer === current) signer = fresh }).catch(() => { /* next request retries */ })
 }
 
@@ -584,7 +598,7 @@ export const useNostr = create<NostrState>((set, get) => ({
     saveSignerPref(prefOf(signer))
     set({
       pubkey: signer.pubkey, signer: 'local', signedIn: true, loginError: null, loggingIn: false,
-      notice: 'A key was made in this browser. Export it before you clear your cache, or it is gone.',
+      notice: 'A key was made in this browser. Back it up before you clear your cache, or it is gone.',
     })
   },
 

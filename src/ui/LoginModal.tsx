@@ -121,18 +121,24 @@ export function LoginModal({ onClose }: { onClose: () => void }): JSX.Element {
 
   const startQr = (relayInput = relay): void => {
     if (busy && busy !== 'qr') return
+    // The relay is checked before the QR on screen is given up: a mistyped
+    // one says so and leaves that QR waiting, rather than stopping it while
+    // it still shows, for a signer to answer a session nobody hears (review
+    // of #37).
+    let session
+    try { session = createNostrConnectSession(relayInput) }
+    catch (err) {
+      // Shown on the QR screen, where the relay can be put right (from the
+      // first screen, a relay mistyped earlier would otherwise do nothing).
+      setQrError(err instanceof Error ? err.message : String(err))
+      setView('qr')
+      return
+    }
     stopQr()
     useNostr.getState().clearLoginError()
     setQrError(null)
     setQrConnected(false)
     setLinkCopied(false)
-
-    let session
-    try { session = createNostrConnectSession(relayInput) }
-    catch (err) {
-      setQrError(err instanceof Error ? err.message : String(err))
-      return
-    }
 
     const mine = {}
     qrLive.current = mine
