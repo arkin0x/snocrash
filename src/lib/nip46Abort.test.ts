@@ -287,12 +287,47 @@ describe('one connect, several waiting on it (review of parity #35)', () => {
     expect(fake.close).toHaveBeenCalled()
   })
 
-  it('a signer that comes back as another key is let go, and says so', async () => {
+  it('a signer that comes back as another key is let go, says so, and asks nothing more from then on', async () => {
     const lazy = deferredReconnect({ ...pref(), pubkey: 'd'.repeat(64) }, () => {})
     const waiting = lazy.ready!()
     await tick()
     fake.answer!()
     await expect(waiting).rejects.toThrow(OTHER_KEY)
     expect(fake.close).toHaveBeenCalled()
+    // Every later signature is told at once, without another approval request.
+    const before = fake.connects
+    await expect(lazy.ready!()).rejects.toThrow(OTHER_KEY)
+    await expect(lazy.signEvent({ kind: 1, created_at: 1, tags: [], content: '' })).rejects.toThrow(OTHER_KEY)
+    expect(fake.connects).toBe(before)
+  })
+
+  it('an extension that answers after its last waiter cancelled is let go: nothing handed over, and the next wait connects afresh', async () => {
+    // An extension cannot be aborted: its answer arrives anyway.
+    let answer!: (pk: string) => void
+    let asked = 0
+    const extension = { getPublicKey: () => { asked++; return new Promise<string>((resolve) => { answer = resolve }) }, signEvent: async () => { throw new Error('unused') } }
+    ;(globalThis as { window?: unknown }).window = { nostr: extension }
+    try {
+      let handed = 0
+      const lazy = deferredReconnect({ kind: 'nip07', pubkey: fake.pubkey }, () => { handed++ })
+      const leaving = new AbortController()
+      const wait = lazy.ready!(leaving.signal)
+      await tick()
+      leaving.abort()
+      await expect(wait).rejects.toThrow(CANCELLED)
+      answer(fake.pubkey)
+      await tick()
+      expect(handed).toBe(0)
+      // The next wait starts its own connect, and that one is handed over.
+      const next = lazy.ready!()
+      await tick()
+      expect(asked).toBe(2)
+      answer(fake.pubkey)
+      await tick()
+      expect((await next).pubkey).toBe(fake.pubkey)
+      expect(handed).toBe(1)
+    } finally {
+      delete (globalThis as { window?: unknown }).window
+    }
   })
 })

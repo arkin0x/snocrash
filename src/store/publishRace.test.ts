@@ -23,6 +23,8 @@ const relays = vi.hoisted(() => ({
   /** Finishes the relays' sign-in in flight. */
   signedIn: null as null | (() => void),
   sent: [] as unknown[],
+  /** What the store said about sending at the moment the event went out. */
+  sendingThen: [] as boolean[],
 }))
 
 vi.mock('../lib/pool', async (importOriginal) => {
@@ -46,7 +48,10 @@ describe('between the signature and the send', () => {
   beforeEach(() => {
     relays.signedIn = null
     relays.sent = []
-    vi.spyOn(pool, 'publish').mockImplementation((_urls, ev) => { relays.sent.push(ev); return [Promise.resolve('ok')] })
+    relays.sendingThen = []
+    vi.spyOn(pool, 'publish').mockImplementation((_urls, ev) => { relays.sendingThen.push(n().sending); relays.sent.push(ev); return [Promise.resolve('ok')] })
+    // A publish that goes out reloads the feed, which would open real sockets.
+    useNostr.setState({ loadFeed: async () => {} })
     useRelays.setState({ relays: ['wss://relay.test'] } as never)
     n().useNewKey()
   })
@@ -90,6 +95,7 @@ describe('between the signature and the send', () => {
     const { publishing } = await inSignIn()
     relays.signedIn!()
     await vi.waitFor(() => expect(relays.sent).toHaveLength(1))
+    expect(relays.sendingThen).toEqual([true])
     expect(await publishing).toBe(true)
     expect(n().sending).toBe(false)
   })

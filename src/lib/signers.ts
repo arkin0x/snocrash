@@ -289,17 +289,26 @@ export const OTHER_KEY = 'Your signer now signs as a different key from the one 
  * only when nobody else is waiting on it (review of parity #35).
  *
  * A signer that comes back as another key than the one saved is let go with
- * OTHER_KEY, rather than signing as someone the app does not show.
+ * OTHER_KEY, rather than signing as someone the app does not show, and this
+ * identity says so at once from then on, asking the signer nothing more:
+ * every ask would be another approval for a key that cannot be used. Picking
+ * a key again replaces it.
  */
 export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void): Signer {
   /** A connect in flight: who is waiting on it, and how to give it up. */
-  interface Attempt { abort: AbortController; done: Promise<Signer>; waiting: number; timer: ReturnType<typeof setTimeout> }
+  interface Attempt { abort: AbortController; done: Promise<Signer>; waiting: number; timer: ReturnType<typeof setTimeout>; why: string | null }
   let live: Signer | null = null
   let closed = false
+  let otherKey = false
   let attempt: Attempt | null = null
-  /** Give one connect up and forget it, if it is still the one in flight. */
-  const drop = (a: Attempt): void => {
+  /**
+   * Give one connect up and forget it, if it is still the one in flight.
+   * `why` is what it ends with: HANDSHAKE_LATE when its minute ran out,
+   * GIVEN_UP when nobody waits on it any more or the identity was let go.
+   */
+  const drop = (a: Attempt, why: string): void => {
     clearTimeout(a.timer)
+    a.why ??= why
     a.abort.abort()
     if (attempt === a) attempt = null
   }
@@ -308,10 +317,11 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
     const abort = new AbortController()
     let late!: (err: Error) => void
     const deadline = new Promise<never>((_, reject) => { late = reject })
-    const a: Attempt = { abort, waiting: 0, timer: setTimeout(() => { late(new Error(HANDSHAKE_LATE)); drop(a) }, HANDSHAKE_PATIENCE_MS), done: null as unknown as Promise<Signer> }
+    const a: Attempt = { abort, waiting: 0, why: null, timer: setTimeout(() => { late(new Error(HANDSHAKE_LATE)); drop(a, HANDSHAKE_LATE) }, HANDSHAKE_PATIENCE_MS), done: null as unknown as Promise<Signer> }
     const made = signerFromPref(pref, abort.signal).then((s) => {
-      if (closed || abort.signal.aborted) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(closed ? GIVEN_UP : HANDSHAKE_LATE) }
-      if (s.pubkey !== pref.pubkey) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(OTHER_KEY) }
+      // Given up while it was being made (a signer that answers despite the abort): let it go.
+      if (closed || abort.signal.aborted) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(closed ? GIVEN_UP : a.why ?? GIVEN_UP) }
+      if (s.pubkey !== pref.pubkey) { otherKey = true; void s.close?.().catch(() => { /* already gone */ }); throw new Error(OTHER_KEY) }
       live = s
       onReady(s)
       return s
@@ -330,6 +340,7 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
   const ready = (signal?: AbortSignal): Promise<Signer> => {
     if (live) return Promise.resolve(live)
     if (closed) return Promise.reject(new Error(GIVEN_UP))
+    if (otherKey) return Promise.reject(new Error(OTHER_KEY))
     if (signal?.aborted) return Promise.reject(new Error(CANCELLED))
     const a = connect()
     a.waiting++
@@ -345,7 +356,7 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
       // This waiter leaves; the connect goes on for anyone still waiting.
       const cancel = (): void => {
         if (!leave()) return
-        if (a.waiting === 0 && !live) drop(a)
+        if (a.waiting === 0 && !live) drop(a, GIVEN_UP)
         reject(new Error(CANCELLED))
       }
       signal?.addEventListener('abort', cancel, { once: true })
@@ -360,7 +371,7 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
     ready,
     close: async () => {
       closed = true
-      if (attempt) drop(attempt)
+      if (attempt) drop(attempt, GIVEN_UP)
       await live?.close?.()
     },
   }
