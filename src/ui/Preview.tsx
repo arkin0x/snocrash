@@ -33,6 +33,7 @@ import { useMemo, useRef } from 'react'
 import { Group } from 'three'
 import { TICKS_PER_UNIT, centroid, ticksOf, type ShardModel } from 'sno-core/shards'
 import { ShardMesh } from '../scene/ShardMesh'
+import { ShardLights } from '../scene/shardLight'
 import { useBounds } from '../lib/parts'
 
 /** How far the object reaches from its own centre, in model units. */
@@ -126,8 +127,8 @@ export function Preview({ shard, spin = true, height = 160, onOpen }: {
         position={[d * 0.75, d * 0.6, d * 0.9]}
         onUpdate={(cam) => cam.lookAt(0, 0, 0)}
       />
-      <ambientLight intensity={0.85} />
-      <directionalLight position={[6, 8, 6]} intensity={1.1} />
+      {/* The bench's rig, so a preview shows an object as the bench does (shardLight). */}
+      <ShardLights />
       <Turning shard={shard} spin={spin} centre={centre} />
     </View>
   )
