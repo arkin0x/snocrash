@@ -20,7 +20,7 @@
 import { create } from 'zustand'
 import { nip19, type Event } from 'nostr-tools'
 import { CONNECT_DEADLINE_MS, READ_DEADLINE_MS, authAll, authForRead, connectRelay, pool, queryAny, setAuthSigner, subscribeOne } from '../lib/pool'
-import { SNO_KIND, createFeed, creditAuthor, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedObject } from 'sno-core/feed'
+import { SNO_KIND, createFeed, creditAuthor, objectAddress as coordinate, creditOf, creditTags, objectFromEvent, readCredit, type Credit, type Feed, type FeedObject } from 'sno-core/feed'
 import { relaySet } from './useRelays'
 import {
   CANCELLED, GIVEN_UP, HANDSHAKE_LATE, OTHER_KEY, deferredReconnect, forgetSignerPref, loadSignerPref, nip07Signer, nip46Signer,
@@ -28,7 +28,7 @@ import {
   signerFromPref, type Signer, type SignerKind,
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
-import { fingerprint, loadLedger, noteSeen, noteSent, saveLedger, type Ledger } from '../lib/published'
+import { fingerprint, forget, loadLedger, noteRetracted, noteSeen, noteSent, retractedAt, saveLedger, type Ledger } from '../lib/published'
 import { toPayload, type ShardModel } from 'sno-core/shards'
 import { refTags } from 'sno-core/parts'
 import { forgetRef } from '../lib/parts'
@@ -126,6 +126,14 @@ interface NostrState {
   exportKey: (password: string, again: string) => string
   npub: () => string | null
   publish: (shard: ShardModel) => Promise<boolean>
+  /** Whether a retraction is in flight (RETRACT). */
+  retracting: boolean
+  /**
+   * RETRACT: ask your relays to drop a published object (NIP-09, by address
+   * and event id), through the same signing and sending as PUBLISH, and
+   * forget it in the ledger once a relay takes the deletion.
+   */
+  retract: (shard: ShardModel) => Promise<boolean>
   /** Call off the publish in flight (the PUBLISHING chip): it sends nothing, and a reconnect it was waiting on is given up. */
   cancelPublish: () => void
   /**
@@ -180,6 +188,23 @@ export function objectTemplate(shard: ShardModel, createdAt: number, author?: st
       ...(credit ? creditTags(credit, { notify }) : []),
     ],
     content: JSON.stringify(payload),
+  }
+}
+
+/**
+ * The deletion that takes a kind 33331 object down (NIP-09): by its address,
+ * so every version up to this moment goes, by its event id when that is
+ * known, and with the `k` that says what kind it was. `reason` is the
+ * content, a word for a human reading the relay. ONOSENDAI's
+ * (lib/published.ts retractionTemplate), tag for tag, so a relay sees one
+ * kind of retraction whichever app sent it.
+ */
+export function retractionTemplate(pubkey: string, d: string, eventId: string | undefined, createdAt: number, reason: string): { kind: number; created_at: number; tags: string[][]; content: string } {
+  return {
+    kind: 5,
+    created_at: createdAt,
+    content: reason,
+    tags: [['a', coordinate(pubkey, d)], ...(eventId ? [['e', eventId]] : []), ['k', String(SNO_KIND)]],
   }
 }
 
@@ -367,7 +392,7 @@ function untilCancelled<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
 }
 
 /** What a publish that went out signed by a key that is no longer this one says. */
-const KEY_CHANGED = 'Not published: the key changed while it was being signed. Publish again to sign it with the current key.'
+const KEY_CHANGED = 'Not published: the key changed while it was going out. Publish again to sign it with the current key.'
 
 /** What a publish that failed says. */
 function publishFailed(err: unknown, signedIn: boolean): string {
@@ -377,6 +402,40 @@ function publishFailed(err: unknown, signedIn: boolean): string {
   // Signed out meanwhile: that was the point, so nothing more to say.
   if (why === GIVEN_UP) return signedIn ? KEY_CHANGED : 'Signed out, so nothing was published.'
   return `Could not publish: ${why}`
+}
+
+/** What a publish refused while a retraction is in flight says. */
+const RETRACTION_OUT = 'A retraction is going out. Try again once it is done.'
+
+/** What a retraction that failed says: the same cases as a publish, in its own words. */
+function retractFailed(err: unknown, signedIn: boolean, name: string): string {
+  const why = err instanceof Error ? err.message : String(err)
+  if (why === CANCELLED) return 'Retraction cancelled. Nothing went out.'
+  if (why === HANDSHAKE_LATE || why === OTHER_KEY) return why
+  // Only the key that published an object can retract it, so a new key has nothing to resend.
+  if (why === GIVEN_UP) return signedIn ? `Not retracted: the key changed while it was going out. Only the key that published "${name}" can retract it.` : 'Signed out, so nothing was retracted.'
+  return `Could not retract "${name}": ${why}`
+}
+
+/**
+ * A per-object clock, so a publish is strictly newer than the last publish
+ * or retraction of the same object: a relay keeps the addressable event with
+ * the greatest created_at, and a deletion by address covers every version up
+ * to its own second (sno-core isDeleted), so PUBLISH AGAIN or PUBLISH after
+ * RETRACT inside one second would otherwise lose. Session-local, seeded from
+ * the ledger's record of the last send. ONOSENDAI's (store/usePublished.ts).
+ *
+ * A retraction forgets the ledger's record, so its second is kept apart for a
+ * while (lib/published retractedAt): a PUBLISH right after a reload must
+ * still land newer than the deletion, or relays that honor it drop the new
+ * version too (review of parity #36).
+ */
+const clock = new Map<string, number>()
+function nextAt(id: string, floor: number): number {
+  const now = Math.floor(Date.now() / 1000)
+  const at = Math.max(now, floor + 1, (clock.get(id) ?? 0) + 1)
+  clock.set(id, at)
+  return at
 }
 
 /**
@@ -459,6 +518,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   scope: 'global',
   loading: false,
   publishing: false,
+  retracting: false,
   sending: false,
   notice: null,
 
@@ -541,10 +601,12 @@ export const useNostr = create<NostrState>((set, get) => ({
 
   publish: async (shard) => {
     const relays = relaySet()
+    // One thing out at a time: they share the chip, and its cancel.
+    if (get().retracting) { set({ notice: RETRACTION_OUT }); return false }
     if (!signer) { set({ notice: 'Pick a key first.' }); return false }
     if (shard.vertices.length === 0 && !shard.parts?.length) { set({ notice: 'An empty object has nothing to publish.' }); return false }
     set({ publishing: true, notice: null })
-    const template = objectTemplate(shard, Math.floor(Date.now() / 1000), signer.pubkey)
+    const template = objectTemplate(shard, nextAt(shard.id, Math.max(get().published[shard.id]?.at ?? 0, retractedAt(shard.id))), signer.pubkey)
     const abort = new AbortController()
     publishAbort = abort
     try {
@@ -560,7 +622,7 @@ export const useNostr = create<NostrState>((set, get) => ({
         // Written down here rather than asked of a relay later: an addressable
         // event keeps no memory of what it replaced, so this is the only record
         // that this object went out and what it looked like when it did.
-        const ledger = noteSent(get().published, shard.id, fingerprint(template.content), signed.pubkey, signed.created_at)
+        const ledger = noteSent(get().published, shard.id, fingerprint(template.content), signed.pubkey, signed.created_at, signed.id)
         saveLedger(ledger)
         set({ published: ledger })
         // Every object placing this one shows the new version at once.
@@ -583,8 +645,61 @@ export const useNostr = create<NostrState>((set, get) => ({
 
   cancelPublish: () => { publishAbort?.abort() },
 
+  retract: async (shard) => {
+    if (get().retracting) return false
+    if (get().publishing) { set({ notice: 'Something is being published. Retract once it is done.' }); return false }
+    if (!signer) { set({ notice: 'Pick a key first.' }); return false }
+    const me = signer.pubkey
+    const rec = get().published[shard.id]
+    // Only what this browser knows went out is retracted: a deletion is
+    // irreversible, and one for an object never published is a mistake
+    // (review of parity #36).
+    if (!rec) { set({ notice: `"${shard.name}" has not been published from here, so there is nothing to retract.` }); return false }
+    // Only the author's deletion deletes (NIP-09): an object published under
+    // another key is not this key's to take down.
+    if (rec.pubkey !== me) { set({ notice: 'This object was published under another key; only that key can retract it.' }); return false }
+    const relays = relaySet()
+    set({ retracting: true, notice: null })
+    const abort = new AbortController()
+    publishAbort = abort
+    try {
+      // The same path as PUBLISH: the signer's patience, a cancel from the
+      // chip, and the key checked once signed and again right before sending.
+      const template = retractionTemplate(me, shard.id, rec.id, nextAt(shard.id, Math.max(rec.at, retractedAt(shard.id))), 'object retracted')
+      const signed = await signForPublish(template, abort.signal, () => get().pubkey)
+      await untilCancelled(authAll(relays), abort.signal)
+      readyToSend(signed, abort.signal, () => get().pubkey)
+      set({ sending: true })
+      const results = await Promise.allSettled(pool.publish(relays, signed))
+      const took = results.filter((r) => r.status === 'fulfilled').length
+      if (took === 0) {
+        set({ retracting: false, notice: `No relay took the retraction of "${shard.name}".` })
+        return false
+      }
+      const ledger = forget(get().published, shard.id)
+      saveLedger(ledger)
+      noteRetracted(shard.id, signed.created_at)
+      // Every object placing this one stops drawing it on its next fetch.
+      forgetRef(['a', coordinate(me, shard.id)])
+      set({
+        published: ledger,
+        retracting: false,
+        notice: `"${shard.name}" is retracted: the deletion went to ${took} of ${relays.length} relays. Relays that honor it drop the object. PUBLISH puts it back.`,
+      })
+      void get().loadFeed()
+      return true
+    } catch (err) {
+      set({ retracting: false, notice: retractFailed(err, get().signedIn, shard.name) })
+      return false
+    } finally {
+      if (publishAbort === abort) publishAbort = null
+      set({ sending: false })
+    }
+  },
+
   publishPalette: async (name, colors, prev) => {
     const relays = relaySet()
+    if (get().retracting) { set({ notice: RETRACTION_OUT }); return null }
     if (!signer) { set({ notice: 'Pick a key first.' }); return null }
     if (colors.length < 2 || colors.length > 256) { set({ notice: 'A palette is 2 to 256 colors.' }); return null }
     set({ publishing: true, notice: null })
@@ -723,9 +838,11 @@ export const useNostr = create<NostrState>((set, get) => ({
     // because what a relay returns has been through the reader and the writer
     // again and need only match in meaning, not byte for byte.
     const mine = get().pubkey
-    if (mine) {
+    // Only the newest load: an older one finishing late would put back a
+    // record a retraction just forgot (review of parity #36).
+    if (mine && gen === feedGen) {
       let ledger = get().published
-      for (const o of get().feed) if (o.pubkey === mine) ledger = noteSeen(ledger, o.d, mine, o.createdAt)
+      for (const o of get().feed) if (o.pubkey === mine) ledger = noteSeen(ledger, o.d, mine, o.createdAt, o.id)
       if (ledger !== get().published) { saveLedger(ledger); set({ published: ledger }) }
     }
     if (gen === feedGen) set({ loading: false })

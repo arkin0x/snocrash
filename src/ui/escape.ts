@@ -17,7 +17,7 @@
 import { useWorkshop } from '../store/useWorkshop'
 
 /** What the workshop's own Escape closes, or null when it leaves the press alone. */
-export type WorkshopEscape = 'login' | 'menu' | 'panel' | 'view' | 'selection' | null
+export type WorkshopEscape = 'confirm' | 'login' | 'menu' | 'panel' | 'view' | 'selection' | null
 
 /**
  * The workshop's step. The palette sheet listens for the key itself, so
@@ -31,11 +31,16 @@ export type WorkshopEscape = 'login' | 'menu' | 'panel' | 'view' | 'selection' |
  * a field is left alone (`typing`).
  */
 export function workshopEscape(s: {
-  sheet: boolean; login: boolean; loginBusy: boolean; menu: boolean
+  sheet: boolean; confirm: boolean; confirmBusy: boolean
+  login: boolean; loginBusy: boolean; menu: boolean
   making: boolean; typing: boolean
   panel: boolean; viewOpen: boolean; holding: boolean
 }): WorkshopEscape {
   if (s.sheet) return null
+  // A confirmation (RETRACT's) is a modal, closed as its CANCEL would be,
+  // and left alone while its answer is going out, as ONOSENDAI's ConfirmModal
+  // is (useEscape 'modal', unless busy).
+  if (s.confirm) return s.confirmBusy ? null : 'confirm'
   if (s.login) return s.loginBusy ? null : 'login'
   if (s.menu) return 'menu'
   if (!s.making || s.typing) return null

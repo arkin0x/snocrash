@@ -218,7 +218,7 @@ describe('publishing while a saved bunker reconnects (review of parity #35)', ()
     n().useNewKey()
     await tick(0)
     expect(await publishing).toBe(false)
-    expect(n().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
+    expect(n().notice).toBe('Not published: the key changed while it was going out. Publish again to sign it with the current key.')
   })
 
   it('signed out while it waits: the publish says only that', async () => {

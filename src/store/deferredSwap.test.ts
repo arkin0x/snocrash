@@ -135,7 +135,7 @@ describe('a signature that lands after the key changed (review of parity #35)', 
     useNostr.getState().useNewKey()
     approve()
     expect(await publishing).toBe(false)
-    expect(useNostr.getState().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
+    expect(useNostr.getState().notice).toBe('Not published: the key changed while it was going out. Publish again to sign it with the current key.')
   })
 
   it('a signature that fails after the key changed says the key changed, not the failure', async () => {
@@ -150,6 +150,6 @@ describe('a signature that lands after the key changed (review of parity #35)', 
     useNostr.getState().useNewKey()
     refuse()
     expect(await publishing).toBe(false)
-    expect(useNostr.getState().notice).toBe('Not published: the key changed while it was being signed. Publish again to sign it with the current key.')
+    expect(useNostr.getState().notice).toBe('Not published: the key changed while it was going out. Publish again to sign it with the current key.')
   })
 })

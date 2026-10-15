@@ -258,7 +258,7 @@ export const CANCELLED = 'Cancelled.'
 export const HANDSHAKE_PATIENCE_MS = 60_000
 
 /** What a reconnect that ran out of patience says: a bunker or an extension, so neither is named. */
-export const HANDSHAKE_LATE = 'Your signer did not answer the reconnect within a minute. Approve the connection in your signer, then publish again.'
+export const HANDSHAKE_LATE = 'Your signer did not answer the reconnect within a minute. Approve the connection in your signer, then try again.'
 
 /** What a reconnect says when the signer came back as another key than the one saved here. */
 export const OTHER_KEY = 'Your signer now signs as a different key from the one saved here. Choose your key again in the menu.'

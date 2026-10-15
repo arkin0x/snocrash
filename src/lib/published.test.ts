@@ -5,8 +5,8 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  STATE_HELP, STATE_LABEL, fingerprint, loadLedger, noteSeen, noteSent,
-  publishState, saveLedger, type Ledger,
+  STATE_HELP, STATE_LABEL, fingerprint, forget, loadLedger, noteRetracted, noteSeen, noteSent,
+  publishState, retractedAt, saveLedger, type Ledger,
 } from './published'
 
 const KEY_A = 'a'.repeat(64)
@@ -115,6 +115,22 @@ describe('the ledger on disk', () => {
     expect(loadLedger()).toEqual(l)
   })
 
+  it("keeps the event id a retraction names, sent or seen, and reads a record without one as before (review of #36)", () => {
+    const l = noteSeen(noteSent({}, 'sent', 'fp', KEY_A, 7, 'e'.repeat(64)), 'seen', KEY_A, 8, 'f'.repeat(64))
+    saveLedger({ ...l, old: { at: 1, fp: 'x', pubkey: KEY_A } })
+    const back = loadLedger()
+    expect(back.sent).toEqual({ at: 7, fp: 'fp', pubkey: KEY_A, id: 'e'.repeat(64) })
+    expect(back.seen).toEqual({ at: 8, fp: '', pubkey: KEY_A, id: 'f'.repeat(64) })
+    expect(back.old).toEqual({ at: 1, fp: 'x', pubkey: KEY_A })
+    expect('id' in back.old).toBe(false)
+  })
+
+  it('forgets one object, and leaves the rest', () => {
+    const l = noteSent(noteSent({}, 'a', 'fp', KEY_A, 1), 'b', 'fp', KEY_A, 2)
+    expect(Object.keys(forget(l, 'a'))).toEqual(['b'])
+    expect(forget(l, 'missing')).toBe(l)
+  })
+
   it('is empty rather than broken when what is stored is not a ledger', () => {
     localStorage.setItem('snocrash:published', 'not json')
     expect(loadLedger()).toEqual({})
@@ -132,5 +148,26 @@ describe('the ledger on disk', () => {
     const l = loadLedger()
     expect(Object.keys(l).sort()).toEqual(['good', 'noFp'])
     expect(l.noFp.fp).toBe('')
+  })
+})
+
+describe('when an object was retracted (review of #36)', () => {
+  beforeEach(stubStorage)
+
+  it('is remembered after the ledger forgets the object, and only the latest second counts', () => {
+    const now = Math.floor(Date.now() / 1000)
+    expect(retractedAt('lamp')).toBe(0)
+    noteRetracted('lamp', now)
+    noteRetracted('lamp', now - 5)
+    expect(retractedAt('lamp')).toBe(now)
+  })
+
+  it('lets go of retractions a day old when it writes', () => {
+    const now = Math.floor(Date.now() / 1000)
+    localStorage.setItem('snocrash:retracted', JSON.stringify({ stale: now - 2 * 24 * 60 * 60, fresh: now - 60 }))
+    noteRetracted('lamp', now)
+    expect(retractedAt('stale')).toBe(0)
+    expect(retractedAt('fresh')).toBe(now - 60)
+    expect(retractedAt('lamp')).toBe(now)
   })
 })

@@ -25,21 +25,28 @@ interface Props {
   cancelLabel?: string | null
   onConfirm: () => void
   onCancel: () => void
+  /**
+   * While busy, what CANCEL does instead of nothing: calls off what is in
+   * flight (a retraction still being signed). Left out, CANCEL waits.
+   */
+  onBusyCancel?: () => void
 }
 
-export function ConfirmModal({ banner, title, body, figure, busy = false, confirmLabel, danger = true, cardClassName, cancelLabel = 'CANCEL', onConfirm, onCancel }: Props): JSX.Element {
+export function ConfirmModal({ banner, title, body, figure, busy = false, confirmLabel, danger = true, cardClassName, cancelLabel = 'CANCEL', onConfirm, onCancel, onBusyCancel }: Props): JSX.Element {
   // Through a portal: every .panel has a backdrop-filter, which makes it a
   // stacking context, so a fixed modal rendered inside one panel would be
   // painted under the panels that follow it in the column.
   return createPortal(
-    <div className="modal" role="dialog" aria-modal="true" aria-label={title} onPointerDown={onCancel}>
+    // A tap outside cancels, but not while busy: the answer is on its way,
+    // and the question must stay up until it lands (ONOSENDAI's guard).
+    <div className="modal" role="dialog" aria-modal="true" aria-label={title} onPointerDown={() => { if (!busy) onCancel() }}>
       <div className={`modal__card ${cardClassName ?? ''}`} onPointerDown={(e) => e.stopPropagation()}>
         {banner}
         <h2 className="modal__title">{title}</h2>
         {figure !== undefined && <div className="modal__figure">{figure}</div>}
         <p className="modal__body">{body}</p>
         <div className="modal__row">
-          {cancelLabel !== null && <button className="modal__cancel" onClick={onCancel} disabled={busy}>{cancelLabel}</button>}
+          {cancelLabel !== null && <button className="modal__cancel" onClick={busy ? onBusyCancel : onCancel} disabled={busy && !onBusyCancel}>{cancelLabel}</button>}
           <button className={`modal__confirm ${danger ? 'modal__confirm--danger' : ''} ${busy ? 'is-busy' : ''}`} onClick={onConfirm} disabled={busy}>
             {busy && <span className="spin" aria-hidden="true" />}{confirmLabel}
           </button>

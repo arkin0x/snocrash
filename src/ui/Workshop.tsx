@@ -23,6 +23,7 @@ import { Compass3D } from './Compass3D'
 import { ArrowLeft, Box, ChevronDown, ChevronUp, ClipboardCopy, ClipboardPaste, Copy, CopyPlus, Eraser, Eye, FlipVertical2, Globe, Grid2x2Plus, Grid3x3, Link, Merge, MousePointer2, PaintBucket, Pickaxe, Pipette, Plus, Redo2, RotateCcw, RotateCw, Scissors, Stamp, Trash2, Triangle, type LucideIcon, Undo2, WandSparkles, Waypoints, X } from 'lucide-react'
 import { noCallout, useRepeatable } from '../hooks/useRepeatable'
 import { PaletteModal } from './PaletteModal'
+import { ConfirmModal } from './ConfirmModal'
 import { holding, letGo, typingIn, workshopEscape } from './escape'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
@@ -548,6 +549,12 @@ export function Workshop(): JSX.Element | null {
   const signedIn = useNostr((s) => s.signedIn)
   const publishing = useNostr((s) => s.publishing)
   const sending = useNostr((s) => s.sending)
+  // RETRACT asks first, so the asking is state here; the yes goes to the
+  // store (ONOSENDAI's Workshop, the same split). The asking names the object
+  // it was asked about: a question left standing must never become one about
+  // whatever object is open next (review of parity #36).
+  const retracting = useNostr((s) => s.retracting)
+  const [retractAsk, setRetractAsk] = useState<string | null>(null)
   const nostrNotice = useNostr((s) => s.notice)
   // Where you are is the address bar's business (lib/route), so a link can
   // land on the feed or on one object, and the phone's back gesture works.
@@ -591,6 +598,11 @@ export function Workshop(): JSX.Element | null {
   const [askingColor, setAskingColor] = useState(false)
   useEffect(() => { if (selectedFace === null) setAskingColor(false) }, [selectedFace])
   const [viewOpen, setViewOpen] = useState(false)
+  // The question goes with the object, the view and the panel it was asked
+  // in, and with the workshop itself (ONOSENDAI resets on open the same way).
+  useEffect(() => { setRetractAsk(null) }, [shard?.id, view, panel, open])
+  /** Whether RETRACT's question is up, and about the object open now. */
+  const asking = retractAsk !== null && retractAsk === shard?.id
   // On a phone the palette sheet and the TOOLS panel would share the bottom,
   // so opening the sheet puts the panel away.
   const [narrow, setNarrow] = useState<boolean>(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches)
@@ -631,11 +643,13 @@ export function Workshop(): JSX.Element | null {
   const escape = useRef<(typing: boolean) => void>(() => {})
   escape.current = (typing) => {
     const step = workshopEscape({
-      sheet: pickerOpen, login: loginOpen, loginBusy: useNostr.getState().loggingIn, menu: menuOpen,
+      sheet: pickerOpen, confirm: asking, confirmBusy: retracting,
+      login: loginOpen, loginBusy: useNostr.getState().loggingIn, menu: menuOpen,
       making: view === 'make', typing,
       panel: panel !== null, viewOpen, holding: holding(),
     })
-    if (step === 'login') setLoginOpen(false)
+    if (step === 'confirm') setRetractAsk(null)
+    else if (step === 'login') setLoginOpen(false)
     else if (step === 'menu') setMenuOpen(false)
     else if (step === 'panel') setPanel(null)
     else if (step === 'view') setViewOpen(false)
@@ -781,16 +795,16 @@ export function Workshop(): JSX.Element | null {
             otherwise hold it, and every PUBLISH, for good. Once it is going out
             to the relays it is too late, and the chip says so (review of
             parity #35). */}
-        {making && publishing && (
+        {making && (publishing || retracting) && (
           <button
             className="chip ws__chip ws__chip--work"
             aria-live="polite"
             disabled={sending}
-            aria-label={sending ? 'Sending to the relays. Too late to cancel.' : 'Publishing. Tap to cancel.'}
+            aria-label={sending ? 'Sending to the relays. Too late to cancel.' : `${retracting ? 'Retracting' : 'Publishing'}. Tap to cancel.`}
             title={sending ? 'Too late to cancel: it is going out.' : 'Tap to cancel'}
             onClick={() => useNostr.getState().cancelPublish()}
           >
-            <Pickaxe size={12} strokeWidth={2.25} aria-hidden />{sending ? 'SENDING' : 'PUBLISHING'}
+            <Pickaxe size={12} strokeWidth={2.25} aria-hidden />{sending ? 'SENDING' : retracting ? 'RETRACTING' : 'PUBLISHING'}
           </button>
         )}
         {/* Out of the way while a panel is open: on a phone they wrapped the chip
@@ -841,11 +855,35 @@ export function Workshop(): JSX.Element | null {
               <span className="workshop__gap" />
             </div>
             <div className="workshop__list-row">
-              <button className="workshop__btn workshop__btn--warn" disabled={!hasContent || publishing || !signedIn} onClick={publish} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[pubState]}>{publishing ? 'PUBLISHING' : pubState === 'published' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
+              <button className="workshop__btn workshop__btn--warn" disabled={!hasContent || publishing || retracting || !signedIn} onClick={publish} title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[pubState]}>{publishing ? 'PUBLISHING' : pubState === 'published' || pubState === 'edited' ? 'PUBLISH AGAIN' : 'PUBLISH'}</button>
+              {(pubState === 'published' || pubState === 'edited') && (
+                <button
+                  className="workshop__btn workshop__btn--danger"
+                  disabled={publishing || retracting || !signedIn}
+                  onClick={() => setRetractAsk(shard.id)}
+                  title="Ask your relays to drop the published object (NIP-09). Copies others made stay theirs. The object stays here."
+                >{retracting ? 'RETRACTING' : 'RETRACT'}</button>
+              )}
               <button className="workshop__btn" disabled={shard.vertices.length === 0} onClick={() => saveFile(toPly(shard), fileNameFor(shard, 'ply'))} title="Save as a PLY, which Blender and MeshLab read">EXPORT PLY</button>
             </div>
             <span className="workshop__work">{wireBytes.toLocaleString('en-US')} BYTES ON THE WIRE · {shard.vertices.length} VERTICES + {shard.faces.length} FACES{shard.parts?.length ? ` + ${shard.parts.length} PLACED` : ''}</span>
           </div>
+          {asking && (
+            <ConfirmModal
+              title={`Retract "${shard.name}"?`}
+              body={<>A deletion goes to your relays, naming the object&apos;s address (NIP-09). Relays that honor it drop the object and the feed stops listing it; a relay that does not may keep handing it out. Copies others made, and objects that place this one, stay theirs. The object stays in your workshop, and PUBLISH puts it back.</>}
+              confirmLabel="RETRACT"
+              busy={retracting}
+              // While it is being signed, CANCEL calls it off as the chip does; once it is going out, nothing can.
+              onBusyCancel={sending ? undefined : () => useNostr.getState().cancelPublish()}
+              onConfirm={() => {
+                // Only the object it was asked about, and only while it is the one open.
+                if (retractAsk !== shard.id) return
+                void useNostr.getState().retract(shard).then(() => setRetractAsk(null))
+              }}
+              onCancel={() => setRetractAsk(null)}
+            />
+          )}
           <div className="ws__panel-title">OBJECTS ({shards.length})</div>
           <div className="workshop__list-row">
             <button className="workshop__new" onClick={() => w().create()}>+ NEW OBJECT</button>
@@ -947,7 +985,7 @@ export function Workshop(): JSX.Element | null {
         <div className="ws__exit">
           <button
             className="workshop__deploy"
-            disabled={!hasContent || publishing || !signedIn}
+            disabled={!hasContent || publishing || retracting || !signedIn}
             onClick={publish}
             title={!signedIn ? 'Choose a key in the menu first' : STATE_HELP[pubState]}
           >{publishing ? 'SENDING' : 'PUBLISH ▸'}</button>
