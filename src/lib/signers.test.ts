@@ -11,7 +11,7 @@ import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { nip19 } from 'nostr-tools'
 import {
   forgetSignerPref, loadSignerPref, localSigner, prefOf, saveSignerPref,
-  signerFromPref, deferredReconnect, type Signer, type SignerPref,
+  signerFromPref, deferredReconnect, GIVEN_UP, type Signer, type SignerPref,
 } from './signers'
 
 function stubStorage(): void {
@@ -131,5 +131,18 @@ describe('deferredReconnect', () => {
     const lazy = deferredReconnect(pref, () => { made++ })
     await Promise.all([lazy.reconnect?.(), lazy.reconnect?.(), lazy.reconnect?.()])
     expect(made).toBe(1)
+  })
+
+  it('let go while its handshake is in flight, hands nothing over and closes what the handshake brings back (review of parity #35)', async () => {
+    const pref: SignerPref = { kind: 'local', pubkey: pk, nsec: nip19.nsecEncode(sk) }
+    let handed: Signer | null = null
+    const lazy = deferredReconnect(pref, (s) => { handed = s })
+    const inFlight = lazy.reconnect!()
+    await lazy.close!()
+    await expect(inFlight).rejects.toThrow(GIVEN_UP)
+    expect(handed).toBeNull()
+    // And it starts no second handshake afterwards.
+    await expect(lazy.signEvent({ kind: 1, created_at: 1, tags: [], content: '' })).rejects.toThrow(GIVEN_UP)
+    expect(handed).toBeNull()
   })
 })

@@ -110,14 +110,32 @@ export async function nip07Signer(): Promise<Signer> {
  * client it already approved, rather than a stranger asking for permission
  * again. It signs nothing of yours; it is only how this app is recognised
  * across the relay.
+ *
+ * The handshake waits on somebody's phone and has no deadline of its own, so
+ * `signal` gives it up: the bunker is closed and the promise rejects at once.
+ * A handshake that fails closes it too, so a given-up or failed attempt
+ * leaves no subscription waiting on the bunker's relay (review of parity #35).
  */
-export async function nip46Signer(bunkerUri: string, clientSecretKey?: Uint8Array): Promise<Signer> {
+export async function nip46Signer(bunkerUri: string, clientSecretKey?: Uint8Array, signal?: AbortSignal): Promise<Signer> {
   const clientSk = clientSecretKey ?? generateSecretKey()
   const bp = await nip46.parseBunkerInput(bunkerUri.trim())
   if (!bp) throw new Error('That is not a bunker:// URI or a NIP-05 that points at one.')
+  if (signal?.aborted) throw new Error(GIVEN_UP)
   const bunker = nip46.BunkerSigner.fromBunker(clientSk, bp, { pool: pool as never })
-  await bunker.connect()
-  const pubkey = await bunker.getPublicKey()
+  let pubkey: string
+  let stop: (() => void) | null = null
+  try {
+    const givenUp = new Promise<never>((_, reject) => {
+      stop = () => reject(new Error(GIVEN_UP))
+      signal?.addEventListener('abort', stop, { once: true })
+    })
+    pubkey = await Promise.race([bunker.connect().then(() => bunker.getPublicKey()), givenUp])
+  } catch (err) {
+    void bunker.close().catch(() => { /* already gone */ })
+    throw err
+  } finally {
+    if (stop) signal?.removeEventListener('abort', stop)
+  }
   const signer: Signer = {
     kind: 'nip46',
     pubkey,
@@ -216,6 +234,9 @@ export function forgetSignerPref(): void {
   try { localStorage.removeItem(PREF_KEY); localStorage.removeItem(OLD_SK_KEY) } catch { /* ignore */ }
 }
 
+/** Why a way in that was given up rejects. */
+export const GIVEN_UP = 'Given up.'
+
 /**
  * An identity whose pubkey is already known but whose signer has not been
  * reconnected yet.
@@ -225,11 +246,26 @@ export function forgetSignerPref(): void {
  * handshake, once, and hands the live signer to `onReady` so the store can
  * swap it in. Without this, opening the app with a bunker identity would mean
  * waiting on somebody's phone before anything could be drawn.
+ *
+ * `close` lets it go, handshake and all: a live signer already handed over
+ * is closed, and one a handshake still in flight brings back later is closed
+ * on arrival and never handed to `onReady`, so an identity replaced in the
+ * meantime stays replaced (review of parity #35).
  */
 export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void): Signer {
   let pending: Promise<Signer> | null = null
+  let live: Signer | null = null
+  let closed = false
   const ensure = (): Promise<Signer> => {
-    if (!pending) pending = signerFromPref(pref).then((s) => { onReady(s); return s })
+    if (closed) return Promise.reject(new Error(GIVEN_UP))
+    if (!pending) {
+      pending = signerFromPref(pref).then((s) => {
+        if (closed) { void s.close?.().catch(() => { /* already gone */ }); throw new Error(GIVEN_UP) }
+        live = s
+        onReady(s)
+        return s
+      })
+    }
     return pending
   }
   return {
@@ -237,5 +273,9 @@ export function deferredReconnect(pref: SignerPref, onReady: (s: Signer) => void
     pubkey: pref.pubkey,
     signEvent: (template) => ensure().then((s) => s.signEvent(template)),
     reconnect: ensure,
+    close: async () => {
+      closed = true
+      await live?.close?.()
+    },
   }
 }

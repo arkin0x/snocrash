@@ -20,6 +20,11 @@ import { SimplePool, type Event, type EventTemplate, type Filter, type VerifiedE
 import { readEach } from 'sno-core/feed'
 
 export const pool = new SimplePool()
+// Remember which relays each event came from (pool.seenOn): the relay hints in
+// an object's link, a credit's relay and a palette's pointer are read from it,
+// and nostr-tools leaves it off by default, so every hint came out empty
+// (review of parity #35).
+pool.trackRelays = true
 
 /** How long to keep a read open when a relay never says it is finished. */
 export const READ_DEADLINE_MS = 6000

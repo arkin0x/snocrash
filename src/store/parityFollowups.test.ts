@@ -23,7 +23,7 @@ import { BUILT_IN, snapHex } from 'sno-core/snoPalette'
 import { DEFAULT_PALETTE, useWorkshop } from './useWorkshop'
 import { useNostr } from './useNostr'
 import WORKSHOP from '../ui/Workshop.tsx?raw'
-import NOSTR from './useNostr.ts?raw'
+import FEED from '../ui/Feed.tsx?raw'
 
 const w = () => useWorkshop.getState()
 const ME = 'a'.repeat(64)
@@ -110,6 +110,10 @@ describe('the unit and grid − and + step the shard the edit lands on (1)', () 
     expect(WORKSHOP).toMatch(/neededExtent\(held\)/)
     expect(WORKSHOP).toMatch(/disabled=\{unit <= 0\} aria-label="Smaller unit"/)
     expect(WORKSHOP).toMatch(/<span className="workshop__value">\{unit\}<\/span>/)
+    // The info line and the LEVEL stack's edge read the same shard (review of #35).
+    expect(WORKSHOP).toMatch(/unit 2\^\{unit\} = \{formatCellSize\(unit\)\}/)
+    expect(WORKSHOP).toMatch(/const extentTicks = useWorkshop\(\(s\) => \(s\.target\(\)\?\.extent/)
+    expect(WORKSHOP).not.toMatch(/s\.current\(\)\?\.extent/)
   })
 })
 
@@ -236,10 +240,9 @@ describe('an edited feed object credits its author, as REMIX does (7)', () => {
     expect(WORKSHOP).toMatch(/mine \? readCredit\(o\.event\.tags\) \?\? undefined : \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
   })
 
-  it('an object fetched by its link says where it was seen, for the relay a credit names (review of #35)', () => {
-    const fetch = NOSTR.slice(NOSTR.indexOf('fetchObject: async'), NOSTR.indexOf('fetchPalette: async'))
-    expect(fetch).toMatch(/pool\.seenOn\.get\(ev\.id\)/)
-    expect(fetch).toMatch(/seen\.length \? \{ \.\.\.o, seen \} : o/)
+  it("REMIX of your own object keeps its upstream credit rather than crediting you (review of #35)", () => {
+    expect(FEED).toMatch(/const credit = mine \? readCredit\(o\.event\.tags\) \?\? undefined : \{ address: o\.address, relay: o\.seen\?\.\[0\] \}/)
+    expect(FEED).toMatch(/importShard\(o\.shard, credit\)/)
   })
 })
 

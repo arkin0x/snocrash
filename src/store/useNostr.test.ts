@@ -202,9 +202,11 @@ describe('a remix, published (DECK-0003 crediting; ruled 2026-10-08)', () => {
     expect(tags.some((t) => (t[0] === 'a' || t[0] === 'e') && t[1]?.includes(':chair'))).toBe(false)
   })
 
-  it('a credit to the key that signs is left off: an object does not credit its own author (review of parity #35)', () => {
+  it('a credit to the key that signs keeps its q and drops its p: nobody needs telling they copied their own object (review of parity #35)', () => {
     const own = withCredit({ ...original.shard, id: 'chair-again' }, { address: original.address })
-    expect(objectTemplate(own, 2, author).tags.some((t) => t[0] === 'q' || t[0] === 'p')).toBe(false)
+    const tags = objectTemplate(own, 2, author).tags
+    expect(tags).toContainEqual(['q', `33331:${author}:chair`, ''])
+    expect(tags.some((t) => t[0] === 'p')).toBe(false)
     expect(objectTemplate(own, 2, 'f'.repeat(64)).tags).toContainEqual(['p', author])
   })
 

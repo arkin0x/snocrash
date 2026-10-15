@@ -115,7 +115,7 @@ function Toast(): JSX.Element | null {
 function LevelStack(): JSX.Element {
   const level = useWorkshop((s) => s.level)
   const plane = useWorkshop((s) => s.plane)
-  const extentTicks = useWorkshop((s) => (s.current()?.extent ?? 0) * TICKS_PER_UNIT)
+  const extentTicks = useWorkshop((s) => (s.target()?.extent ?? 0) * TICKS_PER_UNIT)
   const bind = useRepeatable()
   const w = useWorkshop.getState
   return (
@@ -798,7 +798,7 @@ export function Workshop(): JSX.Element | null {
         <div className="ws__panel" role="region" aria-label="Menu">
           <input className="workshop__name" value={shard.name} onChange={(e) => w().rename(shard.id, e.target.value)} aria-label="Object name" spellCheck={false} />
           <div className="ws__stats">
-            {shard.vertices.length} vertices · {shard.faces.length} faces{shard.parts?.length ? ` · ${shard.parts.length} placed objects` : ''} · unit 2^{shard.unit} = {formatCellSize(shard.unit)}
+            {shard.vertices.length} vertices · {shard.faces.length} faces{shard.parts?.length ? ` · ${shard.parts.length} placed objects` : ''} · unit 2^{unit} = {formatCellSize(unit)}
             {shard.mode !== 'solid' && shard.faces.length > 0 && <> · faces draw in SOLID</>}
             {shard.facecolors && <> · <button className="workshop__link" onClick={() => w().clearFaceColors()} title="Give every face back to its corners, so colors blend across them again">{shard.facecolors.length} face colors, clear</button></>}
           </div>

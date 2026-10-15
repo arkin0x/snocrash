@@ -78,6 +78,15 @@ let signer: Signer | null = null
  * modal, and its late error must not linger (review of parity #35).
  */
 let attempt = 0
+/** Gives the live attempt up where it can be (a bunker's handshake); see `attempt`. */
+let attemptAbort: AbortController | null = null
+
+/** Give up the attempt in flight, if any: the next one, a new key, sign-out, or ✕. */
+function giveUpAttempt(): void {
+  attempt++
+  attemptAbort?.abort()
+  attemptAbort = null
+}
 
 /** The current signer, for the one thing outside this module that needs it. */
 export function currentSigner(): Signer | null { return signer }
@@ -138,15 +147,16 @@ interface NostrState {
 
 /**
  * The event an object goes out as. Pure, so the shape is testable without a
- * relay. `author` is the key that will sign it: a credit naming that key is
- * left off, since an object does not credit its own author (one opened from
- * the feed while signed out, or under another key, and edited, carries a
- * credit to whoever published it, who may be you; review of parity #35).
+ * relay. `author` is the key that will sign it: a credit naming that key
+ * keeps its q, which says what the object was made from, and drops the p,
+ * since nobody needs telling that they copied their own object (one opened
+ * from the feed while signed out, or under another key, and edited, credits
+ * whoever published it, who may be you; review of parity #35).
  */
 export function objectTemplate(shard: ShardModel, createdAt: number, author?: string): { kind: number; created_at: number; tags: string[][]; content: string } {
   const payload = toPayload(shard)
-  const named = creditOf(shard)
-  const credit = named && author && creditAuthor(named) === author ? undefined : named
+  const credit = creditOf(shard)
+  const notify = !credit || !author || creditAuthor(credit) !== author
   return {
     kind: SNO_KIND,
     created_at: createdAt,
@@ -163,7 +173,7 @@ export function objectTemplate(shard: ShardModel, createdAt: number, author?: st
       // A remix credits the object it was made from: the q tag naming it,
       // and, since this is published for everyone, the p that tells its
       // author (DECK-0003, crediting; arkinox, 2026-10-08).
-      ...(credit ? creditTags(credit, { notify: true }) : []),
+      ...(credit ? creditTags(credit, { notify }) : []),
     ],
     content: JSON.stringify(payload),
   }
@@ -264,11 +274,14 @@ export { objectFromEvent } from 'sno-core/feed'
  * shown where it was asked for. A half-adopted signer would leave the app
  * signing as somebody it no longer is.
  */
-async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer | Promise<Signer>): Promise<void> {
-  const mine = ++attempt
+async function adopt(set: (p: Partial<NostrState>) => void, make: (signal: AbortSignal) => Signer | Promise<Signer>): Promise<void> {
+  giveUpAttempt()
+  const mine = attempt
+  const abort = new AbortController()
+  attemptAbort = abort
   set({ loggingIn: true })
   try {
-    const next = await make()
+    const next = await make(abort.signal)
     // Given up, or overtaken, while it was being made: let it go unused.
     if (mine !== attempt) { void next.close?.().catch(() => { /* already gone */ }); return }
     const old = signer
@@ -281,7 +294,7 @@ async function adopt(set: (p: Partial<NostrState>) => void, make: () => Signer |
     if (mine !== attempt) return
     set({ loginError: err instanceof Error ? err.message : String(err) })
   } finally {
-    if (mine === attempt) set({ loggingIn: false })
+    if (mine === attempt) { attemptAbort = null; set({ loggingIn: false }) }
   }
 }
 
@@ -371,9 +384,17 @@ export const useNostr = create<NostrState>((set, get) => ({
       // pubkey now and reconnected on the first thing that needs a signature,
       // so opening the app never waits on somebody's phone.
       try {
-        signer = pref.kind === 'local'
+        // The live signer a later handshake brings back replaces the deferred
+        // one only while that is still who signs: an identity chosen in the
+        // meantime stays chosen, and the late one is let go (review of
+        // parity #35).
+        const lazy: Signer = pref.kind === 'local'
           ? await signerFromPref(pref)
-          : deferredReconnect(pref, (live) => { signer = live })
+          : deferredReconnect(pref, (live) => {
+            if (signer === lazy) signer = live
+            else void live.close?.().catch(() => { /* already gone */ })
+          })
+        signer = lazy
         set({ pubkey: signer.pubkey, signer: signer.kind, signedIn: true })
         return
       } catch {
@@ -398,7 +419,7 @@ export const useNostr = create<NostrState>((set, get) => ({
   },
 
   useNewKey: () => {
-    attempt++
+    giveUpAttempt()
     const old = signer
     signer = randomSigner()
     if (old) void old.close?.().catch(() => { /* already gone */ })
@@ -412,10 +433,10 @@ export const useNostr = create<NostrState>((set, get) => ({
   useNsec: async (nsec) => { await adopt(set, () => signerFromNsec(nsec)) },
   useNcryptsec: async (ncryptsec, password) => { await adopt(set, () => signerFromNcryptsec(ncryptsec, password)) },
   useExtension: async () => { await adopt(set, () => nip07Signer()) },
-  useBunker: async (uri) => { await adopt(set, () => nip46Signer(uri)) },
+  useBunker: async (uri) => { await adopt(set, (signal) => nip46Signer(uri, undefined, signal)) },
 
   signOut: () => {
-    attempt++
+    giveUpAttempt()
     void signer?.close?.().catch(() => { /* already gone */ })
     signer = null
     forgetSignerPref()
@@ -424,7 +445,7 @@ export const useNostr = create<NostrState>((set, get) => ({
 
   clearLoginError: () => set({ loginError: null }),
 
-  cancelLogin: () => { attempt++; set({ loggingIn: false, loginError: null }) },
+  cancelLogin: () => { giveUpAttempt(); set({ loggingIn: false, loginError: null }) },
 
   exportKey: (password, again) => exportNcryptsec(signer?.secretKey, password, again),
 
