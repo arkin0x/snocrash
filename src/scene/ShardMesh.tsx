@@ -37,7 +37,7 @@ import { orientShard } from 'sno-core/orient'
 import { faceEdges } from 'sno-core/outline'
 import { SHARD_DOTS, SHARD_POINTS, createDiscMaterial, sizeDisc, withDiscColors } from './pointDisc'
 import { BACK_SHADE_COLOR, SHARD_FACES_TONE_MAPPED } from './shardLight'
-import { basicFaceProps, lineProps, litFaceProps, shardOpacity, shardOrder } from './shardFaces'
+import { DOTS_ORDER, basicFaceProps, benchOrders, lineProps, litFaceProps, shardOpacity, shardOrder } from './shardFaces'
 
 interface Props {
   shard: ShardModel
@@ -126,6 +126,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
   // shardFaces.ts for how see-through faces blend.
   const opacity = shardOpacity(given, { ghost })
   const order = shardOrder(opacity, ghost)
+  const bench = benchOrders(opacity, ghost)
   // The object at the top resolves every reference in the tree once; a placed
   // object is handed its own parts already resolved.
   const byRef = useResolved(nested ? null : given, self)
@@ -290,7 +291,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
       {placements}
       {shard.mode === 'solid' && index.length > 0 && (
         <group>
-          <mesh name="shard-faces" geometry={indexed} frustumCulled={false} renderOrder={order} {...pick}>
+          <mesh name="shard-faces" geometry={indexed} frustumCulled={false} renderOrder={lit ? bench.front : order} {...pick}>
             {/* forceSinglePass: three draws a transparent DoubleSide material
                 in two passes, flipping its side and looking the program up
                 again twice per object per frame, which is pure garbage at a
@@ -302,10 +303,11 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
                 are basicFaceProps (shardFaces.ts), which sets forceSinglePass. */}
             {lit
               ? <meshLambertMaterial vertexColors flatShading side={FrontSide} toneMapped={SHARD_FACES_TONE_MAPPED} {...litFaceProps(opacity, ghost)} />
+              // `transparent forceSinglePass` repeat basicFaceProps so singlePass.test.ts's source scan sees this material.
               : <meshBasicMaterial vertexColors side={DoubleSide} toneMapped={SHARD_FACES_TONE_MAPPED} transparent forceSinglePass={!ghost} {...basicFaceProps(opacity, { ghost, world })} />}
           </mesh>
           {lit && inside && (
-            <mesh geometry={inside} frustumCulled={false} renderOrder={order} {...pick}>
+            <mesh geometry={inside} frustumCulled={false} renderOrder={bench.inside} {...pick}>
               {/* The inside of a face: lit like the outside, at BACK_SHADE of it, so it still reads as inside (shardLight). */}
               <meshLambertMaterial vertexColors flatShading color={BACK_SHADE_COLOR} side={FrontSide} toneMapped={SHARD_FACES_TONE_MAPPED} {...litFaceProps(opacity, ghost)} />
             </mesh>
@@ -321,7 +323,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
       )}
       {shard.mode === 'lines' && !outline && shard.vertices.length > 1 && <primitive object={line} />}
       {(shard.mode === 'points' || shard.mode === 'solid' || shard.mode === 'lines') && (
-        <points geometry={plain} material={pointMaterial} frustumCulled={false} renderOrder={order} />
+        <points geometry={plain} material={pointMaterial} frustumCulled={false} renderOrder={DOTS_ORDER} />
       )}
     </group>
   )

@@ -5,10 +5,18 @@
  * were; a placed object takes its own opacity. Ported from ONOSENDAI.
  */
 
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { CustomBlending, OneFactor, OneMinusSrcAlphaFactor, SrcAlphaFactor, ZeroFactor } from 'three'
-import { GHOST_OPACITY, TAG_BLEND, TRANSLUCENT_ORDER, basicFaceProps, lineProps, litFaceProps, seeThrough, shardOpacity, shardOrder } from './shardFaces'
+import { DOTS_ORDER, GHOST_OPACITY, OVERLAY_ORDER, TAG_BLEND, TRANSLUCENT_ORDER, basicFaceProps, benchOrders, lineProps, litFaceProps, seeThrough, shardOpacity, shardOrder } from './shardFaces'
+
+// The sources read as text, the way singlePass.test.ts reads them: by module
+// path rather than the working directory, so the test runs from anywhere.
+const sources = import.meta.glob(['./ShardMesh.tsx', '../ui/Bench.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+const source = (name: string): string => {
+  const hit = Object.entries(sources).find(([f]) => f.endsWith(name))
+  if (!hit) throw new Error(`no source ${name}`)
+  return hit[1]
+}
 
 describe('what a shard is drawn at', () => {
   it('is its own opacity with the 10% floor, 1 when it has none', () => {
@@ -69,7 +77,7 @@ describe('lines and the bench', () => {
 })
 
 describe('where it is wired (ShardMesh)', () => {
-  const mesh = readFileSync('src/scene/ShardMesh.tsx', 'utf8')
+  const mesh = source('/ShardMesh.tsx')
 
   it('every face, line and point material takes the one opacity, and every mesh the one order', () => {
     expect(mesh).toMatch(/const opacity = shardOpacity\(given, \{ ghost \}\)/)
@@ -77,12 +85,40 @@ describe('where it is wired (ShardMesh)', () => {
     expect(mesh).toMatch(/<meshBasicMaterial[^>]*transparent forceSinglePass=\{!ghost\} \{\.\.\.basicFaceProps\(opacity, \{ ghost, world \}\)\}/)
     expect((mesh.match(/litFaceProps\(opacity, ghost\)/g) ?? []).length).toBe(2)
     expect((mesh.match(/lineProps\(opacity, ghost\)/g) ?? []).length).toBe(2)
-    expect((mesh.match(/renderOrder=\{order\}/g) ?? []).length).toBe(4)
+    expect((mesh.match(/renderOrder=\{order\}/g) ?? []).length).toBe(1)
+    expect(mesh).toMatch(/name="shard-faces"[^>]*renderOrder=\{lit \? bench\.front : order\}/)
+    expect(mesh).toMatch(/geometry=\{inside\}[^>]*renderOrder=\{bench\.inside\}/)
+    expect(mesh).toMatch(/<points [^>]*renderOrder=\{DOTS_ORDER\}/)
     expect(mesh).toMatch(/createDiscMaterial\([^)]*\? opacity : opacity \* 0\.55\)/)
   })
 
   it('a placed object is drawn from its own model, never with its parent\'s opacity (§1.10)', () => {
     expect(mesh).toMatch(/body = <ShardMesh shard=\{model\} nested=\{r\.children\}[^>]*\/>/)
     expect(mesh).not.toMatch(/body = <ShardMesh[^>]*opacity=\{opacity\}/)
+  })
+})
+
+describe('the draw order (reviews of #41 and ONOSENDAI #452)', () => {
+  it('opaque < see-through < bench front < dots < overlays', () => {
+    expect(0).toBeLessThan(TRANSLUCENT_ORDER)
+    expect(TRANSLUCENT_ORDER).toBeLessThan(benchOrders(0.5, false).front)
+    expect(benchOrders(0.5, false).front).toBeLessThan(DOTS_ORDER)
+    expect(DOTS_ORDER).toBeLessThan(OVERLAY_ORDER)
+  })
+
+  it('a see-through lit face draws its inside first, then its front; opaque stays at 0 for both', () => {
+    expect(benchOrders(0.5, false)).toEqual({ inside: TRANSLUCENT_ORDER, front: TRANSLUCENT_ORDER + 0.5 })
+    expect(benchOrders(1, false)).toEqual({ inside: 0, front: 0 })
+    expect(benchOrders(0.2, true)).toEqual({ inside: 0, front: 0 })
+  })
+
+  it('the bench\'s translucent overlays draw at OVERLAY_ORDER, so a see-through face never hides them', () => {
+    const bench = source('/Bench.tsx')
+    expect(bench).toMatch(/<mesh geometry=\{lit\.g\} frustumCulled=\{false\} renderOrder=\{OVERLAY_ORDER\}>/)
+    expect(bench).toMatch(/edge\.renderOrder = OVERLAY_ORDER/)
+    expect(bench).toMatch(/LineBasicMaterial\(\{ color: WARN, toneMapped: false, transparent: true \}\)/)
+    expect(bench).toMatch(/<sprite [^>]*renderOrder=\{OVERLAY_ORDER\}>/)
+    expect(bench).toMatch(/l\.renderOrder = OVERLAY_ORDER/)
+    expect(bench).toMatch(/<mesh position=\{UP\(aim\)\} renderOrder=\{OVERLAY_ORDER\}>/)
   })
 })
