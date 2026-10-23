@@ -1643,7 +1643,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     fill: () => {
       const { facePick } = get()
       if (facePick.length < 3) return
-      let notAFace = false
+      let notAFace = false, nothingNew = false
       // Worked out on the bench's shard first, so a fill that is refused or
       // adds nothing leaves a feed object alone (onLive).
       const got = onLive((s) => {
@@ -1654,13 +1654,15 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         const faces = tris
           .map((t) => [facePick[t[0]], facePick[t[1]], facePick[t[2]]] as [number, number, number])
           .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(f)))
+        nothingNew = !faces.length
         if (!faces.length) return null
         const next = windAdded({ ...s, faces: [...s.faces, ...faces] }, s.faces.length)
         return { ...next, mode: solidIfFirstFaces(s, next).mode }
       })
       if (notAFace) return
       if (got) edit(() => got.r, solidIfFirstFaces(got.s, got.r).notice)
-      set({ facePick: [] })
+      // Corners that already make faces add nothing; said, so the tap is not lost in silence.
+      set(nothingNew ? { facePick: [], notice: 'Those faces are already there.' } : { facePick: [] })
     },
 
     fillSelection: () => {
