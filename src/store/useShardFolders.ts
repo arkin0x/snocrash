@@ -19,9 +19,10 @@
  * IndexedDB cannot be opened, folders last the session.
  *
  * snocrash can be used with no key at all: the tree is then kept under the
- * empty owner, this browser's. The first time a key signs in with no folders
- * of its own, it starts from a copy of those (adoptTree), since the objects
- * they sort are this browser's and stay in the list across the sign-in.
+ * empty owner, this browser's. An identity that has never had a tree here
+ * starts from a copy of the one on screen when it arrives (adoptTree), since
+ * the objects it sorts are this browser's and stay in the list across the
+ * switch: from the key made at a first visit, or from no key.
  *
  * For code that files objects: createFolderPath(['maze-kit', 'forest']) makes
  * or finds that path and returns the last folder's id, and assignToFolder(ref,
@@ -125,18 +126,24 @@ let watching = false
 const sessionTrees = new Map<string, FolderTree>()
 
 export const useShardFolders = create<ShardFoldersState>((set, get) => {
-  /** Read the stored tree for `owner` and show it, if that is still whose tree is shown. */
-  const reread = (owner: string): Promise<void> => then(async () => {
+  /**
+   * Read the stored tree for `owner` and show it, if that is still whose tree
+   * is shown. `from` is whose tree was on screen before a switch: an identity
+   * with no tree here yet starts from a copy of that one (adoptTree), since
+   * the objects it sorts are this browser's and stay in the list. A new
+   * arrival is handed a key at start, so signing in with a real one is a
+   * switch from that key, not from nobody (review of snocrash #40).
+   */
+  const reread = (owner: string, from?: string): Promise<void> => then(async () => {
     const d = await database()
     if (get().owner !== owner) return
     if (!d) {
-      const kept = sessionTrees.get(owner)
+      const kept = sessionTrees.get(owner) ?? (from !== undefined && from !== owner ? sessionTrees.get(from) : undefined)
       set(kept ? { storage: 'memory', tree: replay(kept, owner) } : { storage: 'memory' })
       return
     }
     let stored: FolderTree
-    // A key's first sign-in here starts from this browser's folders.
-    try { stored = owner ? await adoptTree(d, '', owner) : await readTree(d, owner) } catch (err) {
+    try { stored = from !== undefined && from !== owner ? await adoptTree(d, from, owner) : await readTree(d, owner) } catch (err) {
       console.warn(`[folders] could not read folders: ${describeError(err)}`)
       set({ storage: 'memory' })
       return
@@ -211,11 +218,16 @@ export const useShardFolders = create<ShardFoldersState>((set, get) => {
         }
       }
       const who = owner ?? identityNow()
-      // A new identity shows nothing of the old one's, from this moment.
-      if (who !== get().owner) {
-        // Without IndexedDB the old identity's folders wait here for it to come back.
-        if (get().storage === 'memory' && get().owner) sessionTrees.set(get().owner, get().tree)
+      const before = get().owner
+      // A new identity shows nothing of the old one's, from this moment, until
+      // its own tree (or, the first time, a copy of the old one's) is read.
+      if (who !== before) {
+        // Without IndexedDB the old identity's folders wait here for it to come
+        // back, the no-key ones ('') too.
+        if (get().storage === 'memory') sessionTrees.set(before, get().tree)
         set({ owner: who, tree: replay(EMPTY_TREE, who), storage: 'loading' })
+        await reread(who, before)
+        return
       }
       await reread(who)
     },

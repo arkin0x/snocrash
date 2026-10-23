@@ -94,10 +94,13 @@ export function adoptTree(db: IDBDatabase, from: string, to: string): Promise<Fo
       if (mine.result !== undefined || from === to) return
       const theirs = os.get(from)
       theirs.onsuccess = () => {
-        const tree = normalizeTree((theirs.result as { tree?: unknown } | undefined)?.tree)
+        const row = theirs.result as { tree?: unknown } | undefined
+        const tree = normalizeTree(row?.tree)
         if (Object.keys(tree.folders).length === 0 && Object.keys(tree.assign).length === 0) return
         result = tree
-        os.put({ owner: to, tree })
+        // Whatever a later build keeps beside the tree is copied as it was, as commitOps keeps it.
+        const keptTree = row?.tree && typeof row.tree === 'object' ? row.tree : {}
+        os.put({ ...(row ?? {}), owner: to, tree: { ...keptTree, ...tree } })
       }
     }
     tx.oncomplete = () => resolve(result)

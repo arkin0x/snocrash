@@ -2863,7 +2863,7 @@ button:disabled { opacity: 0.35; cursor: default; }
 /* The feed's MINE: folders span the grid, and a folder's tiles are a grid of their own under its head. */
 .grid > .sfold, .grid > .sfold__bar { grid-column: 1 / -1; }
 .grid > .sfold { border-top: 0; }
-.sfold__kids.grid { display: grid; padding-top: 6px; }
+.sfold__kids.grid { display: grid; gap: 12px; padding-top: 6px; }
 .tile__acts--folder { align-self: flex-end; }
 .tile__acts .sfold__mini { border-radius: 50%; }
 .modal__card.sfold__chooser { gap: 10px; }

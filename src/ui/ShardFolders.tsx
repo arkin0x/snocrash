@@ -60,21 +60,33 @@ interface Props<T> {
  * Escape for whatever is open on top here (the chooser, the rename field, a
  * confirmation), ahead of everything else that listens for it: the
  * workshop's own Escape (ui/escape.ts) would otherwise close its panel from
- * under the chooser. Taken on the way down, at the window, so it never
- * reaches them.
+ * under the chooser. One listener, taken on the way down at the window, and
+ * only the most recently opened of these answers it, so one press closes one
+ * thing even with a list in the menu and one in the workshop. The key is
+ * matched by `code` too, as the workshop matches it, so a press during IME
+ * composition is still ours.
  */
+const escapeStack: Array<{ current: () => void }> = []
+function onEscapeKey(e: KeyboardEvent): void {
+  if (e.key !== 'Escape' && e.code !== 'Escape') return
+  const top = escapeStack[escapeStack.length - 1]
+  if (!top) return
+  e.stopImmediatePropagation()
+  e.preventDefault()
+  top.current()
+}
 function useEscapeFirst(close: () => void): void {
   const latest = useRef(close)
   latest.current = close
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.stopPropagation()
-      e.preventDefault()
-      latest.current()
+    const entry = latest
+    escapeStack.push(entry)
+    if (escapeStack.length === 1) window.addEventListener('keydown', onEscapeKey, true)
+    return () => {
+      const at = escapeStack.indexOf(entry)
+      if (at >= 0) escapeStack.splice(at, 1)
+      if (escapeStack.length === 0) window.removeEventListener('keydown', onEscapeKey, true)
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 }
 
@@ -114,7 +126,9 @@ export function ShardFolders<T>({ items, refOf, nameOf, row, tag = 'ul', kidsCla
   const tree = useShardFolders((s) => s.tree)
   useEffect(() => {
     const st = useShardFolders.getState()
-    if (st.owner !== me) void st.load(me)
+    // Still loading counts too: with no key the store already says '' and
+    // would otherwise never read the stored tree (review of snocrash #40).
+    if (st.owner !== me || st.storage === 'loading') void st.load(me)
   }, [me])
   const f = useShardFolders.getState
 

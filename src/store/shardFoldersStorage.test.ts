@@ -189,16 +189,20 @@ describe('shard folders in IndexedDB', () => {
     expect(a.useShardFolders.getState().moveFolder(trees, 'gone')).toBe(false)
   })
 
-  it('keeps each identity\'s folders apart, and a switch shows the new one\'s only', async () => {
+  // snocrash, unlike ONOSENDAI: the objects are this browser's and stay in the
+  // list across a switch, so an identity new here starts from a copy of the
+  // folders on screen. From then on each keeps its own.
+  it('starts a new identity from a copy, then keeps each identity\'s folders apart', async () => {
     const a = await boot()
     a.createFolderPath(['mine'])
     await a.useShardFolders.getState().flush()
     switchTo(OTHER)
     expect(a.useShardFolders.getState().owner).toBe(OTHER)
-    expect(Object.keys(a.useShardFolders.getState().tree.folders)).toHaveLength(0)
+    await a.useShardFolders.getState().flush()
+    expect(Object.values(a.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['mine'])
     a.createFolderPath(['theirs'])
     await a.useShardFolders.getState().flush()
-    expect(Object.values(a.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['theirs'])
+    expect(Object.values(a.useShardFolders.getState().tree.folders).map((f) => f.name).sort()).toEqual(['mine', 'theirs'])
     switchTo(ME)
     await a.useShardFolders.getState().flush()
     expect(Object.values(a.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['mine'])
@@ -209,7 +213,8 @@ describe('shard folders in IndexedDB', () => {
     a.createFolderPath(['before-switch'])
     switchTo(OTHER)
     await a.useShardFolders.getState().flush()
-    expect(Object.keys(a.useShardFolders.getState().tree.folders)).toHaveLength(0)
+    // OTHER, new here, starts from a copy of ME's tree as written, the queued change in it.
+    expect(Object.values(a.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['before-switch'])
     identity = ME
     const b = await boot(ME)
     expect(Object.values(b.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['before-switch'])
@@ -237,10 +242,13 @@ describe('shard folders in IndexedDB', () => {
     expect(folderOf(a.useShardFolders.getState().tree, 'oak')).toBe(id)
     switchTo(OTHER)
     await a.useShardFolders.getState().flush()
-    expect(Object.keys(a.useShardFolders.getState().tree.folders)).toHaveLength(0)
+    expect(folderOf(a.useShardFolders.getState().tree, 'oak')).toBe(id)
+    a.createFolderPath(['other-only'])
+    await a.useShardFolders.getState().flush()
     switchTo(ME)
     await a.useShardFolders.getState().flush()
     expect(folderOf(a.useShardFolders.getState().tree, 'oak')).toBe(id)
+    expect(Object.values(a.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['kit'])
   })
 
   it('starts a key that signs in for the first time from the folders made with no key', async () => {
@@ -271,4 +279,50 @@ describe('shard folders in IndexedDB', () => {
     await a.useShardFolders.getState().flush()
     expect(Object.keys(a.useShardFolders.getState().tree.folders)).toHaveLength(0)
   })
+
+  it('signing in with a real key after the key made at a first visit keeps the folders', async () => {
+    // A first visit is handed a key; a sign-in is a switch from it, never from nobody.
+    const FIRST = 'aa'.repeat(32)
+    identity = FIRST
+    const a = await boot(FIRST)
+    const kit = a.createFolderPath(['maze-kit'])!
+    a.assignToFolder('oak', kit)
+    await a.useShardFolders.getState().flush()
+    switchTo(ME)
+    await a.useShardFolders.getState().flush()
+    expect(folderOf(a.useShardFolders.getState().tree, 'oak')).toBe(kit)
+    // A copy: the first key's folders are still its own.
+    const b = await boot(FIRST)
+    expect(folderOf(b.useShardFolders.getState().tree, 'oak')).toBe(kit)
+  })
+
+  it('reads the stored no-key tree when the app starts with no key', async () => {
+    identity = null
+    const a = await boot('')
+    a.createFolderPath(['kept'])
+    await a.useShardFolders.getState().flush()
+    vi.resetModules()
+    const b: Mod = await import('./useShardFolders')
+    // The store already says '' before anything loads: loading must still read it.
+    expect(b.useShardFolders.getState().owner).toBe('')
+    expect(b.useShardFolders.getState().storage).toBe('loading')
+    await b.useShardFolders.getState().load('')
+    expect(Object.values(b.useShardFolders.getState().tree.folders).map((f) => f.name)).toEqual(['kept'])
+  })
+
+  it('without IndexedDB, keeps the no-key folders across a sign-in and back, and copies them in', async () => {
+    ;(globalThis as { indexedDB?: unknown }).indexedDB = { open: () => { throw new Error('blocked') } }
+    identity = null
+    const a = await boot('')
+    const kit = a.createFolderPath(['kit'])!
+    a.assignToFolder('oak', kit)
+    await a.useShardFolders.getState().flush()
+    switchTo(ME)
+    await a.useShardFolders.getState().flush()
+    expect(folderOf(a.useShardFolders.getState().tree, 'oak')).toBe(kit)
+    switchTo(null)
+    await a.useShardFolders.getState().flush()
+    expect(folderOf(a.useShardFolders.getState().tree, 'oak')).toBe(kit)
+  })
 })
+
