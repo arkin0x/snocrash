@@ -125,6 +125,9 @@ let watching = false
 /** Where IndexedDB cannot be opened: each identity's tree for the session. */
 const sessionTrees = new Map<string, FolderTree>()
 
+/** Whose tree a switch still being read copies from, so a quick second switch copies the same one. */
+let copyFrom: string | undefined
+
 export const useShardFolders = create<ShardFoldersState>((set, get) => {
   /**
    * Read the stored tree for `owner` and show it, if that is still whose tree
@@ -222,11 +225,16 @@ export const useShardFolders = create<ShardFoldersState>((set, get) => {
       // A new identity shows nothing of the old one's, from this moment, until
       // its own tree (or, the first time, a copy of the old one's) is read.
       if (who !== before) {
-        // Without IndexedDB the old identity's folders wait here for it to come
-        // back, the no-key ones ('') too.
-        if (get().storage === 'memory') sessionTrees.set(before, get().tree)
+        // Kept for the session in case there is no database: the old
+        // identity's folders wait here for it to come back, the no-key ones
+        // ('') too, and changes made while the first load was still opening.
+        sessionTrees.set(before, get().tree)
+        // Switched again before the last switch was read (A to B to C): the
+        // copy comes from A, whose tree was the last one actually shown.
+        const from = get().storage === 'loading' && copyFrom !== undefined ? copyFrom : before
+        copyFrom = from
         set({ owner: who, tree: replay(EMPTY_TREE, who), storage: 'loading' })
-        await reread(who, before)
+        await reread(who, from)
         return
       }
       await reread(who)

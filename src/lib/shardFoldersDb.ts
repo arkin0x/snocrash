@@ -98,9 +98,9 @@ export function adoptTree(db: IDBDatabase, from: string, to: string): Promise<Fo
         const tree = normalizeTree(row?.tree)
         if (Object.keys(tree.folders).length === 0 && Object.keys(tree.assign).length === 0) return
         result = tree
-        // Whatever a later build keeps beside the tree is copied as it was, as commitOps keeps it.
+        // Whatever a later build keeps inside the tree is copied as it was; nothing else of `from`'s row is.
         const keptTree = row?.tree && typeof row.tree === 'object' ? row.tree : {}
-        os.put({ ...(row ?? {}), owner: to, tree: { ...keptTree, ...tree } })
+        os.put({ owner: to, tree: { ...keptTree, ...tree } })
       }
     }
     tx.oncomplete = () => resolve(result)

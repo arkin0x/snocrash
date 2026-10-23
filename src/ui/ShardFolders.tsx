@@ -63,14 +63,16 @@ interface Props<T> {
  * under the chooser. One listener, taken on the way down at the window, and
  * only the most recently opened of these answers it, so one press closes one
  * thing even with a list in the menu and one in the workshop. The key is
- * matched by `code` too, as the workshop matches it, so a press during IME
- * composition is still ours.
+ * matched by `code` too, as the workshop matches it; one that ends an IME
+ * composition is left to the input.
  */
 const escapeStack: Array<{ current: () => void }> = []
 function onEscapeKey(e: KeyboardEvent): void {
   if (e.key !== 'Escape' && e.code !== 'Escape') return
   const top = escapeStack[escapeStack.length - 1]
   if (!top) return
+  // Escape that cancels an IME composition is the input's own: nothing closes, and nothing behind hears it.
+  if (e.isComposing) { e.stopImmediatePropagation(); return }
   e.stopImmediatePropagation()
   e.preventDefault()
   top.current()
