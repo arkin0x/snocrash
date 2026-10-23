@@ -736,7 +736,15 @@ function group(s: Pick<ShardModel, 'vertices'>, index: number): number[] {
   return out
 }
 
-const faceKey = (f: [number, number, number]): string => [...f].sort((a, b) => a - b).join(',')
+/**
+ * A face as the three points it spans, order-free. By points, not vertex
+ * indices: two vertices can stand on one spot (a copy, a stamp's own
+ * corners), and FILL takes any vertex on a picked point, so by index the
+ * same face picked through a twin vertex looked new and landed on top of
+ * the old one, where the two fight to be seen.
+ */
+const faceKey = (s: Pick<ShardModel, 'vertices'>, f: [number, number, number]): string =>
+  f.map((i) => (s.vertices[i] ? pointKey(ticksOf(s.vertices[i])) : `#${i}`)).sort().join('|')
 
 type Tri = [number, number, number]
 type Tris = Tri[] & { hull?: boolean }
@@ -1643,24 +1651,26 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     fill: () => {
       const { facePick } = get()
       if (facePick.length < 3) return
-      let notAFace = false
+      let notAFace = false, nothingNew = false
       // Worked out on the bench's shard first, so a fill that is refused or
       // adds nothing leaves a feed object alone (onLive).
       const got = onLive((s) => {
         const tris = triangulate(facePick.map((i) => ticksOf(s.vertices[i])))
         notAFace = !tris
         if (!tris) { set({ notice: 'Those corners do not make a face. Pick them in order around its edge.' }); return null }
-        const have = new Set(s.faces.map(faceKey))
+        const have = new Set(s.faces.map((f) => faceKey(s, f)))
         const faces = tris
           .map((t) => [facePick[t[0]], facePick[t[1]], facePick[t[2]]] as [number, number, number])
-          .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(f)))
+          .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(s, f)))
+        nothingNew = !faces.length
         if (!faces.length) return null
         const next = windAdded({ ...s, faces: [...s.faces, ...faces] }, s.faces.length)
         return { ...next, mode: solidIfFirstFaces(s, next).mode }
       })
       if (notAFace) return
       if (got) edit(() => got.r, solidIfFirstFaces(got.s, got.r).notice)
-      set({ facePick: [] })
+      // Corners that already make faces add nothing; said, so the tap is not lost in silence.
+      set(nothingNew ? { facePick: [], notice: 'Those faces are already there.' } : { facePick: [] })
     },
 
     fillSelection: () => {
@@ -1674,10 +1684,10 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         if (idx.length < 3) { set({ notice: 'Select three or more points to fill.' }); return null }
         const faces = facesFor(idx.map((i) => ticksOf(s.vertices[i])))
         if (!faces) { set({ notice: 'Those points do not make a face: they lie on one line.' }); return null }
-        const have = new Set(s.faces.map(faceKey))
+        const have = new Set(s.faces.map((f) => faceKey(s, f)))
         const fresh = faces
           .map((t) => [idx[t[0]], idx[t[1]], idx[t[2]]] as [number, number, number])
-          .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(f)))
+          .filter((f) => validFace(f, s.vertices.length) && !have.has(faceKey(s, f)))
         if (!fresh.length) { set({ notice: 'Those faces are already there.' }); return null }
         const next = windAdded({ ...s, faces: [...s.faces, ...fresh] }, s.faces.length)
         return { shard: { ...next, mode: solidIfFirstFaces(s, next).mode }, added: fresh.length, hull: faces.hull, points: idx.length }
