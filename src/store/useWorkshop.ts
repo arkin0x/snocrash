@@ -44,6 +44,7 @@ import {
   type ShardMode,
   type ShardModel,
   type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
+import { withOpacity } from '../lib/opacityStep'
 import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
 import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
 import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from 'sno-core/snoPalette'
@@ -398,6 +399,12 @@ export interface WorkshopState {
   duplicate: (id: string) => string
   remove: (id: string) => void
   setMode: (mode: ShardMode) => void
+  /**
+   * How solid the shard draws, a whole percent (DECK-0003 §1.11): 100 is
+   * solid and is stored as no opacity at all, the wire's canonical form;
+   * anything else is kept between the floor (10) and 99. Undoable like MODE.
+   */
+  setOpacity: (percent: number) => void
   setUnit: (unit: number) => void
   /** One step of unit up or down, on the shard an edit lands on (the − and + buttons). */
   stepUnit: (by: 1 | -1) => void
@@ -1106,6 +1113,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     setMode: (mode) => edit((s) => ({ ...s, mode })),
+    setOpacity: (percent) => edit((s) => withOpacity(s, percent)),
     setUnit: (unit) => edit((s) => ({ ...s, unit: clampUnit(unit) })),
     // From the shard the edit lands on, not the copy on view: your stored
     // object can be a step away from what the relay returned (review of
