@@ -95,6 +95,16 @@ function Intro(): JSX.Element | null {
   )
 }
 
+/**
+ * Why the latest changes are not saved, for as long as they are not: the
+ * toast goes after a moment, and this must not (store/workshopStorage.ts).
+ */
+function StorageWarning(): JSX.Element | null {
+  const error = useWorkshop((s) => s.storageError)
+  if (!error) return null
+  return <div className="ws__storage" role="alert">{error}</div>
+}
+
 /** The store's one-line notice, shown for a moment at the top and then gone. */
 function Toast(): JSX.Element | null {
   const notice = useWorkshop((s) => s.notice)
@@ -774,6 +784,7 @@ export function Workshop(): JSX.Element | null {
       {dropping && <div className="workshop__drop" aria-hidden>DROP TO IMPORT</div>}
       {making && <Intro />}
       <Toast />
+      <StorageWarning />
       {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} />}
       {menuOpen && <MenuOverlay view={view} setView={setView} onClose={() => setMenuOpen(false)} onLogin={() => setLoginOpen(true)} />}
 
