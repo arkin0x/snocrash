@@ -24,6 +24,7 @@ import { useWorkshop } from '../store/useWorkshop'
 import { Explanation } from './Explanation'
 import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
 import { keyColor } from '../lib/keyColor'
+import { ShardFolders, modelName, modelRef } from './ShardFolders'
 
 /** How long a relay gets to accept a connection before the dot calls it dead. */
 const PROBE_MS = 4000
@@ -250,18 +251,19 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
             <p className="menu__line">Nothing built yet.</p>
           ) : (
             <ul className="menu__list">
-              {shards.map((s) => {
+              <ShardFolders items={shards} refOf={modelRef} nameOf={modelName} row={(s, f) => {
                 const state = publishState(ledger[s.id], shardFingerprint(s), pubkey)
                 return (
-                  <li key={s.id} className={s.id === currentId ? 'is-current' : ''}>
+                  <li key={s.id} className={s.id === currentId ? 'is-current' : ''} {...f.drag}>
                     <button className="menu__pick" onClick={() => open(s.id)} title={STATE_HELP[state]}>
                       <span className="menu__pick-name">{s.name}</span>
                       <span className="menu__pick-meta">{s.vertices.length} v · {s.faces.length} f{s.parts?.length ? ` · ${s.parts.length} obj` : ''} · {s.mode}</span>
                     </button>
                     <span className={`tag ${STATE_TAG[state]} menu__state`} title={STATE_HELP[state]}>{STATE_LABEL[state]}</span>
+                    {f.tool}
                   </li>
                 )
-              })}
+              }} />
             </ul>
           )}
           <button className="workshop__btn menu__wide" onClick={() => go('make')}>OPEN THE WORKSHOP</button>

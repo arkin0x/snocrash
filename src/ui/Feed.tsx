@@ -35,6 +35,12 @@ import { objectAddress } from '../store/useNostr'
 import { ProfilePic } from './ProfilePic'
 import { useProfiles } from '../store/useProfiles'
 import { tileStats } from '../lib/tileStats'
+import { ShardFolders, type RowKit } from './ShardFolders'
+
+/** One tile of MINE: a published object of yours, or a draft no relay has. */
+type MineTile = { kind: 'object'; o: FeedObject } | { kind: 'draft'; shard: ShardModel }
+const mineRef = (t: MineTile): string => (t.kind === 'object' ? t.o.d : t.shard.id)
+const mineName = (t: MineTile): string => (t.kind === 'object' ? t.o.shard.name : t.shard.name)
 
 function shortKey(pk: string): string {
   return `${pk.slice(0, 8)}…${pk.slice(-4)}`
@@ -75,19 +81,20 @@ function choose(o: FeedObject): void {
 }
 
 /** One of your objects that has never been published: shown under MINE, but nothing can place it until it is. */
-function DraftTile({ shard, picking }: { shard: ShardModel; picking: boolean }): JSX.Element {
+function DraftTile({ shard, picking, kit }: { shard: ShardModel; picking: boolean; kit?: RowKit }): JSX.Element {
   return (
-    <article className="tile tile--draft" title="Not published yet: publish it from the workshop, and it can be placed">
+    <article className="tile tile--draft" title="Not published yet: publish it from the workshop, and it can be placed" {...kit?.drag}>
       <Preview shard={shard} />
       <div className="tile__bar">
         <span className="tile__name" title={shard.name}>{shard.name}</span>
         <span className="tile__meta">{picking ? 'PUBLISH FIRST' : `DRAFT · not published · ${tileStats(shard)}`}</span>
+        {kit && <div className="tile__acts tile__acts--folder">{kit.tool}</div>}
       </div>
     </article>
   )
 }
 
-function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView: () => void }): JSX.Element {
+function Tile({ o, onOpen, onView, kit }: { o: FeedObject; onOpen: () => void; onView: () => void; kit?: RowKit }): JSX.Element {
   const say = useNostr((s) => s.say)
   const authorName = useProfiles((s) => s.profiles[o.pubkey]?.name ?? null)
   const remix = (): void => {
@@ -99,7 +106,7 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
     onOpen()
   }
   return (
-    <article className="tile">
+    <article className="tile" {...kit?.drag}>
       <Preview shard={o.shard} onOpen={onView} />
       {/* Title on a row of its own, then what it is, then who made it across
           from what you can do with it (arkinox, 2026-10-15). */}
@@ -119,6 +126,7 @@ function Tile({ o, onOpen, onView }: { o: FeedObject; onOpen: () => void; onView
           <button className="icon" title="Save as a PLY that Blender reads" aria-label={`Download ${o.shard.name}`} onClick={() => {
             save(toPly(o.shard), fileNameFor(o.shard, 'ply'), 'text/plain')
           }}><Download size={16} strokeWidth={2.25} /></button>
+          {kit?.tool}
           </div>
         </div>
       </div>
@@ -196,7 +204,13 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
   const picking = useWorkshop((s) => s.picking)
   const shards = useWorkshop((s) => s.shards)
   // Under MINE, the objects of yours no relay has: they cannot be placed until published.
-  const drafts = scope === 'mine' && !loading ? shards.filter((sh) => (sh.vertices.length > 0 || (sh.parts?.length ?? 0) > 0) && !feed.some((o) => o.d === sh.id)) : []
+  const drafts = useMemo(() => (scope === 'mine' && !loading ? shards.filter((sh) => (sh.vertices.length > 0 || (sh.parts?.length ?? 0) > 0) && !feed.some((o) => o.d === sh.id)) : []), [scope, loading, shards, feed])
+  // MINE as one list for the folders: your published objects, filed by their
+  // `d` (the id of the model they were published from), then your drafts.
+  const mineTiles = useMemo((): MineTile[] => scope !== 'mine' ? [] : [
+    ...items.filter((o): o is FeedObject => !isListing(o)).map((o): MineTile => ({ kind: 'object', o })),
+    ...drafts.map((sh): MineTile => ({ kind: 'draft', shard: sh })),
+  ], [scope, items, drafts])
 
   const scroller = useRef<HTMLElement>(null)
   // Read once, as the feed mounts, and used by both effects below. It cannot
@@ -252,10 +266,22 @@ export function Feed({ onOpen }: { onOpen: () => void }): JSX.Element {
         </p>
       )}
       <div className="grid">
-        {items.map((o) => isListing(o)
-          ? <ListingTile key={`${o.pubkey}:${o.d}`} listing={o} />
-          : <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => (picking ? choose(o) : view(o))} />)}
-        {drafts.map((sh) => <DraftTile key={`draft:${sh.id}`} shard={sh} picking={picking} />)}
+        {scope === 'mine' ? (
+          <>
+            {/* MINE in your folders, as every list of your objects is (ui/ShardFolders); a listing is not an object of yours to file. */}
+            {items.filter(isListing).map((o) => <ListingTile key={`${o.pubkey}:${o.d}`} listing={o} />)}
+            <ShardFolders tag="div" kidsClassName="grid" items={mineTiles} refOf={mineRef} nameOf={mineName} row={(t, kit) => t.kind === 'object'
+              ? <Tile key={`${t.o.pubkey}:${t.o.d}`} o={t.o} onOpen={onOpen} onView={() => (picking ? choose(t.o) : view(t.o))} kit={kit} />
+              : <DraftTile key={`draft:${t.shard.id}`} shard={t.shard} picking={picking} kit={kit} />} />
+          </>
+        ) : (
+          <>
+            {items.map((o) => isListing(o)
+              ? <ListingTile key={`${o.pubkey}:${o.d}`} listing={o} />
+              : <Tile key={`${o.pubkey}:${o.d}`} o={o} onOpen={onOpen} onView={() => (picking ? choose(o) : view(o))} />)}
+            {drafts.map((sh) => <DraftTile key={`draft:${sh.id}`} shard={sh} picking={picking} />)}
+          </>
+        )}
       </div>
     </section>
     {/* Every preview above is drawn by this one canvas. A canvas per tile was a
