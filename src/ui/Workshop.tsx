@@ -47,6 +47,7 @@ import { useRoute } from '../lib/route'
 import { fileNameFor, toPly } from '../lib/ply'
 import { benchPose, nudgeFor, nudgeLabel, orbitBy, planeAfter, publishedFrame, requestView, useBenchView, type NudgeName } from './benchAxes'
 import { stackedSpots } from '../lib/weld'
+import { ShardFolders, modelName, modelRef } from './ShardFolders'
 
 /** Hand a text file to the browser: what EXPORT PLY does with an object. */
 function saveFile(text: string, name: string): void {
@@ -637,6 +638,8 @@ export function Workshop(): JSX.Element | null {
   }, [viewOpen])
   const bind = useRepeatable()
   const stacked = useMemo(() => (shard ? stackedSpots(shard) : { spots: 0, points: 0 }), [shard])
+  // The OBJECTS list's order (the list below says why).
+  const byEdited = useMemo(() => [...shards].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)), [shards])
   // Esc, in ONOSENDAI's order (escape.ts): the palette sheet folds itself
   // (its own confirmations first), then the key, then the menu, then on the
   // bench the open panel, the view pad and what is in hand. Never the
@@ -908,17 +911,18 @@ export function Workshop(): JSX.Element | null {
           )}
           <ul className="workshop__list">
             {/* Last edited first: updatedAt moves on every edit and never on opening (arkinox, 2026-09-26). */}
-            {[...shards].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)).map((s) => (
-              <li key={s.id} className={s.id === shard.id ? 'is-current' : ''}>
+            <ShardFolders items={byEdited} refOf={modelRef} nameOf={modelName} row={(s, f) => (
+              <li key={s.id} className={s.id === shard.id ? 'is-current' : ''} {...f.drag}>
                 <button className="workshop__pick" onClick={() => w().select(s.id)}>
                   <span className="workshop__pick-name">{s.name}</span>
                   <span className="workshop__pick-meta">{s.vertices.length} v · {s.faces.length} f{s.parts?.length ? ` · ${s.parts.length} parts` : ''} · {s.mode}</span>
                 </button>
                 <button className="workshop__mini" title="Duplicate" aria-label={`Duplicate ${s.name}`} onClick={() => w().duplicate(s.id)}><CopyPlus size={13} strokeWidth={2.25} aria-hidden /></button>
                 <button className="workshop__mini" title="Copy: PASTE puts it in any object here, and the clipboard takes it anywhere" aria-label={`Copy ${s.name}`} onClick={() => copy(s.id)}><ClipboardCopy size={13} strokeWidth={2.25} aria-hidden /></button>
+                {f.tool}
                 <button className="workshop__mini workshop__mini--danger workshop__mini--x" title="Delete" aria-label={`Delete ${s.name}`} onClick={() => { if (window.confirm(`Delete "${s.name}"? This cannot be undone.`)) w().remove(s.id) }}>×</button>
               </li>
-            ))}
+            )} />
           </ul>
           <div className="workshop__row">
             <button className="workshop__btn workshop__btn--danger" disabled={!hasContent} onClick={() => { if (window.confirm('Delete all vertices, faces and placed objects in the scene?')) w().clearShard() }} title="Empty this scene (undoable)">CLEAR THIS SCENE</button>
