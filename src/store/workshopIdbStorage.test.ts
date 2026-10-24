@@ -587,6 +587,36 @@ describe('after the move', () => {
 })
 
 describe('two tabs', () => {
+  it('a shard only being VIEWED (not yet the one on the bench) is not yanked out from under the viewer by a remote delete, and the delete still holds once nothing protects it', async () => {
+    const own = bigShard('a', 4, 1)
+    const other = bigShard('b', 4, 2)
+    seedLocal([own, other])
+    const { ws: a } = await openTab()
+    await a.hydrateWorkshop()
+    const { ws: b } = await openTab()
+    await b.hydrateWorkshop()
+    // Tab A only views its own shard: it is not currentId, only viewing.d,
+    // same as the bench's shard is protected by currentId (attach().protect).
+    a.useWorkshop.getState().openWorkshop()
+    a.useWorkshop.getState().view(own, { d: own.id, own: true, address: `33331:x:${own.id}` })
+    expect(a.useWorkshop.getState().currentId).not.toBe(own.id)
+    // Tab B deletes it and renames the other shard in the same save: the
+    // rename is the signal that tab A's refresh ran at all, since a
+    // protected delete alone leaves nothing else in tab A to observe.
+    b.useWorkshop.getState().remove(own.id)
+    b.useWorkshop.getState().rename(other.id, 'b renamed')
+    expect(await b.useWorkshop.getState().saveNow()).toBe(true)
+    await vi.waitFor(() => expect(a.useWorkshop.getState().shards.find((s) => s.id === other.id)?.name).toBe('b renamed'))
+    // The viewer keeps seeing the shard it is viewing, exactly as a delete
+    // of the bench shard would not yank that one either.
+    expect(a.useWorkshop.getState().shards.some((s) => s.id === own.id)).toBe(true)
+    // Tab A never edited or saved it: a fresh tab (nothing protecting it)
+    // still sees the delete. The protection only holds a live viewer's copy
+    // in memory; it does not write the deleted shard back by itself.
+    const fresh = await boot()
+    expect(fresh.ws.useWorkshop.getState().shards.some((s) => s.id === own.id)).toBe(false)
+  })
+
   it('keep each other\'s changes, and each sees the other\'s', async () => {
     const list = [bigShard('x', 4, 1), bigShard('y', 4, 2)]
     seedLocal(list)

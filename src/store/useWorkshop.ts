@@ -1806,7 +1806,17 @@ attach({
     currentId: s.currentId !== null && !list.some((x) => x.id === s.currentId) ? null : s.currentId,
   })),
   report: (message) => { if (useWorkshop.getState().storageError !== message) useWorkshop.setState({ storageError: message }) },
-  protect: () => (useWorkshop.getState().open ? useWorkshop.getState().currentId : null),
+  // A shard being VIEWED (your own, read back from the feed, DECK-0003 view())
+  // is not yet the one on the bench, but a remote delete of it while it is
+  // only viewed would still vanish out from under the tab, and adopt() would
+  // then recreate it under the same id on the next edit: a delete undone by
+  // an edit that never meant to touch it. Guard the viewed id too, own only:
+  // viewing a copy that is not yours names no shard of yours to protect.
+  protect: () => {
+    const s = useWorkshop.getState()
+    if (!s.open) return null
+    return s.viewing?.own ? s.viewing.d : s.currentId
+  },
   notice: (message) => useWorkshop.setState({ notice: message }),
 })
 
