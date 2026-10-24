@@ -1,7 +1,8 @@
 /**
  * useWorkshop.ts — the shards you are building, and the one on the bench.
  *
- * Everything here is local: shards persist in localStorage until deployed,
+ * Everything here is local: shards persist in this browser (IndexedDB, or
+ * localStorage where that cannot be used: store/workshopStorage.ts) until deployed,
  * and a deployed shard stays here too, so it can be deployed again somewhere
  * else or edited into a new one. The editing model is small and exact: stamp
  * a shape, place a vertex, select a point and nudge it a unit along an axis,
@@ -25,7 +26,6 @@ import {
   DIVISIONS,
   GRID_HALF,
   TICKS_PER_UNIT,
-  normalizeStored,
   ticksOf,
   vertexAt,
   type Division,
@@ -56,11 +56,13 @@ import { cornerAverage, weld } from '../lib/weld'
 import { subdivide, subdivideNotice } from '../lib/subdivide'
 import { withCredit, type Credit } from 'sno-core/feed'
 import { useNostr } from './useNostr'
+import { attach, initialShards, persist, saveNow as saveStored } from './workshopStorage'
+
+export { hydrateWorkshop, storageMode } from './workshopStorage'
 
 /** VIEW builds nothing: it is the tool you hold to look around. */
 export type Tool = 'view' | 'stamp' | 'add' | 'select' | 'face'
 
-const STORAGE = 'onosendai:shards'
 const PALETTE_STORAGE = 'onosendai:palette'
 /**
  * The model last on the bench, so returning to the workshop returns to it
@@ -271,6 +273,13 @@ function connectedTo(s: ShardModel, selection: number[]): number[] {
 
 export interface WorkshopState {
   shards: ShardModel[]
+  /**
+   * Why the latest changes are not saved, while they are not: storage is
+   * full, or could not be opened. Null when everything is saved.
+   */
+  storageError: string | null
+  /** Write the shard list to storage again; resolves with whether every shard in it has committed. */
+  saveNow: () => Promise<boolean>
   currentId: string | null
   /** The workshop overlay is up. */
   open: boolean
@@ -565,17 +574,6 @@ export interface WorkshopState {
 /** Whose object a model was made from (REMIX): sno-core's, shared with snocrash. */
 export { creditOf } from 'sno-core/feed'
 
-function load(): ShardModel[] {
-  try {
-    const raw = localStorage.getItem(STORAGE)
-    if (!raw) return []
-    const list = JSON.parse(raw)
-    return Array.isArray(list)
-      ? list.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.vertices)).map((s) => normalizeStored(s)).map((s) => ({ ...s, extent: Number.isInteger(s.extent) ? s.extent : Math.max(GRID_HALF, neededExtent(s)) }))
-      : []
-  } catch { return [] }
-}
-
 /**
  * Whether two shards are the same object: every field of the model, exactly,
  * whatever their ids, names or edit times. An action whose result is the
@@ -632,8 +630,13 @@ export function lastOnBench(shards: ShardModel[]): string | null {
   } catch { return null }
 }
 
+/**
+ * Keep the list: only the shards that changed are written, through
+ * store/workshopStorage.ts, which says on the store (`storageError`) when a
+ * write fails. Whoever needs to know it landed awaits saveNow().
+ */
 function save(shards: ShardModel[]): void {
-  try { localStorage.setItem(STORAGE, JSON.stringify(shards)) } catch { /* quota or private mode */ }
+  persist(shards)
 }
 
 /**
@@ -1004,7 +1007,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
   }
 
   return {
-    shards: load(),
+    shards: initialShards(),
+    storageError: null,
+    saveNow: () => saveStored(),
     currentId: null,
     open: false,
     tool: 'view',
@@ -1801,6 +1806,28 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       return (v.own ? get().shards.find((s) => s.id === v.d) : undefined) ?? v.shard
     },
   }
+})
+
+attach({
+  shards: () => useWorkshop.getState().shards,
+  replace: (list) => useWorkshop.setState((s) => ({
+    shards: list,
+    // A shard that is gone cannot stay the one on the bench.
+    currentId: s.currentId !== null && !list.some((x) => x.id === s.currentId) ? null : s.currentId,
+  })),
+  report: (message) => { if (useWorkshop.getState().storageError !== message) useWorkshop.setState({ storageError: message }) },
+  // A shard being VIEWED (your own, read back from the feed, DECK-0003 view())
+  // is not yet the one on the bench, but a remote delete of it while it is
+  // only viewed would still vanish out from under the tab, and adopt() would
+  // then recreate it under the same id on the next edit: a delete undone by
+  // an edit that never meant to touch it. Guard the viewed id too, own only:
+  // viewing a copy that is not yours names no shard of yours to protect.
+  protect: () => {
+    const s = useWorkshop.getState()
+    if (!s.open) return null
+    return s.viewing?.own ? s.viewing.d : s.currentId
+  },
+  notice: (message) => useWorkshop.setState({ notice: message }),
 })
 
 // Remember the model on the bench whenever it changes.
