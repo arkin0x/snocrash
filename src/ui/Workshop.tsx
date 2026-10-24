@@ -27,6 +27,7 @@ import { ConfirmModal } from './ConfirmModal'
 import { holding, letGo, typingIn, workshopEscape } from './escape'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, OPACITY_FLOOR, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
+import { CONSTRAINS, CONSTRAIN_TIPS, authoredConstrainOf, withAuthoredConstrain } from '../lib/walkConstrain'
 import { opacityPercent, stepOpacity } from '../lib/opacityStep'
 import { stepDivision } from './divisions'
 import { IMPORT_ACCEPT, IMPORT_FORMATS_LABEL } from 'sno-core/importFile'
@@ -591,7 +592,7 @@ export function Workshop(): JSX.Element | null {
   }, [nostrNotice])
   // Something to publish or clear: its own vertices, or objects it places (DECK-0003 §1.9 rule 13).
   const hasContent = shard !== null && (shard.vertices.length > 0 || (shard.parts?.length ?? 0) > 0)
-  const wireBytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(toPayload(shard))).length : 0), [shard])
+  const wireBytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(toPayload(withAuthoredConstrain(shard)))).length : 0), [shard])
   // Where this object stands with the relays. The bench cannot show it: a
   // published object and one that has never left the browser look the same.
   const pubState = useMemo(
@@ -866,6 +867,18 @@ export function Workshop(): JSX.Element | null {
             <span className="workshop__value">{opacityPercent(shard.opacity)}%</span>
             <button className="workshop__btn" {...bind(() => w().setOpacity(stepOpacity(w().current()?.opacity, 1)))} disabled={opacityPercent(shard.opacity) >= 100} aria-label="More solid" title="More solid">+</button>
             <span className="workshop__unit-size" title="Avatars always draw solid.">100% is solid</span>
+          </div>
+          {/* Whether a walker can cross it in ONOSENDAI's WALK (DECK-0003
+              §1.12): three buttons like DRAW's, as ONOSENDAI's workshop has.
+              A shard that never chose shows OPAQUE, which is what it
+              publishes as (arkinox, 2026-10-23). */}
+          <div className="workshop__row">
+            <span className="workshop__label">CONSTRAIN MOVEMENT IN WALK MODE</span>
+            <div className="workshop__modes" role="group" aria-label="Constrain movement in WALK mode">
+              {CONSTRAINS.map((c) => (
+                <button key={c} className={`workshop__mode ${authoredConstrainOf(shard) === c ? 'is-on' : ''}`} aria-pressed={authoredConstrainOf(shard) === c} title={CONSTRAIN_TIPS[c]} onClick={() => w().setConstrain(c)}>{c.toUpperCase()}</button>
+              ))}
+            </div>
           </div>
           {/* A switch, as ONOSENDAI's avatar ghost is, in the workshop's own
               green (arkinox, 2026-10-10): the to-scale person at the grid's

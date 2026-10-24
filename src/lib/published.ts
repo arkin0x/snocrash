@@ -30,6 +30,7 @@
  */
 
 import { toPayload, type ShardModel } from 'sno-core/shards'
+import { withAuthoredConstrain } from './walkConstrain'
 
 const STORAGE = 'snocrash:published'
 
@@ -202,5 +203,5 @@ export const STATE_HELP: Record<PublishState, string> = {
  * drifted, so the two can never disagree about what "the same object" means.
  */
 export function shardFingerprint(shard: ShardModel): string {
-  return fingerprint(JSON.stringify(toPayload(shard)))
+  return fingerprint(JSON.stringify(toPayload(withAuthoredConstrain(shard))))
 }

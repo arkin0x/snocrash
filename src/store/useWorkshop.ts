@@ -45,6 +45,7 @@ import {
   type ShardModel,
   type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
 import { withOpacity } from '../lib/opacityStep'
+import { authoredConstrainOf, withConstrain, type Constrain } from '../lib/walkConstrain'
 import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
 import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
 import { BUILT_IN, hexAt, remap, samePalette, snapHex, type Palette } from 'sno-core/snoPalette'
@@ -414,6 +415,13 @@ export interface WorkshopState {
    * anything else is kept between the floor (10) and 99. Undoable like MODE.
    */
   setOpacity: (percent: number) => void
+  /**
+   * Whether a walker can cross it in WALK (DECK-0003 §1.12, lib/walkConstrain.ts):
+   * off, all of its faces, or only while it draws solid and opaque. Written as
+   * the word, OFF included; a shard that never chose already shows and
+   * publishes OPAQUE, so pressing OPAQUE there is no edit. Undoable like MODE.
+   */
+  setConstrain: (c: Constrain) => void
   setUnit: (unit: number) => void
   /** One step of unit up or down, on the shard an edit lands on (the − and + buttons). */
   stepUnit: (by: 1 | -1) => void
@@ -1127,6 +1135,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     setMode: (mode) => edit((s) => ({ ...s, mode })),
     setOpacity: (percent) => edit((s) => withOpacity(s, percent)),
+    setConstrain: (c) => edit((s) => (authoredConstrainOf(s) === c ? null : withConstrain(s, c))),
     setUnit: (unit) => edit((s) => ({ ...s, unit: clampUnit(unit) })),
     // From the shard the edit lands on, not the copy on view: your stored
     // object can be a step away from what the relay returned (review of
