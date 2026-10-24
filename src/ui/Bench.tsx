@@ -27,7 +27,7 @@
 
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { AdditiveBlending, BufferGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Line, LineBasicMaterial, Matrix4, MeshBasicMaterial, PerspectiveCamera, SphereGeometry, Vector3 } from 'three'
 import { partMatrix } from 'sno-core/parts'
 import { useNostr } from '../store/useNostr'
@@ -706,7 +706,22 @@ function AxesReporter(): null {
   return null
 }
 
-export function Bench(): JSX.Element {
+/**
+ * Memoized: Bench takes no props, so its only legitimate reason to redraw is
+ * its own store reads (useWorkshop, useBenchView, useThree). Workshop.tsx is
+ * one large component with its own local state (menus, panels, pickers,
+ * drag-and-drop); any one of those re-renders Workshop and, with Bench a
+ * plain function component, re-executed Bench too, which re-executed every
+ * child in its JSX (Grid, Ghost, Handles, ShardMesh) whether or not anything
+ * they read had changed — ONOSENDAI's workshop measured this at roughly
+ * 280-580 unneeded re-renders of that subtree from a single tap on the
+ * canvas with a complex shard open (arkinox, 2026-10-23, ONOSENDAI #487).
+ * Wrapping Bench lets React's default memo comparison (no props, always
+ * equal) skip it on every parent-driven re-render that isn't Bench's own;
+ * its internal store subscriptions still force a real re-render exactly as
+ * before when something they read changes.
+ */
+function BenchImpl(): JSX.Element {
   const shard = useWorkshop((s) => s.current())
   const tool = useWorkshop((s) => s.tool)
   const extent = shard?.extent ?? GRID_HALF
@@ -793,3 +808,5 @@ export function Bench(): JSX.Element {
     </Canvas>
   )
 }
+
+export const Bench = memo(BenchImpl)
