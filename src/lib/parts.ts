@@ -92,6 +92,10 @@ export function useResolved(shard: ShardModel | null, self?: Ref): Map<string, R
   // own parts: what a reference resolves to does not depend on where it stands.
   const refs = shard?.refs ?? []
   const key = refs.map(refKey).join('|') + (self ? `@${refKey(self)}` : '')
+  // The objects it carries (DECK-0003 §1.10), by identity: resolveParts draws
+  // a placement from them first, so another table is another answer even
+  // when the references are the same.
+  const carried = shard?.objects
   useEffect(() => {
     if (!shard || refs.length === 0) { setByRef((m) => (m.size ? new Map() : m)); return }
     let live = true
@@ -103,9 +107,9 @@ export function useResolved(shard: ShardModel | null, self?: Ref): Map<string, R
       setByRef(m)
     })
     return () => { live = false }
-    // The references, not the shard: a placement moving needs no new fetch.
+    // The references and the table, not the shard: a placement moving needs no new fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, tick])
+  }, [key, carried, tick])
   return byRef
 }
 
