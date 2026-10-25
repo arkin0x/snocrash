@@ -78,6 +78,8 @@ interface Props {
   nested?: Placed[]
   /** This object's own address, when it is published, so placing itself reads as the loop it is. */
   self?: Ref
+  /** Whose keys of its table count (lib/parts.ts useResolved): said, never guessed from `self`. */
+  author?: string | null
   /** A tap on a placed object, with its index in `parts`: the workshop's SELECT. */
   onPartClick?: (e: ThreeEvent<MouseEvent>, part: number) => void
   /** Placements drawn with the selection's box around them. */
@@ -149,7 +151,7 @@ export function faceOfHit(i: { object: { userData: { faceOf?: number[] } }; face
 }
 
 
-export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip, nested, self, onPartClick, selectedParts }: Props): JSX.Element | null {
+export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip, nested, self, author, onPartClick, selectedParts }: Props): JSX.Element | null {
   // What everything below is drawn at: the object's own opacity (DECK-0003
   // §1.11, with its 10% floor), times a ghost's. A placed object reaches here
   // with its own model, so it never takes its parent's (§1.10). See
@@ -159,7 +161,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
   const bench = benchOrders(opacity, ghost)
   // The object at the top resolves every reference in the tree once; a placed
   // object is handed its own parts already resolved.
-  const byRef = useResolved(nested ? null : given, self)
+  const byRef = useResolved(nested ? null : given, self, author)
   // A face that carries its own colour needs three corners of its own, or the
   // colour would bleed across every edge it shares. Expanded here and nowhere
   // else, so the rest of this file never learns about face colours.

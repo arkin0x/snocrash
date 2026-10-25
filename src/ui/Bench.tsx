@@ -799,6 +799,9 @@ function BenchImpl(): JSX.Element {
           onPartClick={tool === 'view' || tool === 'select' || tool === 'face' ? onPart : undefined}
           selectedParts={partSel}
           self={me ? ['a', `33331:${me}:${shard.id}`] : undefined}
+          // Whose table counts: the signer's for an object viewed from the feed;
+          // yours for one of yours (a copy here carries yours only: useWorkshop asYours).
+          author={shard.author ?? me ?? null}
         />
       )}
       <Ghost />
