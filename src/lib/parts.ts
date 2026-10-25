@@ -80,7 +80,13 @@ export type Resolved = Pick<Placed, 'model' | 'missing' | 'children'>
  * nothing is drawn; after that, the previous answer stays up while a new one
  * is fetched, so an edit never flashes the parts away.
  */
-export function useResolved(shard: ShardModel | null, self?: Ref): Map<string, Resolved> {
+/**
+ * `author` is whose keys of `shard`'s table count (DECK-0003 §1.10): the
+ * event's signer for an object read from the feed, yours for one made or
+ * copied here; null for none. Left out, sno-core takes the model's own, then
+ * `self`'s pubkey.
+ */
+export function useResolved(shard: ShardModel | null, self?: Ref, author?: string | null): Map<string, Resolved> {
   const [byRef, setByRef] = useState<Map<string, Resolved>>(() => new Map())
   const [tick, setTick] = useState(refreshed)
   useEffect(() => {
@@ -91,21 +97,25 @@ export function useResolved(shard: ShardModel | null, self?: Ref): Map<string, R
   // One placement per reference is enough to resolve each object and its
   // own parts: what a reference resolves to does not depend on where it stands.
   const refs = shard?.refs ?? []
-  const key = refs.map(refKey).join('|') + (self ? `@${refKey(self)}` : '')
+  const key = refs.map(refKey).join('|') + (self ? `@${refKey(self)}` : '') + (author !== undefined ? `#${author}` : '')
+  // The objects it carries (DECK-0003 §1.10), by identity: resolveParts draws
+  // a placement from them first, so another table is another answer even
+  // when the references are the same.
+  const carried = shard?.objects
   useEffect(() => {
     if (!shard || refs.length === 0) { setByRef((m) => (m.size ? new Map() : m)); return }
     let live = true
     const probe: ShardModel = { ...shard, parts: refs.map((_, i) => ({ ref: i, at: [0, 0, 0], turn: [0, 0, 0], step: 0 })) }
-    void resolveParts(probe, fetchRef, self).then((placed) => {
+    void resolveParts(probe, fetchRef, { ...(self ? { self } : {}), ...(author !== undefined ? { author } : {}) }).then((placed) => {
       if (!live) return
       const m = new Map<string, Resolved>()
       placed.forEach((p) => m.set(refKey(p.ref), { model: p.model, missing: p.missing, children: p.children }))
       setByRef(m)
     })
     return () => { live = false }
-    // The references, not the shard: a placement moving needs no new fetch.
+    // The references and the table, not the shard: a placement moving needs no new fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, tick])
+  }, [key, carried, tick])
   return byRef
 }
 

@@ -215,6 +215,19 @@ function clipOf(s: ShardModel, selection: number[], partSel: number[] = []): Cli
   }
 }
 
+/**
+ * `model` made yours (REMIX, a first edit of someone's object, a paste): it
+ * keeps its carried table (DECK-0003 §1.10) only when you signed the event it
+ * came from, as ONOSENDAI's copies do, and never says whose it was read as.
+ * A table whose keys are another's pubkey is honored only under that pubkey:
+ * kept, it would draw on your bench and be ignored by every reader once you
+ * publish it (review of #47); and a paste or a file is signed by nobody.
+ */
+export function asYours(model: ShardModel, signedByYou: boolean): ShardModel {
+  const { author: _author, objects, ...rest } = model
+  return signedByYou && objects ? { ...rest, objects } : rest
+}
+
 /** This shard's address once this key deploys it, which Bench gives OBJECT and the clipboard gives PASTE: what it must never place. */
 export function ownAddress(pubkey: string, id: string | null): string | undefined {
   return id ? `33331:${pubkey}:${id}` : undefined
@@ -1084,8 +1097,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const id = v.own ? v.d : uuid()
       const taken = new Set(get().shards.map((s) => s.name))
       const name = v.own || !taken.has(v.shard.name) ? v.shard.name : `${v.shard.name} copy`
+      const pk = useNostr.getState().pubkey
       const base: ShardModel = {
-        ...v.shard, id, name,
+        ...asYours(v.shard, v.own || (!!pk && v.shard.author === pk)), id, name,
         vertices: v.shard.vertices.map(cloneVertex),
         faces: v.shard.faces.map((f) => [...f] as [number, number, number]),
         updatedAt: Date.now(),
@@ -1777,7 +1791,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
         set({ notice: 'That is not JSON. Copy the whole thing, from the first { to the last }.' })
         return null
       }
-      const s = fromPayload(raw, uuid())
+      const read = fromPayload(raw, uuid())
+      // Signed by nobody: no table of it counts (asYours).
+      const s = read && asYours(read, false)
       if (!s) {
         set({ notice: 'That is JSON, but not an object this can read. A shard carries v, vertices, colors and faces.' })
         return null
@@ -1800,7 +1816,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
       const taken = new Set(get().shards.map((s) => s.name))
       // Your own object comes back under its own name: there is no other to be a copy of.
       const name = !id && taken.has(model.name) ? `${model.name} copy` : model.name
-      const base: ShardModel = { ...model, id: id ?? uuid(), name, vertices: model.vertices.map(cloneVertex), faces: model.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
+      const pk = useNostr.getState().pubkey
+      const base: ShardModel = { ...asYours(model, !!pk && model.author === pk), id: id ?? uuid(), name, vertices: model.vertices.map(cloneVertex), faces: model.faces.map((f) => [...f] as [number, number, number]), updatedAt: Date.now() }
       const copy: ShardModel = credit ? withCredit(base, credit) : base
       const list = [...get().shards, copy]
       set({ shards: list }); save(list)
