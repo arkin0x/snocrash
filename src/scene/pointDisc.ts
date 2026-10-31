@@ -86,6 +86,8 @@ const fragmentShader = /* glsl */ `
     vec3 color = vColor * (1.0 + uGlow * (1.0 - smoothstep(0.0, 0.8, d)));
 
     gl_FragColor = vec4(color, alpha);
+    // Colors arrive linear (shardColors.ts), so this encodes to sRGB like every built-in material.
+    #include <colorspace_fragment>
   }
 `
 
