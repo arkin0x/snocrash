@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest'
 import { decodeObjectAddress, objectAddress, objectFromEvent, objectTemplate, paletteTemplate, PALETTE_KIND, remixCredit } from './useNostr'
 import { withCredit } from 'sno-core/feed'
 import { nip19 } from 'nostr-tools'
+import { newShard, type ShardModel } from 'sno-core/shards'
 import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
 
 /** A real palette, published by espy.you, from the kind 3367 survey of 2026-09-16. */
@@ -234,5 +235,20 @@ describe('a remix, published (DECK-0003 crediting; ruled 2026-10-08)', () => {
   it('an original carries neither', () => {
     const tags = objectTemplate({ ...original.shard, id: 'mine' }, 2).tags
     expect(tags.some((t) => t[0] === 'q' || t[0] === 'p')).toBe(false)
+  })
+})
+
+describe('a table goes out only under the signer (DECK-0003 §1.10)', () => {
+  const ME = 'a'.repeat(64), OLD = 'b'.repeat(64)
+  const piece = { v: 2, name: 'Piece', unit: 0, mode: 'solid', vertices: [[0, 0, 0]], colors: [1] }
+  const shard = { ...newShard('Built'), id: 'built', refs: [['a', `33331:${ME}:mine`], ['a', `33331:${OLD}:theirs`]], parts: [{ ref: 0, at: [0, 0, 0], turn: [0, 0, 0], step: 0 }, { ref: 1, at: [0, 0, 0], turn: [0, 0, 0], step: 0 }], objects: { [`33331:${ME}:mine`]: piece, [`33331:${OLD}:theirs`]: piece } } as ShardModel
+
+  it('leaves out a key under the key it was built with', () => {
+    const written = JSON.parse(objectTemplate(shard, 1, ME).content)
+    expect(Object.keys(written.objects)).toEqual([`33331:${ME}:mine`])
+  })
+
+  it('omits the field when no key is left', () => {
+    expect(JSON.parse(objectTemplate(shard, 1, 'c'.repeat(64)).content).objects).toBeUndefined()
   })
 })
