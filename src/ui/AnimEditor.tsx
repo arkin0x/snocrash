@@ -27,7 +27,7 @@ import { TICKS_PER_UNIT, type ShardModel } from 'sno-core/shards'
 import { MAX_MOTIONS, PATH_MAX, readAnim, type Motion } from 'sno-core/anim'
 import {
   addPoint, addPreset, amountKind, amountOf, listOf, mayFlicker, MOTION_NAMES, moveMotion, movePoint, objectReach, perMinute, pointsOf, PRESETS,
-  rawOf, removeMotion, removePoint, reverse, reversible, setAmount, setAxis, setPhase, setPoint, setRest, setSpeed, showNumber, stepSpeed,
+  rawOf, removeMotion, removePoint, reverse, reversible, setAmount, setAxis, setPhase, setPoint, setRest, setSpeed, showNumber, SPEED_STEPS, stepSpeed,
   type Edited, type PresetId, type Waypoint,
 } from 'sno-core/animEdit'
 import { reducedMotionNow } from '../scene/animMotion'
@@ -49,6 +49,9 @@ function rawAnim(s: ShardModel | null): unknown {
 /** A number typed into a field, committed on Enter or blur; Escape puts the shown value back. */
 function NumberField({ value, onCommit, label, width = '7ch', onFocus, signed = false }: { value: string; onCommit: (n: number) => void; label: string; width?: string; onFocus?: () => void; signed?: boolean }): JSX.Element {
   const [text, setText] = useState<string | null>(null)
+  // A stepper changed the value under a half-typed draft: the draft goes, so leaving the field cannot undo the press.
+  const seen = useRef(value)
+  useEffect(() => { if (seen.current !== value) { seen.current = value; setText(null) } }, [value])
   const commit = (): void => {
     if (text === null) return
     // A comma is a decimal mark too.
@@ -84,7 +87,8 @@ export function AnimEditor(): JSX.Element {
   const raw = rawAnim(shard)
   const list = Array.isArray(raw) ? listOf(raw) : []
   const preview = useAnimPreview()
-  const bind = useRepeatable()
+  // Scroll-safe: the panel scrolls, and a scroll that starts on a stepper must not change it.
+  const bind = useRepeatable({ scrollSafe: true })
   const [note, setNote] = useState<string | null>(null)
   const currentId = useWorkshop((s) => s.currentId)
   const reduced = reducedMotionNow()
@@ -98,7 +102,8 @@ export function AnimEditor(): JSX.Element {
   if (keys.current.length !== list.length) keys.current = list.map(() => nextKey.current++)
 
   const apply = (e: Edited, keyed?: (k: number[]) => number[]): void => {
-    if (keyed) keys.current = keyed([...keys.current])
+    // A reorder or a removal: the point marked on the bench may now be another path's.
+    if (keyed) { keys.current = keyed([...keys.current]); useAnimPreview.getState().setPoint(null) }
     useWorkshop.getState().setAnim(e.list.length ? rawOf(e.list) : undefined)
     setNote(e.note ?? null)
   }
@@ -125,10 +130,10 @@ export function AnimEditor(): JSX.Element {
         <div className="workshop__row ws__anim-preview">
           <span className="workshop__label">PREVIEW</span>
           {preview.on && preview.playing
-            ? <button className="workshop__btn" title="Pause the preview" aria-label="Pause" onClick={() => preview.pause()}><Pause size={12} aria-hidden /> PAUSE</button>
-            : <button className="workshop__btn" title="Play the preview" aria-label="Play" onClick={() => preview.play()}><Play size={12} aria-hidden /> PLAY</button>}
+            ? <button className="workshop__btn ws__anim-play" title="Pause the preview" aria-label="Pause" onClick={() => preview.pause()}><Pause size={12} aria-hidden /> PAUSE</button>
+            : <button className="workshop__btn ws__anim-play" title="Play the preview" aria-label="Play" onClick={() => preview.play()}><Play size={12} aria-hidden /> PLAY</button>}
           {/* Kept in place while off, so PLAY and the scrub never move. */}
-          <button className="workshop__btn" style={preview.on ? undefined : { visibility: 'hidden' }} tabIndex={preview.on ? 0 : -1} title="Stop the preview, back at rest" aria-label="Stop" onClick={() => preview.stop()}><Square size={11} aria-hidden /> STOP</button>
+          <button className="workshop__btn" style={preview.on ? undefined : { visibility: 'hidden' }} tabIndex={preview.on ? 0 : -1} title="Stop the preview and go back to rest" aria-label="Stop" onClick={() => preview.stop()}><Square size={11} aria-hidden /> STOP</button>
           <div
             className="ws__anim-rail"
             ref={rail}
@@ -167,7 +172,7 @@ export function AnimEditor(): JSX.Element {
           ))}
         </div>
       </div>
-      {list.length === 0 && <div className="ws__explain">Pick one to make this object move. It loops forever, in time with everyone who sees it.</div>}
+      {list.length === 0 && <div className="ws__explain">Pick one to make this object move. It loops forever and everyone sees it move at the same time.</div>}
       {list.length >= MAX_MOTIONS && <div className="ws__explain">Up to {MAX_MOTIONS} motions</div>}
 
       {list.map((m, i) => (
@@ -175,7 +180,7 @@ export function AnimEditor(): JSX.Element {
       ))}
 
       {note && <div className="ws__explain ws__anim-note" role="status">{note}</div>}
-      {ignored > 0 && <div className="ws__explain">{ignored === 1 ? '1 entry here is skipped and goes on the next edit' : `${ignored} entries here are skipped and go on the next edit`}</div>}
+      {ignored > 0 && <div className="ws__explain">{ignored === 1 ? '1 entry here cannot be read and goes on the next edit' : `${ignored} entries here cannot be read and go on the next edit`}</div>}
     </div>
   )
 }
@@ -212,10 +217,10 @@ function MotionCard({ m, i, count, bind, apply, now }: { m: Motion; i: number; c
       )}
       <div className="workshop__row" role="group" aria-label="Speed">
         <span className="workshop__label">SPEED</span>
-        <button className="workshop__btn" {...bind(() => { const l = now(); apply(setSpeed(l, i, stepSpeed(perMinute(l[i]), -1))) })} aria-label="Slower" title="Slower">−</button>
+        <button className="workshop__btn" {...bind(() => { const l = now(); if (Math.abs(perMinute(l[i])) > SPEED_STEPS[0]) apply(setSpeed(l, i, stepSpeed(perMinute(l[i]), -1))) })} disabled={Math.abs(speed) <= SPEED_STEPS[0]} aria-label="Slower" title="Slower">−</button>
         <NumberField label="Speed, per minute" value={showNumber(Math.abs(speed))} onCommit={(n) => apply(setSpeed(now(), i, (speed < 0 ? -1 : 1) * Math.abs(n)))} />
         <span className="workshop__value">/MIN</span>
-        <button className="workshop__btn" {...bind(() => { const l = now(); apply(setSpeed(l, i, stepSpeed(perMinute(l[i]), 1))) })} aria-label="Faster" title="Faster">+</button>
+        <button className="workshop__btn" {...bind(() => { const l = now(); apply(setSpeed(l, i, stepSpeed(perMinute(l[i]), 1))) })} disabled={Math.abs(speed) >= SPEED_STEPS[SPEED_STEPS.length - 1]} aria-label="Faster" title="Faster">+</button>
         {/* A swing or a slide run backward is the same back and forth from another start (§1.14 writes it with a positive c): no REVERSE for them. */}
         {reversible(m) && <button className={`workshop__btn ${m.c < 0 ? 'is-on' : ''}`} aria-pressed={m.c < 0} title="Run it the other way" aria-label="Reverse" onClick={() => apply(reverse(now(), i))}><Repeat2 size={12} aria-hidden /></button>}
         <span className="ws__explain">{Math.abs(m.c)} every {m.b} s</span>
@@ -269,7 +274,7 @@ function PathPoints({ m, i, apply, now }: { m: Motion; i: number; apply: Apply; 
     <div className="ws__anim-points" role="group" aria-label="Path points">
       <div className="workshop__row">
         <span className="workshop__label">POINTS</span>
-        <span className="ws__explain">X Y Z in grid units, T is each leg&apos;s share of the time</span>
+        <span className="ws__explain">X Y Z are in grid units. T is each leg&apos;s share of the time.</span>
       </div>
       {points.map((_, j) => (
         <div key={j} className={`workshop__row ws__anim-point ${editing && editing[0] === i && editing[1] === j ? 'is-on' : ''}`} role="group" aria-label={`Point ${j + 1}`}>

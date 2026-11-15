@@ -16,7 +16,7 @@
  * A steady clock. Frames are timed from performance.now(), which never steps,
  * plus an offset to Unix time; a step in the device clock (a time sync, or
  * its user setting the clock) is taken as a correction, so every moving object
- * eases into the new time rather than jumps (scene/animMotion.ts).
+ * eases into the new time rather than jumps (scene/animMotion.tsx).
  *
  * Measured when the first moving object mounts, again when the page comes
  * back into view, and every ten minutes while anything moves. ONOSENDAI's

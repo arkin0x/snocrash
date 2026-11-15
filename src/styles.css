@@ -2921,6 +2921,10 @@ button:disabled { opacity: 0.35; cursor: default; }
 .ws__anim-walked { background: var(--accent); box-shadow: 0 0 6px rgba(0, 229, 255, 0.6); }
 .ws__anim-mark { position: absolute; top: 6px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .ws__anim-axis { font-size: 10px; letter-spacing: 0.1em; }
+/* PLAY and PAUSE take one width, so STOP and the scrub never move when one turns into the other. */
+.ws__anim-play { min-width: 84px; }
+/* The panel scrolls: a drag that starts on a stepper pans it (useRepeatable scrollSafe). */
+.ws__anim .workshop__btn { touch-action: pan-y; }
 .ws__anim-points { display: grid; gap: 5px; }
 .ws__anim-point { gap: 3px; flex-wrap: nowrap; }
 .ws__anim-point .ws__anim-num { padding: 5px 3px; }

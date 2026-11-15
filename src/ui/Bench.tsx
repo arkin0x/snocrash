@@ -33,7 +33,7 @@ import { partMatrix } from 'sno-core/parts'
 import { animOf, hasAnim } from 'sno-core/anim'
 import type { ClockReading } from 'sno-core/animClock'
 import { cycleSeconds } from 'sno-core/animEdit'
-import { AnimClock } from '../scene/animMotion'
+import { AnimClock, reducedMotionNow } from '../scene/animMotion'
 import { useAnimPreview } from '../store/animPreview'
 import { useNostr } from '../store/useNostr'
 import { ACCENT, BG, WARN } from '../lib/palette'
@@ -204,7 +204,7 @@ function Ghost(): JSX.Element | null {
     const m = new Matrix4().fromArray(partMatrix({ ref: 0, at: aim, turn: [0, (90 * facing) % 360, 0], step: 0 }, unit, object.shard.unit))
     return (
       <group matrix={m} matrixAutoUpdate={false}>
-        <ShardMesh shard={object.shard} ghost />
+        <ShardMesh shard={object.shard} ghost still />
       </group>
     )
   }
@@ -295,6 +295,7 @@ function Handles(): JSX.Element | null {
   const facePick = useWorkshop((s) => s.facePick)
   const tool = useWorkshop((s) => s.tool)
   const previewing = useAnimPreview((s) => s.on)
+  const scrubbed = useAnimPreview((s) => s.scrub !== null)
   const chosen = useMemo(() => new Set(selection), [selection])
   const groups = useMemo(() => {
     const m = new Map<string, number[]>()
@@ -320,8 +321,9 @@ function Handles(): JSX.Element | null {
   useFrame((state) => { dots.update(state.camera as PerspectiveCamera, state.size.height) })
   if (!shard) return null
   // A moving object (VIEW, or the MOTION preview) is drawn where its motion
-  // has it: handles at its rest pose would hang in the air beside it.
-  if ((tool === 'view' || previewing) && hasAnim(shard)) return null
+  // has it: handles at its rest pose would hang in the air beside it. Under
+  // reduced motion it stands at rest, unless scrubbed, and keeps its handles.
+  if ((tool === 'view' || previewing) && hasAnim(shard) && (scrubbed || !reducedMotionNow())) return null
   const glow = glowTexture()
 
   const onClick = (first: number, isSel: boolean) => (e: ThreeEvent<MouseEvent>): void => {
