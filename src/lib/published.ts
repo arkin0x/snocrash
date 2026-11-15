@@ -29,7 +29,8 @@
  * unknown, and never a guess.
  */
 
-import { toPayload, type ShardModel } from 'sno-core/shards'
+import { toPayload, type ShardModel, type ShardPayload } from 'sno-core/shards'
+import { carriedTable } from 'sno-core/parts'
 import { withAuthoredConstrain } from './walkConstrain'
 
 const STORAGE = 'snocrash:published'
@@ -198,10 +199,26 @@ export const STATE_HELP: Record<PublishState, string> = {
 }
 
 /**
- * The fingerprint of an object as it would go out right now. One definition,
- * used both when a publish is recorded and when a row asks whether it has
- * drifted, so the two can never disagree about what "the same object" means.
+ * The payload an object goes out as when `author` signs it. OPAQUE for an
+ * object whose author never chose (DECK-0003 §1.12). Only the keys of its
+ * objects table under the signer's pubkey (§1.10: a publisher MUST write no
+ * other), because a workshop outlives a change of key and a reader ignores
+ * any other; with no signer known, no table at all, as a reader that does not
+ * know the pubkey honours none. The field is omitted when no key is left.
  */
-export function shardFingerprint(shard: ShardModel): string {
-  return fingerprint(JSON.stringify(toPayload(withAuthoredConstrain(shard))))
+export function outgoingPayload(shard: ShardModel, author: string | null): ShardPayload {
+  const { objects: held, ...bare } = shard
+  const table = author && held ? carriedTable(shard, author) : undefined
+  return toPayload(withAuthoredConstrain(table && Object.keys(table).length ? { ...bare, objects: table } : bare))
+}
+
+/**
+ * The fingerprint of an object as it would go out right now under `author`.
+ * One definition, used both when a publish is recorded (the event's content
+ * is outgoingPayload) and when a row asks whether it has drifted, so the two
+ * can never disagree about what "the same object" means. Pass the key that
+ * published it (its ledger record), else your own.
+ */
+export function shardFingerprint(shard: ShardModel, author: string | null): string {
+  return fingerprint(JSON.stringify(outgoingPayload(shard, author)))
 }

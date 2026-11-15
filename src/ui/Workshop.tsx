@@ -27,7 +27,7 @@ import { ConfirmModal } from './ConfirmModal'
 import { holding, letGo, typingIn, workshopEscape } from './escape'
 import { Explanation } from './Explanation'
 import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, OPACITY_FLOOR, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
-import { CONSTRAINS, CONSTRAIN_TIPS, authoredConstrainOf, withAuthoredConstrain } from '../lib/walkConstrain'
+import { CONSTRAINS, CONSTRAIN_TIPS, authoredConstrainOf } from '../lib/walkConstrain'
 import { opacityPercent, stepOpacity } from '../lib/opacityStep'
 import { AnimEditor } from './AnimEditor'
 import { stepDivision } from './divisions'
@@ -44,7 +44,7 @@ import { Feed } from './Feed'
 import { Guard } from './Guard'
 import { LoginModal } from './LoginModal'
 import { MenuOverlay } from './MenuOverlay'
-import { STATE_HELP, STATE_LABEL, STATE_TAG, publishState, shardFingerprint } from '../lib/published'
+import { STATE_HELP, STATE_LABEL, STATE_TAG, outgoingPayload, publishState, shardFingerprint } from '../lib/published'
 import { decodeObjectAddress, useNostr } from '../store/useNostr'
 import { useRoute } from '../lib/route'
 import { fileNameFor, toPly } from '../lib/ply'
@@ -593,11 +593,12 @@ export function Workshop(): JSX.Element | null {
   }, [nostrNotice])
   // Something to publish or clear: its own vertices, or objects it places (DECK-0003 §1.9 rule 13).
   const hasContent = shard !== null && (shard.vertices.length > 0 || (shard.parts?.length ?? 0) > 0)
-  const wireBytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(toPayload(withAuthoredConstrain(shard)))).length : 0), [shard])
+  // What goes out under the key that published it, else yours: the same key the state below compares under (lib/published.ts outgoingPayload).
+  const wireBytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(outgoingPayload(shard, ledger[shard.id]?.pubkey ?? pubkey))).length : 0), [shard, ledger, pubkey])
   // Where this object stands with the relays. The bench cannot show it: a
   // published object and one that has never left the browser look the same.
   const pubState = useMemo(
-    () => publishState(shard ? ledger[shard.id] : undefined, shard ? shardFingerprint(shard) : '', pubkey),
+    () => publishState(shard ? ledger[shard.id] : undefined, shard ? shardFingerprint(shard, ledger[shard.id]?.pubkey ?? pubkey) : '', pubkey),
     [shard, ledger, pubkey],
   )
   const color = useWorkshop((s) => s.color)
