@@ -97,12 +97,24 @@ describe('GLOW', () => {
 
   it('makes one drag of RADIUS one undo step', () => {
     w().setGlow({ style: 'fog', radius: 120, strength: 40 })
-    w().setGlow({ style: 'fog', radius: 126, strength: 40 }, true)
-    w().setGlow({ style: 'fog', radius: 132, strength: 40 }, true)
+    w().setGlow({ style: 'fog', radius: 126, strength: 40 }, 'radius')
+    w().setGlow({ style: 'fog', radius: 132, strength: 40 }, 'radius')
     w().endLive()
     expect(w().past).toHaveLength(2)
     w().undo()
     expect(cur().extra).toEqual({ glow: ['fog', 120, 40] })
+  })
+
+  it('never merges a drag of GLOW STRENGTH into a drag of RADIUS', () => {
+    w().setGlow({ style: 'fog', radius: 120, strength: 40 })
+    w().setGlow({ style: 'fog', radius: 126, strength: 40 }, 'radius')
+    // No endLive between them: a lost pointerup must not join the two.
+    w().setGlow({ style: 'fog', radius: 126, strength: 45 }, 'strength')
+    w().setGlow({ style: 'fog', radius: 126, strength: 50 }, 'strength')
+    w().endLive()
+    expect(w().past).toHaveLength(3)
+    w().undo()
+    expect(cur().extra).toEqual({ glow: ['fog', 126, 40] })
   })
 
   it('is what the published payload carries, and reads back', () => {

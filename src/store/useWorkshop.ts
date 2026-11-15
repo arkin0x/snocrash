@@ -443,9 +443,11 @@ export interface WorkshopState {
    * GLOW (DECK-0003 §1.16): LIGHT or FOG with a radius in ticks and a GLOW
    * STRENGTH in percent, or undefined for OFF. Written through sno-core
    * withGlow. A glow set here is remembered for the session, so OFF and then
-   * LIGHT or FOG brings the same radius and strength back. `live` as above.
+   * LIGHT or FOG brings the same radius and strength back. `live` names the
+   * slider being dragged (RADIUS or GLOW STRENGTH), so a drag of one never
+   * merges into a drag of the other.
    */
-  setGlow: (glow: Glow | undefined, live?: boolean) => void
+  setGlow: (glow: Glow | undefined, live?: 'radius' | 'strength') => void
   /** The end of a slider's drag: the next change is an undo step of its own. */
   endLive: () => void
   /** The radius and strength the GLOW row turns on with: the last ones set this session, else GLOW_START. */
@@ -1179,9 +1181,9 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setMode: (mode) => edit((s) => ({ ...s, mode })),
     setOpacity: (percent) => edit((s) => withOpacity(s, percent)),
     setPointSize: (ticks, isLive = false) => { edit((s) => withPointSize(s, ticks), null, isLive ? 'pointsize' : null) },
-    setGlow: (glow, isLive = false) => {
+    setGlow: (glow, slider) => {
       if (glow) set({ glowMemory: { radius: glow.radius, strength: glow.strength } })
-      edit((s) => withGlow(s, glow), null, isLive ? 'glow' : null)
+      edit((s) => withGlow(s, glow), null, slider ? `glow:${slider}` : null)
     },
     endLive: () => { live = null },
     setConstrain: (c) => edit((s) => (authoredConstrainOf(s) === c ? null : withConstrain(s, c))),

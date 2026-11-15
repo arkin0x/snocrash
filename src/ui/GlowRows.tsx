@@ -33,10 +33,26 @@ import type { GlowStyle } from 'sno-core/glow'
 
 const w = () => useWorkshop.getState()
 
-/** What ends a slider's drag, so the next change is an undo step of its own. */
+/**
+ * What ends a slider's drag, so the next change is an undo step of its own.
+ * The pointer is captured on the press and a release anywhere on the page
+ * ends it too, so a finger lifted off the slider never leaves the drag open.
+ */
 const endDrag = {
+  onPointerDown: (e: React.PointerEvent<HTMLInputElement>) => {
+    w().endLive()
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* not every browser captures on a range */ }
+    const end = (): void => {
+      w().endLive()
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+    }
+    window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
+  },
   onPointerUp: () => w().endLive(),
   onPointerCancel: () => w().endLive(),
+  onLostPointerCapture: () => w().endLive(),
   onKeyUp: () => w().endLive(),
   onBlur: () => w().endLive(),
 }
@@ -57,8 +73,8 @@ export function GlowRows({ shard, inHand }: { shard: ShardModel; inHand: [number
   // What RADIUS and GLOW STRENGTH show while GLOW is OFF: what it will turn on with.
   const radius = glow?.radius ?? memory.radius
   const strength = glow?.strength ?? memory.strength
-  const setRadius = (r: number, live = false): void => { const g = glowOf(w().current() ?? shard); if (g) w().setGlow({ ...g, radius: r }, live) }
-  const setStrength = (p: number, live = false): void => { const g = glowOf(w().current() ?? shard); if (g) w().setGlow({ ...g, strength: p }, live) }
+  const setRadius = (r: number, live = false): void => { const g = glowOf(w().current() ?? shard); if (g) w().setGlow({ ...g, radius: r }, live ? 'radius' : undefined) }
+  const setStrength = (p: number, live = false): void => { const g = glowOf(w().current() ?? shard); if (g) w().setGlow({ ...g, strength: p }, live ? 'strength' : undefined) }
   const turnOn = (style: GlowStyle): void => { w().setGlow({ style, radius: glow?.radius ?? memory.radius, strength: glow?.strength ?? memory.strength }) }
   const current = (): ShardModel => w().current() ?? shard
 

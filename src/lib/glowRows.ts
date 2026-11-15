@@ -25,8 +25,11 @@ export const RADIUS_SLIDER_MAX = 8 * TICKS_PER_UNIT
 export const STRENGTH_STEP = 5
 
 /**
- * What POINT SIZE starts from when the object has none: the size the points
- * draw at today on the bench, about 0.3 of a unit (pointDisc SHARD_POINTS).
+ * What POINT SIZE's − and + start from when the object has none: 36 ticks,
+ * 0.3 of a unit, the width the default disc asks for in world units (pointDisc
+ * SHARD_POINTS size) before it is held between 1.6 and 10 pixels on screen. On
+ * screen the default can look smaller or larger than this; it is a starting
+ * point, not the same size.
  */
 export const AUTO_POINT_TICKS = 36
 

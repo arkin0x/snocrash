@@ -50,8 +50,38 @@ import { drawnGlow, drawnPointSize, type Glow } from 'sno-core/glow'
 /** How many halos one object draws at most. Past it, an even spread of its points glows and the rest draw without. */
 export const HALO_CAP = 4096
 
+/** The same on a phone or tablet (a coarse pointer), whose GPU blends far fewer pixels a frame. */
+export const HALO_CAP_COARSE = 1000
+
+/** The halo cap for this device. */
+export function haloCap(): number {
+  try {
+    return typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? HALO_CAP_COARSE : HALO_CAP
+  } catch {
+    return HALO_CAP
+  }
+}
+
 /** The largest halo on screen: its radius never passes this share of the canvas height. */
 export const HALO_MAX_SCREEN = 0.35
+
+/**
+ * How many screens one object's halos may cover together, at most. A halo
+ * costs the pixels it blends, not a draw call, so this is the limit that
+ * protects a phone.
+ */
+export const HALO_SCREENS = 3
+
+/**
+ * The largest halo radius on screen, as a share of the canvas height, for an
+ * object drawing `count` halos on a canvas `aspect` wide to 1 high: never past
+ * HALO_MAX_SCREEN, and small enough that `count` halos at that radius cover
+ * no more than HALO_SCREENS screens (count x pi x r^2 <= screens x aspect).
+ */
+export function haloMaxScreen(count: number, aspect: number): number {
+  if (count <= 0) return HALO_MAX_SCREEN
+  return Math.min(HALO_MAX_SCREEN, Math.sqrt((HALO_SCREENS * Math.max(aspect, 0.1)) / (Math.PI * count)))
+}
 
 /** The smallest point on screen, in CSS pixels, so a far one is dust and not nothing. */
 export const POINT_MIN_PX = 1.5
@@ -112,6 +142,19 @@ export function haloLook(glow: Glow, ghost = false, ghostOpacity = 1): { radius:
 export interface ShardDraws {
   /** Its faces, lines and points: anything at all of its own. False at opacity 0. */
   own: boolean
+  /**
+   * Its points drawn unseen, as the target a tap on a placed object meets,
+   * whenever the default points are not drawn (a `pointsize`, 0 included, or
+   * opacity 0). A placed object must stay one tap away however it draws.
+   */
+  hitPoints: boolean
+  /** Its faces drawn unseen at opacity 0, so a tap on a face still lands (FACE, a placed object). */
+  hitFaces: boolean
+  /**
+   * In the workshop only, a 0% object's points as faint dots, so its author
+   * can find and select it (DECK-0003 §1.11: an editor SHOULD).
+   */
+  faint: boolean
   /** The default disc points (pointDisc), in any mode, when POINTS mode sets no `pointsize`. */
   defaultPoints: boolean
   /** The points as quads this many model units across, in POINTS mode with a `pointsize` above 0; else null. */
@@ -126,13 +169,21 @@ export interface ShardDraws {
  * glow is, at full GLOW STRENGTH (owner, 2026-11-15). A placed object passes
  * its own model, never its parent's (§1.10).
  */
-export function shardDraws(shard: Pick<ShardModel, 'mode' | 'extra'>, opacity: number, ghost = false, ghostOpacity = 1): ShardDraws {
+export function shardDraws(
+  shard: Pick<ShardModel, 'mode' | 'extra'>,
+  opacity: number,
+  { ghost = false, ghostOpacity = 1, editing = false }: { ghost?: boolean; ghostOpacity?: number; editing?: boolean } = {},
+): ShardDraws {
   const own = opacity > 0
   const ticks = drawnPointSize(shard)
   const glow = drawnGlow(shard)
+  const defaultPoints = own && ticks === undefined
   return {
     own,
-    defaultPoints: own && ticks === undefined,
+    hitPoints: !defaultPoints,
+    hitFaces: !own && shard.mode === 'solid',
+    faint: !own && editing,
+    defaultPoints,
     coreSize: own && ticks !== undefined && ticks > 0 ? ticksToModel(ticks) : null,
     halo: glow ? haloLook(glow, ghost, ghostOpacity) : null,
   }
@@ -167,11 +218,14 @@ const haloVertex = /* glsl */ `
     vSeed = fract(sin(dot(iPos, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
     vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
     float depth = -mv.z;
-    float r = uRadius * modelScale();
-    // A camera inside a halo would be painted over by the whole of it: it fades out instead.
+    // The halo's radius in view units, never larger on screen than uMaxScreen
+    // of the canvas height (the largest halo, and the object's share of the
+    // screen; ShardMesh sets it from haloMaxScreen).
+    float r = min(uRadius * modelScale(), uMaxScreen * uBufH / pxPerUnit(depth));
+    // A camera inside a halo would be painted over by the whole of it: it
+    // fades out instead, by the radius it is drawn at, so the strength never
+    // changes with the zoom while the halo is capped.
     vFade = smoothstep(0.15 * r, 0.5 * r, depth);
-    // The largest halo on screen.
-    r = min(r, uMaxScreen * uBufH / pxPerUnit(depth));
     mv.xy += position.xy * r;
     gl_Position = vFade <= 0.001 ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mv;
   }
@@ -239,17 +293,26 @@ const coreVertex = /* glsl */ `
 const coreFragment = /* glsl */ `
   uniform float uOpacity;
   uniform float uShine;
+  uniform float uHard;
 
   varying vec2 vQ;
   varying vec3 vColor;
   varying float vPx;
 
   void main() {
-    // The default points' disc (pointDisc.ts): solid to its rim, a couple of feathered pixels.
     float d = length(vQ);
-    float edge = clamp(2.0 / max(vPx, 1.0), 0.04, 0.5);
-    float alpha = (1.0 - smoothstep(1.0 - edge, 1.0, d)) * uOpacity;
-    if (alpha < 0.02) discard;
+    float alpha;
+    if (uHard > 0.5) {
+      // Opaque: a hard rim and depth written, so large points overlap in
+      // their true order whatever order they are drawn in.
+      if (d > 1.0) discard;
+      alpha = 1.0;
+    } else {
+      // See-through: the default points' disc (pointDisc.ts), a couple of feathered pixels.
+      float edge = clamp(2.0 / max(vPx, 1.0), 0.04, 0.5);
+      alpha = (1.0 - smoothstep(1.0 - edge, 1.0, d)) * uOpacity;
+      if (alpha < 0.02) discard;
+    }
     vec3 color = vColor * (1.0 + uShine * (1.0 - smoothstep(0.0, 0.8, d)));
     gl_FragColor = vec4(color, alpha);
   }
@@ -333,15 +396,20 @@ export function createHaloMaterial(look: { radius: number; strength: number; lig
   })
 }
 
-/** The core material: the points at `size` model units across, at the object's opacity. */
+/**
+ * The core material: the points at `size` model units across, at the
+ * object's opacity. Opaque (opacity 1), they write depth with a hard rim;
+ * see-through, they blend and write none, as the default points do.
+ */
 export function createCoreMaterial(size: number, opacity: number): ShaderMaterial {
-  return new ShaderMaterial({
+  const m = new ShaderMaterial({
     vertexShader: coreVertex,
     fragmentShader: coreFragment,
     uniforms: {
       uSize: { value: size },
       uOpacity: { value: opacity },
       uShine: { value: CORE_SHINE },
+      uHard: { value: 0 },
       uMinPx: { value: POINT_MIN_PX },
       uMaxScreen: { value: POINT_MAX_SCREEN },
       uDpr: { value: 1 },
@@ -351,6 +419,16 @@ export function createCoreMaterial(size: number, opacity: number): ShaderMateria
     transparent: true,
     depthWrite: false,
   })
+  setCoreOpacity(m, opacity)
+  return m
+}
+
+/** The core material at `opacity`: opaque at 1 (hard rim, depth written), see-through below. */
+export function setCoreOpacity(m: ShaderMaterial, opacity: number): void {
+  const hard = opacity >= 1
+  m.uniforms.uOpacity.value = opacity
+  m.uniforms.uHard.value = hard ? 1 : 0
+  m.depthWrite = hard
 }
 
 /** The two uniforms that follow the canvas rather than the material. */
@@ -376,11 +454,26 @@ export function quadGeometry(positions: Float32Array, colors: Float32Array): Ins
   return g
 }
 
-/** Whether the viewer asked for less motion: the halo's noise holds still then. */
+const REDUCED = '(prefers-reduced-motion: reduce)'
+
+/** Whether the viewer asks for less motion now: the halo's noise holds still then. */
 export function reducedMotion(): boolean {
   try {
-    return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    return typeof window !== 'undefined' && !!window.matchMedia?.(REDUCED).matches
   } catch {
     return false
+  }
+}
+
+/** Call `fn` whenever the viewer's reduced-motion setting changes; returns the unsubscribe. */
+export function onReducedMotion(fn: (still: boolean) => void): () => void {
+  try {
+    const q = typeof window !== 'undefined' ? window.matchMedia?.(REDUCED) : undefined
+    if (!q) return () => {}
+    const listener = (e: MediaQueryListEvent): void => fn(e.matches)
+    q.addEventListener('change', listener)
+    return () => q.removeEventListener('change', listener)
+  } catch {
+    return () => {}
   }
 }
