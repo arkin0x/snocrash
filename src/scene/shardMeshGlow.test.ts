@@ -7,7 +7,8 @@
  *    points, cores), and the glow is mounted whatever the opacity;
  *  - unseen hit targets keep a placed object and a 0% face tappable;
  *  - in POINTS mode face colours are not expanded, so each vertex is one
- *    point and one halo at its own colour.
+ *    point and one halo at its own colour;
+ *  - halos sit inside the object's motion group, so `anim` carries them.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -61,6 +62,19 @@ describe('what a tap meets', () => {
 
   it('passes the workshop flag to placed objects, so a 0% part is found too', () => {
     expect(SOURCE).toMatch(/<ShardMesh shard=\{model\}[^>]*editing=\{editing\}/)
+  })
+})
+
+describe('with motion (DECK-0003 §1.14)', () => {
+  it('draws the halos and cores inside the object\'s motion group, so they move exactly as its points do', () => {
+    const open = jsx.indexOf('{motion(<>')
+    const close = jsx.indexOf('</>)}')
+    expect(open).toBeGreaterThan(-1)
+    for (const name of ['name="shard-glow"', 'name="shard-point-cores"', 'name="shard-hit-points"']) {
+      const at = jsx.indexOf(name)
+      expect(at).toBeGreaterThan(open)
+      expect(at).toBeLessThan(close)
+    }
   })
 })
 

@@ -45,6 +45,7 @@ import {
   type ShardModel,
   type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
 import { withOpacity } from '../lib/opacityStep'
+import { withAnim } from 'sno-core/anim'
 import { withGlow, withPointSize, type Glow } from 'sno-core/glow'
 import { GLOW_START } from '../lib/glowRows'
 import { authoredConstrainOf, withConstrain, type Constrain } from '../lib/walkConstrain'
@@ -459,6 +460,14 @@ export interface WorkshopState {
    * publishes OPAQUE, so pressing OPAQUE there is no edit. Undoable like MODE.
    */
   setConstrain: (c: Constrain) => void
+  /**
+   * The shard's motions (DECK-0003 §1.14, sno-core/anim), as the MOTION panel
+   * (ui/AnimEditor.tsx) writes them: read as a reader reads them and written
+   * back canonically, so only what a reader can read is ever stored; none
+   * removes the field. One undoable step, like MODE; no step when nothing
+   * changes.
+   */
+  setAnim: (raw: unknown[] | undefined) => void
   setUnit: (unit: number) => void
   /** One step of unit up or down, on the shard an edit lands on (the − and + buttons). */
   stepUnit: (by: 1 | -1) => void
@@ -1187,6 +1196,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
     endLive: () => { live = null },
     setConstrain: (c) => edit((s) => (authoredConstrainOf(s) === c ? null : withConstrain(s, c))),
+    setAnim: (raw) => edit((s) => { const next = withAnim(s, raw ?? []).shard; return next === s ? null : next }),
     setUnit: (unit) => edit((s) => ({ ...s, unit: clampUnit(unit) })),
     // From the shard the edit lands on, not the copy on view: your stored
     // object can be a step away from what the relay returned (review of

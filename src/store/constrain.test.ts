@@ -135,7 +135,7 @@ describe('what is published', () => {
   })
 
   it('the publish fingerprint is of what goes out, so an unset shard and the same one set to OPAQUE are the same object', () => {
-    expect(shardFingerprint(cur())).toBe(shardFingerprint(withConstrain(cur(), 'opaque')))
-    expect(shardFingerprint(cur())).not.toBe(shardFingerprint(withConstrain(cur(), 'off')))
+    expect(shardFingerprint(cur(), null)).toBe(shardFingerprint(withConstrain(cur(), 'opaque'), null))
+    expect(shardFingerprint(cur(), null)).not.toBe(shardFingerprint(withConstrain(cur(), 'off'), null))
   })
 })

@@ -252,7 +252,7 @@ export function MenuOverlay({ view, setView, onClose, onLogin }: {
           ) : (
             <ul className="menu__list">
               <ShardFolders items={shards} refOf={modelRef} nameOf={modelName} row={(s, f) => {
-                const state = publishState(ledger[s.id], shardFingerprint(s), pubkey)
+                const state = publishState(ledger[s.id], shardFingerprint(s, ledger[s.id]?.pubkey ?? pubkey), pubkey)
                 return (
                   <li key={s.id} className={s.id === currentId ? 'is-current' : ''} {...f.drag}>
                     <button className="menu__pick" onClick={() => open(s.id)} title={STATE_HELP[state]}>

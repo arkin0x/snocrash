@@ -28,9 +28,8 @@ import {
   signerFromPref, type NostrConnectSession, type Signer, type SignerKind,
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
-import { fingerprint, forget, loadLedger, noteRetracted, noteSeen, noteSent, retractedAt, saveLedger, type Ledger } from '../lib/published'
-import { toPayload, type ShardModel } from 'sno-core/shards'
-import { withAuthoredConstrain } from '../lib/walkConstrain'
+import { fingerprint, forget, outgoingPayload, loadLedger, noteRetracted, noteSeen, noteSent, retractedAt, saveLedger, type Ledger } from '../lib/published'
+import type { ShardModel } from 'sno-core/shards'
 import { refTags } from 'sno-core/parts'
 import { forgetRef } from '../lib/parts'
 import { hexAt, parsePaletteEvent, type Palette } from 'sno-core/snoPalette'
@@ -182,8 +181,10 @@ interface NostrState {
  * whoever published it, who may be you; review of parity #35).
  */
 export function objectTemplate(shard: ShardModel, createdAt: number, author?: string): { kind: number; created_at: number; tags: string[][]; content: string } {
-  // OPAQUE for an object whose author never chose (DECK-0003 §1.12).
-  const payload = toPayload(withAuthoredConstrain(shard))
+  // OPAQUE where its author never chose (§1.12), and only the table keys under
+  // the signer (§1.10): lib/published.ts outgoingPayload, which the
+  // fingerprint and the byte count use too.
+  const payload = outgoingPayload(shard, author ?? null)
   const credit = creditOf(shard)
   const notify = !credit || !author || creditAuthor(credit) !== author
   return {
