@@ -30,6 +30,11 @@ import { OrbitControls } from '@react-three/drei'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { AdditiveBlending, BufferGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Line, LineBasicMaterial, Matrix4, MeshBasicMaterial, PerspectiveCamera, SphereGeometry, Vector3 } from 'three'
 import { partMatrix } from 'sno-core/parts'
+import { animOf, hasAnim } from 'sno-core/anim'
+import type { ClockReading } from 'sno-core/animClock'
+import { cycleSeconds } from 'sno-core/animEdit'
+import { AnimClock } from '../scene/animMotion'
+import { useAnimPreview } from '../store/animPreview'
 import { useNostr } from '../store/useNostr'
 import { ACCENT, BG, WARN } from '../lib/palette'
 import { glowTexture } from '../lib/glow'
@@ -289,6 +294,7 @@ function Handles(): JSX.Element | null {
   const selection = useWorkshop((s) => s.selection)
   const facePick = useWorkshop((s) => s.facePick)
   const tool = useWorkshop((s) => s.tool)
+  const previewing = useAnimPreview((s) => s.on)
   const chosen = useMemo(() => new Set(selection), [selection])
   const groups = useMemo(() => {
     const m = new Map<string, number[]>()
@@ -313,6 +319,9 @@ function Handles(): JSX.Element | null {
   }, [dots, groups, shard, chosen, facePick])
   useFrame((state) => { dots.update(state.camera as PerspectiveCamera, state.size.height) })
   if (!shard) return null
+  // A moving object (VIEW, or the MOTION preview) is drawn where its motion
+  // has it: handles at its rest pose would hang in the air beside it.
+  if ((tool === 'view' || previewing) && hasAnim(shard)) return null
   const glow = glowTexture()
 
   const onClick = (first: number, isSel: boolean) => (e: ThreeEvent<MouseEvent>): void => {
@@ -721,9 +730,75 @@ function AxesReporter(): null {
  * its internal store subscriptions still force a real re-render exactly as
  * before when something they read changes.
  */
+/**
+ * The bench's own clock for moving objects (scene/animMotion.tsx AnimClock):
+ * the MOTION panel's preview (store/animPreview.ts). Playing, it is the world
+ * clock; paused, the moment it was paused at; scrubbed, a share of the
+ * longest motion's cycle, a time chosen by hand and so drawn under reduced
+ * motion too.
+ */
+const benchReading: ClockReading = { t: 0, version: 0, nowS: 0, chosen: false }
+export function benchClock(shared: ClockReading): ClockReading {
+  const p = useAnimPreview.getState()
+  benchReading.version = shared.version
+  benchReading.nowS = shared.nowS
+  benchReading.chosen = p.scrub !== null
+  if (p.scrub !== null) {
+    const cur = useWorkshop.getState().current()
+    benchReading.t = p.scrub * cycleSeconds(cur ? animOf(cur) : [])
+  } else if (p.on && !p.playing) benchReading.t = p.frozen
+  else benchReading.t = shared.t
+  return benchReading
+}
+
+/**
+ * A path's points on the bench while its motion shows (VIEW, or the MOTION
+ * preview): a dot for each and the loop through them, where the object's
+ * origin travels, the point being edited larger. A motion's frame is the
+ * render frame (sno-core/anim), so a point is drawn at its ticks over 120.
+ */
+function PathMarks({ show }: { show: boolean }): JSX.Element | null {
+  const shard = useWorkshop((s) => s.current())
+  const point = useAnimPreview((s) => s.point)
+  const paths = useMemo(() => (shard ? animOf(shard).map((m, i) => ({ m, i })).filter(({ m }) => m.word === 'path') : []), [shard])
+  const lines = useMemo(() => paths.map(({ m }) => {
+    const pts: number[] = []
+    for (let k = 0; k < m.pts.length; k += 4) pts.push(m.pts[k] / TICKS_PER_UNIT, m.pts[k + 1] / TICKS_PER_UNIT, m.pts[k + 2] / TICKS_PER_UNIT)
+    pts.push(pts[0], pts[1], pts[2])
+    const g = new BufferGeometry()
+    g.setAttribute('position', new Float32BufferAttribute(pts, 3))
+    const l = new Line(g, new LineBasicMaterial({ color: WARN, transparent: true, opacity: 0.8, depthTest: false, toneMapped: false }))
+    l.renderOrder = OVERLAY_ORDER
+    return l
+  }), [paths])
+  useEffect(() => () => { for (const l of lines) { l.geometry.dispose(); (l.material as LineBasicMaterial).dispose() } }, [lines])
+  if (!show || paths.length === 0) return null
+  return (
+    <group renderOrder={OVERLAY_ORDER}>
+      {paths.map(({ m, i }, n) => (
+        <group key={i}>
+          <primitive object={lines[n]} />
+          {Array.from({ length: m.pts.length / 4 }, (_, k) => {
+            const on = point !== null && point[0] === i && point[1] === k
+            return (
+              <mesh key={k} position={[m.pts[k * 4] / TICKS_PER_UNIT, m.pts[k * 4 + 1] / TICKS_PER_UNIT, m.pts[k * 4 + 2] / TICKS_PER_UNIT]} renderOrder={OVERLAY_ORDER}>
+                <sphereGeometry args={[on ? 0.16 : 0.09, 12, 12]} />
+                <meshBasicMaterial color={on ? ACCENT : WARN} depthTest={false} toneMapped={false} />
+              </mesh>
+            )
+          })}
+        </group>
+      ))}
+    </group>
+  )
+}
+
 function BenchImpl(): JSX.Element {
   const shard = useWorkshop((s) => s.current())
   const tool = useWorkshop((s) => s.tool)
+  // VIEW draws an object's motion; so does the MOTION preview, whatever the tool.
+  const previewing = useAnimPreview((s) => s.on)
+  const moving = tool === 'view' || previewing
   const extent = shard?.extent ?? GRID_HALF
   const showAvatar = useWorkshop((s) => s.showAvatar)
   const partSel = useWorkshop((s) => s.partSel)
@@ -792,9 +867,11 @@ function BenchImpl(): JSX.Element {
       <Grid />
       {showAvatar && <ScaleAvatar />}
       {shard && (
+        <AnimClock.Provider value={benchClock}>
         <ShardMesh
           shard={shard}
           lit
+          still={!moving}
           onFaceClick={tool === 'face' ? onFace : undefined}
           onPartClick={tool === 'view' || tool === 'select' || tool === 'face' ? onPart : undefined}
           selectedParts={partSel}
@@ -803,7 +880,9 @@ function BenchImpl(): JSX.Element {
           // yours for one of yours (a copy here carries yours only: useWorkshop asYours).
           author={shard.author ?? me ?? null}
         />
+        </AnimClock.Provider>
       )}
+      <PathMarks show={moving} />
       <Ghost />
       <PickLoop />
       <FaceHighlight />
