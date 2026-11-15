@@ -17,10 +17,12 @@ import { create } from 'zustand'
 /**
  * Where a new arrival reads from, until they say otherwise.
  *
- * cyberspace.nostr1.com is where the objects this format was written for
- * already live, so it goes first; the others are general relays, and they are
- * what makes somebody's first published object findable by people who have
- * never heard of any of this.
+ * relay.onosendai.tech is the cyberspace relay since 2026-11-05: the owner's
+ * own relay, holding everything copied from cyberspace.nostr1.com, so it goes
+ * first. cyberspace.nostr1.com, where the objects this format was written for
+ * first lived, stays second for about two weeks after the switch. The others
+ * are general relays, and they are what makes somebody's first published
+ * object findable by people who have never heard of any of this.
  *
  * relay.damus.io keeps kind 33331 and is the second relay that actually does
  * (measured 2026-09-28). relay.primal.net answers but returned no kind 33331
@@ -29,6 +31,7 @@ import { create } from 'zustand'
  * nothing now that each relay is read on its own (lib/pool stream).
  */
 export const DEFAULT_RELAYS = [
+  'wss://relay.onosendai.tech',
   'wss://cyberspace.nostr1.com',
   'wss://relay.damus.io',
   'wss://relay.primal.net',
@@ -36,6 +39,29 @@ export const DEFAULT_RELAYS = [
 ]
 
 const STORAGE = 'snocrash:relays'
+
+/**
+ * Defaults that arrived after somebody may already have saved a list. A saved
+ * list is the whole list, so without this a returning visitor would never see
+ * them. Each is put at the front of a saved list once, and a flag records that
+ * it was offered, so removing it afterwards sticks like removing any default.
+ */
+const LATER_DEFAULTS: readonly { url: string; flag: string }[] = [
+  { url: 'wss://relay.onosendai.tech', flag: 'snocrash:relays:offered:relay.onosendai.tech' },
+]
+
+/** The list with each later default offered once; the same array when nothing changed. */
+export function addLaterDefaults(list: string[]): string[] {
+  let out = list
+  for (const { url, flag } of LATER_DEFAULTS) {
+    let offered = false
+    try { offered = localStorage.getItem(flag) !== null } catch { /* private mode */ }
+    if (offered) continue
+    if (!out.includes(url)) out = [url, ...out]
+    try { localStorage.setItem(flag, '1') } catch { /* private mode */ }
+  }
+  return out
+}
 
 /** ws:// or wss:// with a real host; null for anything else. */
 export function normalizeRelay(input: string): string | null {
@@ -55,7 +81,7 @@ export function normalizeRelay(input: string): string | null {
   }
 }
 
-function load(): string[] {
+function loadSaved(): string[] {
   try {
     const raw = localStorage.getItem(STORAGE)
     if (raw === null) return [...DEFAULT_RELAYS]
@@ -71,6 +97,14 @@ function load(): string[] {
 
 function save(relays: string[]): void {
   try { localStorage.setItem(STORAGE, JSON.stringify(relays)) } catch { /* private mode */ }
+}
+
+/** The saved list (or the defaults), with any later default offered once and the result saved if it changed. */
+export function load(): string[] {
+  const saved = loadSaved()
+  const relays = addLaterDefaults(saved)
+  if (relays !== saved) save(relays)
+  return relays
 }
 
 interface RelaysState {
