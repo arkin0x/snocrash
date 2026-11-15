@@ -55,7 +55,8 @@ function Turning({ shard, spin, centre }: { shard: ShardModel; spin: boolean; ce
     <group ref={g}>
       {/* Centred on the object's own middle, so it turns about itself. */}
       <group position={centre ? [-centre[0], -centre[1], -centre[2]] : [-c[0] / TICKS_PER_UNIT, -c[1] / TICKS_PER_UNIT, c[2] / TICKS_PER_UNIT]}>
-        <ShardMesh shard={shard} lit />
+        {/* As written: a tile is framed on the object at rest, and a slide or an orbit would leave it (as ONOSENDAI's feed thumbnails). */}
+        <ShardMesh shard={shard} lit still />
       </group>
     </group>
   )

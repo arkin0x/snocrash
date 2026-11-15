@@ -758,6 +758,7 @@ export function benchClock(shared: ClockReading): ClockReading {
  * preview): a dot for each and the loop through them, where the object's
  * origin travels, the point being edited larger. A motion's frame is the
  * render frame (sno-core/anim), so a point is drawn at its ticks over 120.
+ * The path's own points: other motions on the same object move it further.
  */
 function PathMarks({ show }: { show: boolean }): JSX.Element | null {
   const shard = useWorkshop((s) => s.current())
