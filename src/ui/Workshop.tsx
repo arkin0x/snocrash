@@ -592,8 +592,8 @@ export function Workshop(): JSX.Element | null {
   }, [nostrNotice])
   // Something to publish or clear: its own vertices, or objects it places (DECK-0003 §1.9 rule 13).
   const hasContent = shard !== null && (shard.vertices.length > 0 || (shard.parts?.length ?? 0) > 0)
-  // What goes out under the key that publishes it: yours (lib/published.ts outgoingPayload).
-  const wireBytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(outgoingPayload(shard, pubkey))).length : 0), [shard, pubkey])
+  // What goes out under the key that published it, else yours: the same key the state below compares under (lib/published.ts outgoingPayload).
+  const wireBytes = useMemo(() => (shard ? new TextEncoder().encode(JSON.stringify(outgoingPayload(shard, ledger[shard.id]?.pubkey ?? pubkey))).length : 0), [shard, ledger, pubkey])
   // Where this object stands with the relays. The bench cannot show it: a
   // published object and one that has never left the browser look the same.
   const pubState = useMemo(
