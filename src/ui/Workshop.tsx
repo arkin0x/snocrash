@@ -26,9 +26,10 @@ import { PaletteModal } from './PaletteModal'
 import { ConfirmModal } from './ConfirmModal'
 import { holding, letGo, typingIn, workshopEscape } from './escape'
 import { Explanation } from './Explanation'
-import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, OPACITY_FLOOR, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
+import { DIVISIONS, MAX_EXTENT, MAX_UNIT, MIN_EXTENT, MODES, TICKS_PER_UNIT, neededExtent, rgbToHex, ticksOf, toPayload, unitsLabel, type ShardMode , type ShardModel} from 'sno-core/shards'
 import { CONSTRAINS, CONSTRAIN_TIPS, authoredConstrainOf, withAuthoredConstrain } from '../lib/walkConstrain'
 import { opacityPercent, stepOpacity } from '../lib/opacityStep'
+import { GlowRows } from './GlowRows'
 import { stepDivision } from './divisions'
 import { IMPORT_ACCEPT, IMPORT_FORMATS_LABEL } from 'sno-core/importFile'
 import { readCredit } from 'sno-core/feed'
@@ -860,14 +861,18 @@ export function Workshop(): JSX.Element | null {
             </div>
           </div>
           {/* How solid the object draws (DECK-0003 §1.11): a stepper in
-              fives like the rows below it; 100 is solid and writes nothing. */}
+              fives like the rows below it, 0 to 100 with no floor; 100 is
+              solid and writes nothing, and at 0 only a glow is left. */}
           <div className="workshop__row" role="group" aria-label="Opacity">
             <span className="workshop__label">OPACITY</span>
-            <button className="workshop__btn" {...bind(() => w().setOpacity(stepOpacity(w().current()?.opacity, -1)))} disabled={opacityPercent(shard.opacity) <= OPACITY_FLOOR} aria-label="More see-through" title="More see-through">−</button>
+            <button className="workshop__btn" {...bind(() => w().setOpacity(stepOpacity(w().current()?.opacity, -1)))} disabled={opacityPercent(shard.opacity) <= 0} aria-label="More see-through" title="More see-through">−</button>
             <span className="workshop__value">{opacityPercent(shard.opacity)}%</span>
             <button className="workshop__btn" {...bind(() => w().setOpacity(stepOpacity(w().current()?.opacity, 1)))} disabled={opacityPercent(shard.opacity) >= 100} aria-label="More solid" title="More solid">+</button>
-            <span className="workshop__unit-size" title="Avatars always draw solid.">100% is solid</span>
+            <span className="workshop__unit-size" title="Avatars always draw solid. At 0% only a glow shows.">100% is solid</span>
           </div>
+          {/* POINT SIZE, GLOW, RADIUS and GLOW STRENGTH (DECK-0003 §1.15 and
+              §1.16): always here, greyed unless MODE is POINTS. */}
+          <GlowRows shard={shard} inHand={color} />
           {/* Whether a walker can cross it in ONOSENDAI's WALK (DECK-0003
               §1.12): three buttons like DRAW's, as ONOSENDAI's workshop has.
               A shard that never chose shows OPAQUE, which is what it

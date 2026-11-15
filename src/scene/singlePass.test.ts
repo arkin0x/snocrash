@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { FrontSide } from 'three'
+import { createCoreMaterial, createHaloMaterial } from './pointGlow'
 
 /**
  * Every transparent DoubleSide material sets forceSinglePass (ported from
@@ -38,5 +40,16 @@ describe('transparent DoubleSide materials draw in one pass', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('the points glow quads are one pass: front faces only, so three never draws them twice', () => {
+    const glow = Object.entries(sources).find(([f]) => f.endsWith('/pointGlow.ts'))?.[1] ?? ''
+    expect(glow).not.toBe('')
+    expect(glow).not.toMatch(/DoubleSide|BackSide/)
+    for (const m of [createHaloMaterial({ radius: 1, strength: 0.4, light: 0 }), createCoreMaterial(0.4, 1)]) {
+      expect(m.side).toBe(FrontSide)
+      expect(m.transparent).toBe(true)
+      m.dispose()
+    }
   })
 })

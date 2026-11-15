@@ -34,6 +34,7 @@
  *   1     see-through faces (TRANSLUCENT_ORDER); on the bench, the inside
  *         of a see-through lit face
  *   1.5   on the bench, the front of a see-through lit face, over its inside
+ *   1.7   glow halos in POINTS mode (pointGlow HALO_ORDER), under their points
  *   1.75  every shard's vertex dots (DOTS_ORDER)
  *   2     translucent overlays drawn over shards (OVERLAY_ORDER): the bench's
  *         face highlight, halos, pick loop and ADD ghost
@@ -95,8 +96,9 @@ export const OVERLAY_ORDER = 2
 export const GHOST_OPACITY = 0.45
 
 /**
- * What a shard is drawn at: its own opacity (sno-core drawnOpacity, with the
- * 10% floor), times a ghost's. An avatar ignores its own (DECK-0003 §3.3:
+ * What a shard is drawn at: its own opacity (sno-core drawnOpacity, 0 to 1
+ * with no floor), times a ghost's. It never reaches the shard's glow
+ * (pointGlow.ts). An avatar ignores its own (DECK-0003 §3.3:
  * proof of work prices an avatar's size, not its visibility). A placed
  * object passes its own model here, never its parent's (§1.10).
  */

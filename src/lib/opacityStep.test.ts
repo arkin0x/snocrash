@@ -1,4 +1,4 @@
-/** opacityStep.test.ts - the workshop's OPACITY stepper moves in fives between the floor and solid. */
+/** opacityStep.test.ts - the workshop's OPACITY stepper moves in fives from 0 to solid, with no floor. */
 
 import { describe, expect, it } from 'vitest'
 import { newShard, type ShardModel } from 'sno-core/shards'
@@ -8,32 +8,37 @@ describe('the OPACITY stepper', () => {
   it('reads no opacity as solid', () => {
     expect(opacityPercent(undefined)).toBe(100)
     expect(opacityPercent(40)).toBe(40)
-    // A stored 1 to 9 reads as the floor it is drawn at.
-    expect(opacityPercent(5)).toBe(10)
+    // No floor: a stored 5 is 5, and 0 is 0.
+    expect(opacityPercent(5)).toBe(5)
+    expect(opacityPercent(0)).toBe(0)
   })
 
-  it('steps in fives, and stops at the floor and at solid', () => {
+  it('steps in fives, and stops at 0 and at solid', () => {
     expect(stepOpacity(undefined, -1)).toBe(95)
     expect(stepOpacity(95, 1)).toBe(100)
     expect(stepOpacity(100, 1)).toBe(100)
-    expect(stepOpacity(15, -1)).toBe(10)
-    expect(stepOpacity(10, -1)).toBe(10)
+    expect(stepOpacity(10, -1)).toBe(5)
+    expect(stepOpacity(5, -1)).toBe(0)
+    expect(stepOpacity(0, -1)).toBe(0)
+    expect(stepOpacity(0, 1)).toBe(5)
   })
 
   it('takes a value off the fives to the next five in the direction asked', () => {
     expect(stepOpacity(33, 1)).toBe(35)
     expect(stepOpacity(33, -1)).toBe(30)
-    expect(stepOpacity(3, 1)).toBe(15)
-    expect(stepOpacity(3, -1)).toBe(10)
+    expect(stepOpacity(3, 1)).toBe(5)
+    expect(stepOpacity(3, -1)).toBe(0)
   })
 })
 
 describe('setting an opacity (withOpacity)', () => {
   const base: ShardModel = newShard('Water')
 
-  it('keeps a percent between the floor and 99, and stores solid as none', () => {
+  it('keeps a percent between 0 and 99, and stores solid as none', () => {
     expect(withOpacity(base, 40).opacity).toBe(40)
-    expect(withOpacity(base, 3).opacity).toBe(10)
+    expect(withOpacity(base, 3).opacity).toBe(3)
+    expect(withOpacity(base, 0).opacity).toBe(0)
+    expect(withOpacity(base, -4).opacity).toBe(0)
     expect(withOpacity(withOpacity(base, 40), 100)).not.toHaveProperty('opacity')
     expect(withOpacity(base, Number.NaN)).not.toHaveProperty('opacity')
   })

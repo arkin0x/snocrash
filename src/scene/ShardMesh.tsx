@@ -12,6 +12,11 @@
  * simply appear: for SHARD_DECODE_MS its vertices sit scattered through the
  * volume the model occupies in cyan static, then settle into place and color
  * with an ease-out, jittering less as they land. Decryption made visible.
+ *
+ * In POINTS mode an object can say how wide its points are (`pointsize`) and
+ * carry a LIGHT or FOG glow around each of them (`glow`), both drawn as
+ * camera-facing quads (pointGlow.ts). The glow ignores the object's opacity:
+ * at 0% the object draws nothing of its own, and its glow still shows.
  */
 
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
@@ -36,7 +41,8 @@ import { boxContains, clipMesh, clipPoints, type Box } from 'sno-core/clip'
 import { faceEdges } from 'sno-core/outline'
 import { SHARD_DOTS, SHARD_POINTS, createDiscMaterial, sizeDisc, withDiscColors } from './pointDisc'
 import { BACK_SHADE_COLOR, SHARD_FACES_TONE_MAPPED } from './shardLight'
-import { DOTS_ORDER, basicFaceProps, benchOrders, lineProps, litFaceProps, shardOpacity, shardOrder } from './shardFaces'
+import { HALO_ORDER, createCoreMaterial, createHaloMaterial, fillPicked, haloPicks, quadGeometry, reducedMotion, shardDraws, sizeQuads } from './pointGlow'
+import { DOTS_ORDER, GHOST_OPACITY, basicFaceProps, benchOrders, lineProps, litFaceProps, shardOpacity, shardOrder } from './shardFaces'
 
 interface Props {
   shard: ShardModel
@@ -102,6 +108,9 @@ interface Props {
 
 const STATIC = [0, 0.9, 1] as const
 
+/** For the quads in POINTS mode, which are drawn where their points are and not where their geometry says. */
+const noRaycast = (): void => {}
+
 /**
  * What a shard draws: its points in the render mapping, and every one of its
  * faces (DECK-0003 §1.4: a reader draws them all, both sides, whatever their
@@ -153,10 +162,16 @@ export function faceOfHit(i: { object: { userData: { faceOf?: number[] } }; face
 
 export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip, nested, self, author, onPartClick, selectedParts }: Props): JSX.Element | null {
   // What everything below is drawn at: the object's own opacity (DECK-0003
-  // §1.11, with its 10% floor), times a ghost's. A placed object reaches here
-  // with its own model, so it never takes its parent's (§1.10). See
-  // shardFaces.ts for how see-through faces blend.
+  // §1.11, 0 to 100 with no floor), times a ghost's. A placed object reaches
+  // here with its own model, so it never takes its parent's (§1.10). See
+  // shardFaces.ts for how see-through faces blend. At 0 the object draws
+  // nothing of its own: no faces, lines or points. Its glow is not its own
+  // opacity's to hide (owner, 2026-11-15) and still shows.
   const opacity = shardOpacity(given, { ghost })
+  // Point size and glow, in POINTS mode only (sno-core drawnPointSize and
+  // drawnGlow return nothing in SOLID and LINES); its own, never a parent's.
+  const draws = shardDraws(given, opacity, ghost, GHOST_OPACITY)
+  const { own, coreSize, halo: look } = draws
   const order = shardOrder(opacity, ghost)
   const bench = benchOrders(opacity, ghost)
   // The object at the top resolves every reference in the tree once; a placed
@@ -215,6 +230,42 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
     return createDiscMaterial(shard.mode === 'points' ? SHARD_POINTS : SHARD_DOTS, shard.mode === 'points' ? opacity : opacity * 0.55)
   }, [shard.mode, opacity])
   useEffect(() => () => pointMaterial.dispose(), [pointMaterial])
+
+  // POINTS mode with a `pointsize`: the points as camera-facing quads that
+  // many ticks across, on the same live buffers the decode writes. 0 draws no
+  // points at all.
+  const hasCores = coreSize !== null
+  const cores = useMemo(() => (hasCores ? quadGeometry(posAttr.array as Float32Array, colAttr.array as Float32Array) : null), [hasCores, posAttr, colAttr])
+  useEffect(() => () => { cores?.dispose() }, [cores])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const coreMaterial = useMemo(() => createCoreMaterial(coreSize ?? 0, opacity), [])
+  useEffect(() => () => coreMaterial.dispose(), [coreMaterial])
+  coreMaterial.uniforms.uSize.value = coreSize ?? 0
+  coreMaterial.uniforms.uOpacity.value = opacity
+
+  // The glow: one halo per point up to HALO_CAP, in the point's own colour.
+  // Its own copies of the picked points, refreshed while the decode runs.
+  const halo = useMemo(() => {
+    if (!look) return null
+    const picks = haloPicks(positions.length / 3)
+    const pos = new Float32Array(picks.length * 3)
+    const col = new Float32Array(picks.length * 3)
+    fillPicked(posAttr.array as ArrayLike<number>, picks, pos)
+    fillPicked(colAttr.array as ArrayLike<number>, picks, col)
+    return { picks, geometry: quadGeometry(pos, col), pos, col }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [look !== null, positions, posAttr, colAttr])
+  useEffect(() => () => { halo?.geometry.dispose() }, [halo])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const haloMaterial = useMemo(() => (look ? createHaloMaterial(look) : null), [look !== null])
+  useEffect(() => () => { haloMaterial?.dispose() }, [haloMaterial])
+  if (look && haloMaterial) {
+    // Set on every render, so a slider in the workshop moves the halo live without a rebuild.
+    haloMaterial.uniforms.uRadius.value = look.radius
+    haloMaterial.uniforms.uStrength.value = look.strength
+    haloMaterial.uniforms.uLight.value = look.light
+  }
+  const still = useMemo(() => reducedMotion(), [])
 
   /**
    * LINES mode: every edge of every face, each drawn once.
@@ -277,6 +328,11 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
   useFrame((state) => {
     // The disc is sized in pixels, so it needs the canvas it is drawn on.
     sizeDisc(pointMaterial, state.gl.getPixelRatio(), state.size.height)
+    sizeQuads(coreMaterial, state.gl.getPixelRatio(), state.size.height)
+    if (haloMaterial) {
+      sizeQuads(haloMaterial, state.gl.getPixelRatio(), state.size.height)
+      if (!still) haloMaterial.uniforms.uTime.value = state.clock.elapsedTime
+    }
     if (birth === undefined || noise === null || done.current) return
     const t = Math.min(1, (performance.now() - birth) / SHARD_DECODE_MS)
     const e = easeOutCubic(t)
@@ -291,6 +347,16 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
     }
     posAttr.needsUpdate = true
     colAttr.needsUpdate = true
+    if (cores) {
+      cores.getAttribute('iPos').needsUpdate = true
+      cores.getAttribute('iColor').needsUpdate = true
+    }
+    if (halo) {
+      fillPicked(p, halo.picks, halo.pos)
+      fillPicked(c, halo.picks, halo.col)
+      halo.geometry.getAttribute('iPos').needsUpdate = true
+      halo.geometry.getAttribute('iColor').needsUpdate = true
+    }
     if (t >= 1) done.current = true
   })
 
@@ -305,7 +371,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
   return (
     <group scale={scale}>
       {placements}
-      {shard.mode === 'solid' && index.length > 0 && (
+      {own && shard.mode === 'solid' && index.length > 0 && (
         <group>
           <mesh name="shard-faces" geometry={indexed} frustumCulled={false} renderOrder={lit ? bench.front : order} {...pick}>
             {/* forceSinglePass: three draws a transparent DoubleSide material
@@ -332,15 +398,21 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
       )}
       {/* Faces as outlines. A shard with no faces has no edges to draw, so it
           keeps the old single line through its points, which is all there is. */}
-      {shard.mode === 'lines' && outline && (
+      {own && shard.mode === 'lines' && outline && (
         <lineSegments geometry={outline} frustumCulled={false} renderOrder={order}>
           <lineBasicMaterial vertexColors toneMapped={false} {...lineProps(opacity, ghost)} />
         </lineSegments>
       )}
-      {shard.mode === 'lines' && !outline && shard.vertices.length > 1 && <primitive object={line} />}
-      {(shard.mode === 'points' || shard.mode === 'solid' || shard.mode === 'lines') && (
+      {own && shard.mode === 'lines' && !outline && shard.vertices.length > 1 && <primitive object={line} />}
+      {/* The points: the default disc, or at the object's own `pointsize` in
+          POINTS mode (none at 0). The dots under SOLID and LINES keep the
+          default size and never glow. */}
+      {own && (shard.mode === 'points' || shard.mode === 'solid' || shard.mode === 'lines') && draws.defaultPoints && (
         <points geometry={plain} material={pointMaterial} frustumCulled={false} renderOrder={DOTS_ORDER} />
       )}
+      {/* Neither takes taps: a ray would meet the bare quad at the origin, not the points. */}
+      {own && cores && <mesh name="shard-point-cores" geometry={cores} material={coreMaterial} frustumCulled={false} renderOrder={DOTS_ORDER} raycast={noRaycast} />}
+      {halo && haloMaterial && <mesh name="shard-glow" geometry={halo.geometry} material={haloMaterial} frustumCulled={false} renderOrder={HALO_ORDER} raycast={noRaycast} />}
     </group>
   )
 }
