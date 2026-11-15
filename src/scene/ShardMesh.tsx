@@ -30,6 +30,8 @@ import {
 import { easeOutCubic, hash01, scrambleOffset, seedOf, SHARD_DECODE_MS } from '../lib/decode'
 import { MAX_UNIT, expandFaceColors, flatten, type Part, type Ref, type ShardModel } from 'sno-core/shards'
 import { partMatrix, placedBounds, refKey, type Placed } from 'sno-core/parts'
+import { animOf, type Motion } from 'sno-core/anim'
+import { AnimGroups } from './animMotion'
 import { useResolved, type Resolved } from '../lib/parts'
 import { ACCENT, WARN } from '../lib/palette'
 import { boxContains, clipMesh, clipPoints, type Box } from 'sno-core/clip'
@@ -98,7 +100,17 @@ interface Props {
    * Absent for a shard lying on cyberspace axes as it was built, which is
    * every shard hidden before the pose existed and every one in cyberspace.
    */
+  /**
+   * Drawn at its rest pose, its `anim` (DECK-0003 §1.14) left out, and the
+   * same for everything it places: the bench while an editing tool is in
+   * hand, so the handles sit on the object. Otherwise an object with motion
+   * moves on the world clock (scene/animMotion.tsx), and so does each object
+   * it places, in its own frame, carried by the parent's motion.
+   */
+  still?: boolean
 }
+
+const NO_MOTION: readonly Motion[] = Object.freeze([])
 
 const STATIC = [0, 0.9, 1] as const
 
@@ -151,7 +163,13 @@ export function faceOfHit(i: { object: { userData: { faceOf?: number[] } }; face
 }
 
 
-export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip, nested, self, author, onPartClick, selectedParts }: Props): JSX.Element | null {
+export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFaceClick, world = false, lit = false, clip, nested, self, author, onPartClick, selectedParts, still = false }: Props): JSX.Element | null {
+  // Its own motion (DECK-0003 §1.14): a group above everything it draws, its
+  // placed objects included, so a parent's motion carries what it places. No
+  // caller here crops a moving object to a region (`clip`), so the crop stays
+  // the one made at rest.
+  const motions = still ? NO_MOTION : animOf(given)
+  const motion = (node: ReactNode): ReactNode => (motions.length > 0 ? <AnimGroups motions={motions}>{node}</AnimGroups> : node)
   // What everything below is drawn at: the object's own opacity (DECK-0003
   // §1.11, with its 10% floor), times a ghost's. A placed object reaches here
   // with its own model, so it never takes its parent's (§1.10). See
@@ -295,15 +313,16 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
   })
 
   const placements = (
-    <Placements shard={given} byRef={byRef} nested={nested} lit={lit} ghost={ghost} world={world} onPartClick={onPartClick} selected={selectedParts} />
+    <Placements shard={given} byRef={byRef} nested={nested} lit={lit} ghost={ghost} world={world} still={still} onPartClick={onPartClick} selected={selectedParts} />
   )
-  if (shard.vertices.length === 0) return (given.parts?.length ?? 0) > 0 ? <group scale={scale}>{placements}</group> : null
+  if (shard.vertices.length === 0) return (given.parts?.length ?? 0) > 0 ? <group scale={scale}>{motion(placements)}</group> : null
   // The nearest hit is on whichever side faces the tap; it answers and stops it
   // there. A placed object's faces carry no map: they are not the workshop's.
   const pick = nested ? {} : { userData: { faceOf: drawn }, ...(onFaceClick ? { onClick: (e: ThreeEvent<MouseEvent>) => { const f = faceOfHit(e); if (f !== null) onFaceClick(e, f) } } : {}) }
 
   return (
     <group scale={scale}>
+      {motion(<>
       {placements}
       {shard.mode === 'solid' && index.length > 0 && (
         <group>
@@ -341,6 +360,7 @@ export function ShardMesh({ shard: given, scale = 1, ghost = false, birth, onFac
       {(shard.mode === 'points' || shard.mode === 'solid' || shard.mode === 'lines') && (
         <points geometry={plain} material={pointMaterial} frustumCulled={false} renderOrder={DOTS_ORDER} />
       )}
+      </>)}
     </group>
   )
 }
@@ -355,13 +375,14 @@ const CUBE_EDGES = new EdgesGeometry(new BoxGeometry(1, 1, 1))
  * drawn for a reference still being fetched, so opening an object does not
  * flash cubes before its parts arrive.
  */
-function Placements({ shard, byRef, nested, lit, ghost, world, onPartClick, selected }: {
+function Placements({ shard, byRef, nested, lit, ghost, world, still, onPartClick, selected }: {
   shard: ShardModel
   byRef: Map<string, Resolved>
   nested?: Placed[]
   lit: boolean
   ghost: boolean
   world: boolean
+  still: boolean
   onPartClick?: (e: ThreeEvent<MouseEvent>, part: number) => void
   selected?: number[]
 }): JSX.Element | null {
@@ -378,7 +399,7 @@ function Placements({ shard, byRef, nested, lit, ghost, world, onPartClick, sele
         const box = selected?.includes(i) ? (model ? placedBounds(model, r.children) : null) ?? { min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] } : null
         let body: ReactNode = <lineSegments geometry={CUBE_EDGES}><lineBasicMaterial color={ACCENT} toneMapped={false} transparent opacity={ghost ? 0.45 : 0.8} /></lineSegments>
         // The part's own model, so its own opacity, never the parent's (§1.10).
-        if (model) body = <ShardMesh shard={model} nested={r.children} lit={lit} ghost={ghost} world={world} />
+        if (model) body = <ShardMesh shard={model} nested={r.children} lit={lit} ghost={ghost} world={world} still={still} />
         return (
           <group key={i} matrix={matrix} matrixAutoUpdate={false} {...(onPartClick ? { onClick: (e: ThreeEvent<MouseEvent>) => onPartClick(e, i) } : {})}>
             {body}
