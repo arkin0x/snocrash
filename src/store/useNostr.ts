@@ -28,10 +28,9 @@ import {
   signerFromPref, type NostrConnectSession, type Signer, type SignerKind,
 } from '../lib/signers'
 import { exportNcryptsec } from '../lib/keyExport'
-import { fingerprint, forget, loadLedger, noteRetracted, noteSeen, noteSent, retractedAt, saveLedger, type Ledger } from '../lib/published'
-import { toPayload, type ShardModel } from 'sno-core/shards'
-import { withAuthoredConstrain } from '../lib/walkConstrain'
-import { carriedTable, refTags } from 'sno-core/parts'
+import { fingerprint, forget, outgoingPayload, loadLedger, noteRetracted, noteSeen, noteSent, retractedAt, saveLedger, type Ledger } from '../lib/published'
+import type { ShardModel } from 'sno-core/shards'
+import { refTags } from 'sno-core/parts'
 import { forgetRef } from '../lib/parts'
 import { hexAt, parsePaletteEvent, type Palette } from 'sno-core/snoPalette'
 import type { PublishedPalette } from './useWorkshop'
@@ -182,12 +181,10 @@ interface NostrState {
  * whoever published it, who may be you; review of parity #35).
  */
 export function objectTemplate(shard: ShardModel, createdAt: number, author?: string): { kind: number; created_at: number; tags: string[][]; content: string } {
-  // OPAQUE for an object whose author never chose (DECK-0003 §1.12). Only keys
-  // under the signer's pubkey go out (§1.10: a publisher MUST write no other),
-  // because a workshop outlives a change of key, and a reader ignores any other.
-  const table = author && shard.objects ? carriedTable(shard, author) : shard.objects
-  const { objects: _held, ...bare } = shard
-  const payload = toPayload(withAuthoredConstrain(table && Object.keys(table).length ? { ...bare, objects: table } : bare))
+  // OPAQUE where its author never chose (§1.12), and only the table keys under
+  // the signer (§1.10): lib/published.ts outgoingPayload, which the
+  // fingerprint and the byte count use too.
+  const payload = outgoingPayload(shard, author ?? null)
   const credit = creditOf(shard)
   const notify = !credit || !author || creditAuthor(credit) !== author
   return {

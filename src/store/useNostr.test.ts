@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest'
 import { decodeObjectAddress, objectAddress, objectFromEvent, objectTemplate, paletteTemplate, PALETTE_KIND, remixCredit } from './useNostr'
 import { withCredit } from 'sno-core/feed'
 import { nip19 } from 'nostr-tools'
+import { fingerprint, noteSent, publishState, shardFingerprint } from '../lib/published'
 import { newShard, type ShardModel } from 'sno-core/shards'
 import { BUILT_IN, parsePaletteEvent, remap, resolvePalette, toBytes, toModel, type Palette } from 'sno-core/snoPalette'
 
@@ -250,5 +251,20 @@ describe('a table goes out only under the signer (DECK-0003 §1.10)', () => {
 
   it('omits the field when no key is left', () => {
     expect(JSON.parse(objectTemplate(shard, 1, 'c'.repeat(64)).content).objects).toBeUndefined()
+  })
+
+  it('writes no table when the signer is not known', () => {
+    expect(JSON.parse(objectTemplate(shard, 1).content).objects).toBeUndefined()
+  })
+
+  it('drops near-miss spellings of the signer\'s key', () => {
+    const odd = { ...shard, objects: { [`33331:${ME.toUpperCase()}:up`]: piece, [`33331:${ME}a:long`]: piece, [`3333:${ME}:kind`]: piece, [`33331:${ME}:mine`]: piece } } as ShardModel
+    expect(Object.keys(JSON.parse(objectTemplate(odd, 1, ME).content).objects)).toEqual([`33331:${ME}:mine`])
+  })
+
+  it('reads PUBLISHED right after a publish, with keys under an old key still held here', () => {
+    const sent = objectTemplate(shard, 1, ME).content
+    const ledger = noteSent({}, shard.id, fingerprint(sent), ME, 1)
+    expect(publishState(ledger[shard.id], shardFingerprint(shard, ledger[shard.id].pubkey), ME)).toBe('published')
   })
 })
