@@ -46,6 +46,8 @@ import {
   type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
 import { withOpacity } from '../lib/opacityStep'
 import { withAnim } from 'sno-core/anim'
+import { withGlow, withPointSize, type Glow } from 'sno-core/glow'
+import { GLOW_START } from '../lib/glowRows'
 import { authoredConstrainOf, withConstrain, type Constrain } from '../lib/walkConstrain'
 import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
 import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
@@ -426,9 +428,31 @@ export interface WorkshopState {
   /**
    * How solid the shard draws, a whole percent (DECK-0003 §1.11): 100 is
    * solid and is stored as no opacity at all, the wire's canonical form;
-   * anything else is kept between the floor (10) and 99. Undoable like MODE.
+   * anything else is kept between 0 and 99 (no floor: at 0 the object draws
+   * nothing of its own and its glow still shows). Undoable like MODE.
    */
   setOpacity: (percent: number) => void
+  /**
+   * POINT SIZE (DECK-0003 §1.15): ticks across, 0 for no points, or undefined
+   * for AUTO, the reader's own size. Written into `extra` through sno-core
+   * withPointSize, so a malformed value is never written. With `live`, a
+   * slider's drag: every step shows on the bench, and the whole drag is one
+   * undo step until `endLive`.
+   */
+  setPointSize: (ticks: number | undefined, live?: boolean) => void
+  /**
+   * GLOW (DECK-0003 §1.16): LIGHT or FOG with a radius in ticks and a GLOW
+   * STRENGTH in percent, or undefined for OFF. Written through sno-core
+   * withGlow. A glow set here is remembered for the session, so OFF and then
+   * LIGHT or FOG brings the same radius and strength back. `live` names the
+   * slider being dragged (RADIUS or GLOW STRENGTH), so a drag of one never
+   * merges into a drag of the other.
+   */
+  setGlow: (glow: Glow | undefined, live?: 'radius' | 'strength') => void
+  /** The end of a slider's drag: the next change is an undo step of its own. */
+  endLive: () => void
+  /** The radius and strength the GLOW row turns on with: the last ones set this session, else GLOW_START. */
+  glowMemory: { radius: number; strength: number }
   /**
    * Whether a walker can cross it in WALK (DECK-0003 §1.12, lib/walkConstrain.ts):
    * off, all of its faces, or only while it draws solid and opaque. Written as
@@ -830,7 +854,13 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    * was refused by every reader; the answer was to drop the limit, not to
    * enforce it earlier.
    */
-  const edit = (fn: (s: ShardModel) => ShardModel | null, notice: string | null = null): boolean => {
+  // The slider being dragged (POINT SIZE, RADIUS, GLOW STRENGTH), whose first
+  // step made the undo entry the rest of the drag shares.
+  let live: string | null = null
+
+  const edit = (fn: (s: ShardModel) => ShardModel | null, notice: string | null = null, liveKey: string | null = null): boolean => {
+    const joining = liveKey !== null && live === liveKey
+    live = liveKey
     // An object opened from the feed becomes yours on its first change, and
     // only on a change: the edit is tried on the feed's copy first, and a
     // refusal or a no-op leaves it un-adopted, so jumping in and out of the
@@ -868,7 +898,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     const list = shards.slice()
     list[i] = { ...next, updatedAt: Date.now() }
     const partSel = get().partSel.filter((k) => k < (next.parts?.length ?? 0))
-    set({ shards: list, past: [...past.slice(-(HISTORY - 1)), shards[i]], future: [], notice, turnPivot: null, partSel })
+    set({ shards: list, past: joining && past.length ? past : [...past.slice(-(HISTORY - 1)), shards[i]], future: [], notice, turnPivot: null, partSel })
     save(list)
     return true
   }
@@ -1061,6 +1091,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     stampMode: 'shape',
     stampObject: null,
     showAvatar: loadShowAvatar(),
+    glowMemory: { ...GLOW_START },
     color: [0, 0.9, 1],
     stampKind: 'block',
     stampSize: 2,
@@ -1158,6 +1189,12 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
 
     setMode: (mode) => edit((s) => ({ ...s, mode })),
     setOpacity: (percent) => edit((s) => withOpacity(s, percent)),
+    setPointSize: (ticks, isLive = false) => { edit((s) => withPointSize(s, ticks), null, isLive ? 'pointsize' : null) },
+    setGlow: (glow, slider) => {
+      if (glow) set({ glowMemory: { radius: glow.radius, strength: glow.strength } })
+      edit((s) => withGlow(s, glow), null, slider ? `glow:${slider}` : null)
+    },
+    endLive: () => { live = null },
     setConstrain: (c) => edit((s) => (authoredConstrainOf(s) === c ? null : withConstrain(s, c))),
     setAnim: (raw) => edit((s) => { const next = withAnim(s, raw ?? []).shard; return next === s ? null : next }),
     setUnit: (unit) => edit((s) => ({ ...s, unit: clampUnit(unit) })),
@@ -1758,6 +1795,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     clearShard: () => { edit((s) => { const { refs: _r, parts: _p, facecolors: _f, ...rest } = s; return { ...rest, vertices: [], faces: [] } }); set({ selection: [], partSel: [], selectedFace: null, facePick: [] }) },
 
     undo: () => {
+      live = null
       const { past, shards, currentId } = get()
       const i = shards.findIndex((s) => s.id === currentId)
       if (i < 0 || !past.length) return
@@ -1768,6 +1806,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
 
     redo: () => {
+      live = null
       const { future, shards, currentId } = get()
       const i = shards.findIndex((s) => s.id === currentId)
       if (i < 0 || !future.length) return

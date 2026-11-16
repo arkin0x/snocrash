@@ -19,10 +19,11 @@ const source = (name: string): string => {
 }
 
 describe('what a shard is drawn at', () => {
-  it('is its own opacity with the 10% floor, 1 when it has none', () => {
+  it('is its own opacity with no floor, 1 when it has none', () => {
     expect(shardOpacity({})).toBe(1)
     expect(shardOpacity({ opacity: 50 })).toBe(0.5)
-    expect(shardOpacity({ opacity: 3 })).toBe(0.1)
+    expect(shardOpacity({ opacity: 3 })).toBe(0.03)
+    expect(shardOpacity({ opacity: 0 })).toBe(0)
   })
 
   it('multiplies a ghost by the object\'s own', () => {
@@ -45,8 +46,8 @@ describe('a see-through face', () => {
     expect(p).toMatchObject({ transparent: true, opacity: 0.5, blending: CustomBlending, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor })
   })
 
-  it('is one pass at every opacity from the floor to solid', () => {
-    for (let pct = 10; pct <= 100; pct += 5) for (const world of [true, false]) expect(basicFaceProps(pct / 100, { ghost: false, world }).forceSinglePass).toBe(true)
+  it('is one pass at every opacity from 0 to solid', () => {
+    for (let pct = 0; pct <= 100; pct += 5) for (const world of [true, false]) expect(basicFaceProps(pct / 100, { ghost: false, world }).forceSinglePass).toBe(true)
   })
 })
 

@@ -874,6 +874,7 @@ function BenchImpl(): JSX.Element {
         <ShardMesh
           shard={shard}
           lit
+          editing
           still={!moving}
           onFaceClick={tool === 'face' ? onFace : undefined}
           onPartClick={tool === 'view' || tool === 'select' || tool === 'face' ? onPart : undefined}

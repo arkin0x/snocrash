@@ -1,6 +1,6 @@
 /**
  * opacity.test.ts - the workshop's OPACITY (DECK-0003 §1.11): undoable like
- * MODE, 100 stored as no opacity at all, the floor kept, and what is
+ * MODE, 100 stored as no opacity at all, 0 kept (no floor), and what is
  * published carries it.
  */
 
@@ -41,9 +41,14 @@ describe('OPACITY', () => {
     expect(cur()).not.toHaveProperty('opacity')
   })
 
-  it('keeps the floor', () => {
+  it('has no floor: 3 is 3, and 0 is kept and published', () => {
     w().setOpacity(3)
-    expect(cur().opacity).toBe(10)
+    expect(cur().opacity).toBe(3)
+    w().setOpacity(0)
+    expect(cur().opacity).toBe(0)
+    const wire = JSON.parse(JSON.stringify(toPayload(cur())))
+    expect(wire.opacity).toBe(0)
+    expect(fromPayload(wire, 'x')?.opacity).toBe(0)
   })
 
   it('is what the published payload carries, and reads back', () => {

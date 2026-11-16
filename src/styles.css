@@ -528,6 +528,74 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .workshop__btn--x { color: #ff4444; }
 
+/* POINT SIZE, GLOW, RADIUS and GLOW STRENGTH (ui/GlowRows.tsx): always here,
+   greyed but readable when they do not apply, so nothing below them moves. */
+.ws__glow {
+  display: grid;
+  gap: 6px;
+}
+
+.ws__glow .workshop__row.is-dim .workshop__label,
+.ws__glow .workshop__row.is-dim .workshop__value {
+  opacity: 0.45;
+}
+
+.ws__glow .workshop__mode:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The style the colors suggest, while GLOW is OFF: outlined, not lit. */
+.ws__glow .workshop__mode.is-suggested:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.ws__glow-value {
+  min-width: 58px;
+  text-align: right;
+  color: #fff;
+}
+
+.ws__glow-note {
+  font-size: 9px;
+  color: var(--dim);
+}
+
+.ws__slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 70px;
+  min-width: 60px;
+  height: 4px;
+  margin: 0 2px;
+  border-radius: 2px;
+  background: rgba(0, 229, 255, 0.3);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ws__slider:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ws__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+}
+
+.ws__slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+}
+
 .workshop__btn--y { color: #44ff44; }
 
 .workshop__btn--z { color: #4488ff; }
