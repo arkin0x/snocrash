@@ -48,6 +48,7 @@ import { ShardLights } from '../scene/shardLight'
 import { nextSelection, useWorkshop, type Tool } from '../store/useWorkshop'
 import { Hold, noteGesture, tapSlop } from './deadZone'
 import { HandleDots, dotCapacity } from './handleDots'
+import { EYE_LABEL_PX, eyeLabel, eyeMark } from './eyeMark'
 
 /** The unit grid's line colour when a unit is not divided. */
 const UNIT_LINE = '#1d3547'
@@ -95,6 +96,26 @@ function ScaleAvatar(): JSX.Element {
     <lineSegments geometry={geometry} scale={k} frustumCulled={false}>
       <lineBasicMaterial color="#ffffff" transparent opacity={0.85} toneMapped={false} />
     </lineSegments>
+  )
+}
+
+/**
+ * The object's avatar eye (DECK-0003 §1.17), shown with the size reference:
+ * where a viewer wearing this object would look from, its chosen `eye` or
+ * the automatic one, labelled CHOSEN or AUTO (eyeMark.ts). On top of the
+ * shard and the same size at every zoom, as a handle is. Nothing edits it.
+ */
+function EyeMark(): JSX.Element | null {
+  const shard = useWorkshop((s) => s.current())
+  const mark = useMemo(() => (shard ? eyeMark(shard) : null), [shard])
+  const label = mark ? eyeLabel(mark.word) : null
+  if (!mark || !label) return null
+  return (
+    <ScreenScale position={mark.at}>
+      <sprite scale={[label.width, EYE_LABEL_PX, 1]} center-x={label.anchor} center-y={0.5} renderOrder={OVERLAY_ORDER}>
+        <spriteMaterial map={label.texture} transparent depthTest={false} depthWrite={false} toneMapped={false} />
+      </sprite>
+    </ScreenScale>
   )
 }
 
@@ -869,6 +890,7 @@ function BenchImpl(): JSX.Element {
       <BenchAxes reach={extent + 1} />
       <Grid />
       {showAvatar && <ScaleAvatar />}
+      {showAvatar && <EyeMark />}
       {shard && (
         <AnimClock.Provider value={benchClock}>
         <ShardMesh

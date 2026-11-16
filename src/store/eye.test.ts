@@ -105,12 +105,12 @@ describe('the eye through snocrash', () => {
     expect(published(reloaded(cur()))).toBeUndefined()
   })
 
-  it('keeps a malformed eye as it came, and reads it as AUTO, never a refusal', () => {
+  it('reads a malformed eye as AUTO, never a refusal, and never publishes it', () => {
     expect(w().importText(pasted([0, 1.5, 0]))).not.toBeNull()
     expect(eyeChosen(cur())).toBe(false)
     expect(drawnEye(cur())).toEqual([0, 210, 0])
     w().setMode('lines')
-    expect(published(reloaded(cur()))).toEqual([0, 1.5, 0])
+    expect(published(reloaded(cur()))).toBeUndefined()
   })
 
   it('a duplicate and a copy into the workshop keep it', () => {
