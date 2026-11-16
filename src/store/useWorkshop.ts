@@ -124,6 +124,7 @@ function savePalettes(list: NamedPalette[]): void {
   try { localStorage.setItem(PALETTES_STORAGE, JSON.stringify(list)) } catch { /* quota or private mode */ }
 }
 const AVATAR_KEY = 'onosendai:workshop-avatar'
+const EYE_KEY = 'onosendai:workshop-eye'
 /** Undo depth per shard. */
 const HISTORY = 64
 /**
@@ -357,6 +358,8 @@ export interface WorkshopState {
   division: Division
   /** The to-scale avatar at the grid's centre, on or off. Kept between visits. */
   showAvatar: boolean
+  /** The avatar eye marker (DECK-0003 §1.17, ui/eyeMark.ts), on or off. Off until turned on; kept between visits. */
+  showEye: boolean
   /** The color new vertices get, and the color input shows. */
   color: [number, number, number]
   stampKind: StampKind
@@ -480,6 +483,7 @@ export interface WorkshopState {
   setPlane: (plane: WorkPlane) => void
   setDivision: (division: Division) => void
   setShowAvatar: (on: boolean) => void
+  setShowEye: (on: boolean) => void
   /** One snap step, in ticks. */
   step: () => number
   setColor: (c: [number, number, number]) => void
@@ -723,6 +727,11 @@ function loadPalette(): string[] {
 
 function loadShowAvatar(): boolean {
   try { return localStorage.getItem(AVATAR_KEY) !== '0' } catch { return true }
+}
+
+/** Off unless turned on: most objects are walls and chairs, not avatars. */
+function loadShowEye(): boolean {
+  try { return localStorage.getItem(EYE_KEY) === '1' } catch { return false }
 }
 
 function savePalette(palette: string[]): void {
@@ -1091,6 +1100,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     stampMode: 'shape',
     stampObject: null,
     showAvatar: loadShowAvatar(),
+    showEye: loadShowEye(),
     glowMemory: { ...GLOW_START },
     color: [0, 0.9, 1],
     stampKind: 'block',
@@ -1218,6 +1228,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
     setDivision: (division) => { if (DIVISIONS.includes(division)) set({ division }) },
     setShowAvatar: (on) => { set({ showAvatar: on }); try { localStorage.setItem(AVATAR_KEY, on ? '1' : '0') } catch { /* private mode */ } },
+    setShowEye: (on) => { set({ showEye: on }); try { localStorage.setItem(EYE_KEY, on ? '1' : '0') } catch { /* private mode */ } },
     step: () => TICKS_PER_UNIT / get().division,
     setColor: (c) => set({ color: clampColor(c) }),
     setStampKind: (stampKind) => set({ stampKind, stampMode: 'shape' }),

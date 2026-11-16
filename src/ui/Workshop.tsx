@@ -562,6 +562,7 @@ export function Workshop(): JSX.Element | null {
   const plane = useWorkshop((s) => s.plane)
   const division = useWorkshop((s) => s.division)
   const showAvatar = useWorkshop((s) => s.showAvatar)
+  const showEye = useWorkshop((s) => s.showEye)
   const signedIn = useNostr((s) => s.signedIn)
   const publishing = useNostr((s) => s.publishing)
   const sending = useNostr((s) => s.sending)
@@ -901,6 +902,14 @@ export function Workshop(): JSX.Element | null {
           <div className="workshop__row">
             <Field id="ws-size-ref" label="Size reference" hint="A to-scale person at the grid's center, for size">
               <Switch id="ws-size-ref" className="ui-switch--ok" checked={showAvatar} onCheckedChange={(v) => w().setShowAvatar(v)} />
+            </Field>
+          </div>
+          {/* The avatar eye (DECK-0003 §1.17): where a viewer wearing this
+              object looks from in WALK. Off by default, so walls and chairs
+              carry no marker; for a shard built as an avatar. */}
+          <div className="workshop__row">
+            <Field id="ws-eye" label="First-person eye" hint="Where a wearer looks from in WALK.">
+              <Switch id="ws-eye" className="ui-switch--ok" checked={showEye} onCheckedChange={(v) => w().setShowEye(v)} />
             </Field>
           </div>
           {/* Publishing: what this app does with an object instead of hiding it

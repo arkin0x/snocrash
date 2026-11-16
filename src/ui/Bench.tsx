@@ -27,7 +27,7 @@
 
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AdditiveBlending, BufferGeometry, DoubleSide, EdgesGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Line, LineBasicMaterial, Matrix4, MeshBasicMaterial, PerspectiveCamera, SphereGeometry, Vector3 } from 'three'
 import { partMatrix } from 'sno-core/parts'
 import { animOf, hasAnim } from 'sno-core/anim'
@@ -48,6 +48,7 @@ import { ShardLights } from '../scene/shardLight'
 import { nextSelection, useWorkshop, type Tool } from '../store/useWorkshop'
 import { Hold, noteGesture, tapSlop } from './deadZone'
 import { HandleDots, dotCapacity } from './handleDots'
+import { EYE_LABEL_OPACITY, EYE_LABEL_PX, eyeLabel, eyeMark, eyeMarkShown } from './eyeMark'
 
 /** The unit grid's line colour when a unit is not divided. */
 const UNIT_LINE = '#1d3547'
@@ -95,6 +96,60 @@ function ScaleAvatar(): JSX.Element {
     <lineSegments geometry={geometry} scale={k} frustumCulled={false}>
       <lineBasicMaterial color="#ffffff" transparent opacity={0.85} toneMapped={false} />
     </lineSegments>
+  )
+}
+
+/**
+ * Whether a press on the bench has become a drag: true once the pointer has
+ * left the press's dead zone (deadZone.ts), false again when it lifts. A tap
+ * never sets it, so the eye marker does not flicker on every tap.
+ */
+function useBenchDragging(): boolean {
+  const gl = useThree((s) => s.gl)
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => {
+    const canvas = gl.domElement
+    let start: { x: number; y: number } | null = null
+    const down = (e: PointerEvent): void => { start = { x: e.clientX, y: e.clientY } }
+    const move = (e: PointerEvent): void => {
+      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > tapSlop()) { start = null; setDragging(true) }
+    }
+    const up = (): void => { start = null; setDragging(false) }
+    canvas.addEventListener('pointerdown', down, true)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      canvas.removeEventListener('pointerdown', down, true)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [gl])
+  return dragging
+}
+
+/**
+ * The object's avatar eye (DECK-0003 §1.17), while FIRST-PERSON EYE is on:
+ * where a viewer wearing this object would look from, its chosen `eye` or
+ * the automatic one, labelled CHOSEN or AUTO (eyeMark.ts). Half opaque, on
+ * top of the shard and the same size at every zoom, as a handle is; gone
+ * during a drag and while the object moves (eyeMarkShown). Nothing edits it.
+ */
+function EyeMark({ moving }: { moving: boolean }): JSX.Element | null {
+  const on = useWorkshop((s) => s.showEye)
+  const shard = useWorkshop((s) => s.current())
+  const dragging = useBenchDragging()
+  const shown = eyeMarkShown({ on, shard, dragging, moving: moving && !!shard && hasAnim(shard) })
+  const mark = useMemo(() => (shard ? eyeMark(shard) : null), [shard])
+  const label = shown && mark ? eyeLabel(mark.word) : null
+  if (!mark || !label) return null
+  return (
+    <ScreenScale position={mark.at}>
+      <sprite scale={[label.width, EYE_LABEL_PX, 1]} center-x={label.anchor} center-y={0.5} renderOrder={OVERLAY_ORDER}>
+        <spriteMaterial map={label.texture} transparent opacity={EYE_LABEL_OPACITY} depthTest={false} depthWrite={false} toneMapped={false} />
+      </sprite>
+    </ScreenScale>
   )
 }
 
@@ -887,6 +942,7 @@ function BenchImpl(): JSX.Element {
         </AnimClock.Provider>
       )}
       <PathMarks show={moving} />
+      <EyeMark moving={moving} />
       <Ghost />
       <PickLoop />
       <FaceHighlight />
