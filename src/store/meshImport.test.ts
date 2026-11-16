@@ -153,8 +153,18 @@ describe('a PLY from Blender (sno-core 0.1.33)', () => {
     useWorkshop.setState({ shards: [], currentId: null, viewing: null, address: null, selection: [], partSel: [], selectedFace: null, facePick: [], clip: null, level: 0, plane: 1, past: [], future: [], notice: null, tool: 'select', color: [0, 0.9, 1] })
   })
 
-  /** A tower 1 x 1 x 3, tall in Z as Blender holds it, written as Blender's exporter signs it (or not). */
-  const tower = (comment: string | null): File => ply('tower.ply', cubePly().replace('format ascii 1.0', `format ascii 1.0${comment ? `\ncomment ${comment}` : ''}`).replace(/^(\d) (\d) 1$/gm, '$1 $2 3'))
+  /**
+   * A tower 1 x 1 x 3, tall in Z as Blender holds it, with one top corner
+   * raised to 4 so which end is up can be told, written as Blender's exporter
+   * signs it (or not).
+   */
+  const tower = (comment: string | null): File => ply('tower.ply', cubePly().replace('format ascii 1.0', `format ascii 1.0${comment ? `\ncomment ${comment}` : ''}`).replace(/^(\d) (\d) 1$/gm, '$1 $2 3').replace(/^1 1 3$/m, '1 1 4'))
+
+  /** How many vertices share the shard's highest point along `axis`. */
+  const atTop = (axis: number): number => {
+    const at = w().current()!.vertices.map((v) => ticksOf(v)[axis])
+    return at.filter((n) => n === Math.max(...at)).length
+  }
 
   /** How far the shard reaches along each axis, in ticks. */
   const reach = (): number[] => {
@@ -167,8 +177,10 @@ describe('a PLY from Blender (sno-core 0.1.33)', () => {
       w().create('tower')
       expect(await importInto(tower(comment))).toBe(true)
       const [x, y, z] = reach()
-      expect(y).toBe(3 * x)
+      expect(y).toBe(4 * x)
       expect(z).toBe(x)
+      // The raised corner is alone on top: right way up, not upside down.
+      expect(atTop(1)).toBe(1)
     }
   })
 
@@ -176,7 +188,7 @@ describe('a PLY from Blender (sno-core 0.1.33)', () => {
     w().create('tower')
     expect(await importInto(tower(null))).toBe(true)
     const [x, y, z] = reach()
-    expect(z).toBe(3 * x)
+    expect(z).toBe(4 * x)
     expect(y).toBe(x)
   })
 })

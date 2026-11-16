@@ -18,7 +18,7 @@
  *
  * Positions go out in the published frame (DECK-0003 §2): Y up, +Z toward the
  * viewer, right handed, the frame MeshLab and glTF assume and the one IMPORT
- * reads a PLY in. The model keeps that frame with Z negated (sno-core
+ * reads a PLY in (all but one Blender wrote, which sno-core reads Z up). The model keeps that frame with Z negated (sno-core
  * shards), a mirror, and writing the model as it is published every object
  * mirrored and, since a mirror turns every front into a back, inside out.
  * Faces go out in the order the wire has them, which is the model's.
