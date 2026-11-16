@@ -21,6 +21,12 @@ export const FACE_TIPS: Readonly<Record<FaceMode, string>> = {
   upright: 'Stays upright and only turns left or right',
 }
 
+/** The hint under the row: what the lit mode does when worn, short enough for one line on a phone (a tooltip never shows on touch). */
+export const FACE_HINTS: Readonly<Record<FaceMode, string>> = {
+  path: 'Worn, it tilts with each move.',
+  upright: 'Worn, it stays upright.',
+}
+
 export function FacingRow({ shard }: { shard: Pick<ShardModel, 'extra'> }): JSX.Element {
   const face = drawnFace(shard)
   return (
@@ -31,7 +37,7 @@ export function FacingRow({ shard }: { shard: Pick<ShardModel, 'extra'> }): JSX.
           <button key={m} className={`workshop__mode ${face === m ? 'is-on' : ''}`} aria-pressed={face === m} title={FACE_TIPS[m]} onClick={() => w().setFace(m)}>{m.toUpperCase()}</button>
         ))}
       </div>
-      <span className="ui-field__hint ws__facing-hint">How it turns as it moves when worn.</span>
+      <span className="ui-field__hint ws__facing-hint">{FACE_HINTS[face]}</span>
     </div>
   )
 }

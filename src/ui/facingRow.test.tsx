@@ -39,7 +39,9 @@ describe('the FACING row', () => {
     const m = html(shard())
     expect(m).toContain('>FACING</span>')
     expect(m.indexOf('>PATH<')).toBeLessThan(m.indexOf('>UPRIGHT<'))
-    expect(m).toContain('class="ui-field__hint ws__facing-hint">How it turns as it moves when worn.</span>')
+    expect(m).toContain('class="ui-field__hint ws__facing-hint">Worn, it tilts with each move.</span>')
+    // The hint says what the lit mode does, since a tooltip never shows on a phone.
+    expect(html(shard({ face: 'upright' }))).toContain('class="ui-field__hint ws__facing-hint">Worn, it stays upright.</span>')
   })
 
   it('lights PATH for no field, "path", an unknown name and a non-string; UPRIGHT only for "upright"', () => {

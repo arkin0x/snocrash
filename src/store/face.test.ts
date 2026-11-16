@@ -104,8 +104,8 @@ describe('face through snocrash', () => {
     expect(published(await throughDb(cur()))).toBe('spin')
   })
 
-  it('a value that is not a string is left off the wire, and reads as PATH', () => {
-    for (const bad of [1, true, ['upright'], { mode: 'upright' }, null]) {
+  it('a value not shaped like a name is left off the wire, and reads as PATH', () => {
+    for (const bad of [1, true, ['upright'], { mode: 'upright' }, null, 'UPRIGHT', 'Upright', '', 'a'.repeat(33), '1up']) {
       w().importText(pasted(bad))
       expect(drawnFace(cur())).toBe('path')
       w().setMode('lines')
