@@ -147,3 +147,36 @@ describe('PASTE keeps seams now that it shares IMPORT\'s path', () => {
     expect(after.facecolors!.slice(s.faces.length)).toEqual(s.facecolors)
   })
 })
+
+describe('a PLY from Blender (sno-core 0.1.33)', () => {
+  beforeEach(() => {
+    useWorkshop.setState({ shards: [], currentId: null, viewing: null, address: null, selection: [], partSel: [], selectedFace: null, facePick: [], clip: null, level: 0, plane: 1, past: [], future: [], notice: null, tool: 'select', color: [0, 0.9, 1] })
+  })
+
+  /** A tower 1 x 1 x 3, tall in Z as Blender holds it, written as Blender's exporter signs it (or not). */
+  const tower = (comment: string | null): File => ply('tower.ply', cubePly().replace('format ascii 1.0', `format ascii 1.0${comment ? `\ncomment ${comment}` : ''}`).replace(/^(\d) (\d) 1$/gm, '$1 $2 3'))
+
+  /** How far the shard reaches along each axis, in ticks. */
+  const reach = (): number[] => {
+    const at = w().current()!.vertices.map((v) => ticksOf(v))
+    return [0, 1, 2].map((k) => Math.max(...at.map((p) => p[k])) - Math.min(...at.map((p) => p[k])))
+  }
+
+  it('stands with Blender\'s default export (Up Z): tall in Z comes in tall in Y, from either exporter', async () => {
+    for (const comment of ['Created in Blender version 4.2.3 LTS', 'Created by Blender 3.5.1 - www.blender.org']) {
+      w().create('tower')
+      expect(await importInto(tower(comment))).toBe(true)
+      const [x, y, z] = reach()
+      expect(y).toBe(3 * x)
+      expect(z).toBe(x)
+    }
+  })
+
+  it('reads any other PLY Y up, as before', async () => {
+    w().create('tower')
+    expect(await importInto(tower(null))).toBe(true)
+    const [x, y, z] = reach()
+    expect(z).toBe(3 * x)
+    expect(y).toBe(x)
+  })
+})
