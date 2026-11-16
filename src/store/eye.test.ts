@@ -9,16 +9,6 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-if (typeof localStorage === 'undefined') {
-  const mem = new Map<string, string>()
-  ;(globalThis as { localStorage?: unknown }).localStorage = {
-    getItem: (k: string) => mem.get(k) ?? null,
-    setItem: (k: string, v: string) => { mem.set(k, String(v)) },
-    removeItem: (k: string) => { mem.delete(k) },
-    clear: () => { mem.clear() },
-  }
-}
-
 import { PAYLOAD_FIELDS, fromPayload, newShard, toPayload, type ShardModel } from 'sno-core/shards'
 import { autoEye, drawnEye, eyeChosen } from 'sno-core/eye'
 import { useWorkshop } from './useWorkshop'
