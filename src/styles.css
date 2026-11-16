@@ -1736,6 +1736,12 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .ws__panel .workshop__row:first-child { border-top: none; padding-top: 0; }
 
+/* FACING (ui/FacingRow.tsx): two half-width buttons under the label, the hint under them. */
+.ws__facing .ws__facing-modes { flex: 1 1 100%; }
+.ws__facing .ws__facing-modes .workshop__mode { flex: 1 1 0; }
+.ws__facing { padding-bottom: 6px; }
+.ws__facing .ws__facing-hint { flex: 1 1 100%; }
+
 /* With undo and redo out of the way, the open panel sits right under its chip. */
 .ws__top--open { gap: 5px; }
 
