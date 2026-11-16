@@ -46,6 +46,7 @@ import {
   type ShardVertex, type Part, type Ref, cloneVertex, hexToRgb, rgbToHex } from 'sno-core/shards'
 import { withOpacity } from '../lib/opacityStep'
 import { withAnim } from 'sno-core/anim'
+import { drawnFace, withFace, type FaceMode } from 'sno-core/face'
 import { withGlow, withPointSize, type Glow } from 'sno-core/glow'
 import { GLOW_START } from '../lib/glowRows'
 import { authoredConstrainOf, withConstrain, type Constrain } from '../lib/walkConstrain'
@@ -463,6 +464,14 @@ export interface WorkshopState {
    * publishes OPAQUE, so pressing OPAQUE there is no edit. Undoable like MODE.
    */
   setConstrain: (c: Constrain) => void
+  /**
+   * FACING (DECK-0003 §1.18, sno-core/face): how the object turns as it moves
+   * when worn as an avatar. PATH, the default, writes no field; UPRIGHT writes
+   * `"upright"`. Pressing the mode the object already reads as is no edit, so
+   * a name a later revision adds rides on untouched until UPRIGHT replaces it.
+   * Undoable like MODE.
+   */
+  setFace: (face: FaceMode) => void
   /**
    * The shard's motions (DECK-0003 §1.14, sno-core/anim), as the MOTION panel
    * (ui/AnimEditor.tsx) writes them: read as a reader reads them and written
@@ -1206,6 +1215,7 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     },
     endLive: () => { live = null },
     setConstrain: (c) => edit((s) => (authoredConstrainOf(s) === c ? null : withConstrain(s, c))),
+    setFace: (face) => edit((s) => (drawnFace(s) === face ? null : withFace(s, face))),
     setAnim: (raw) => edit((s) => { const next = withAnim(s, raw ?? []).shard; return next === s ? null : next }),
     setUnit: (unit) => edit((s) => ({ ...s, unit: clampUnit(unit) })),
     // From the shard the edit lands on, not the copy on view: your stored

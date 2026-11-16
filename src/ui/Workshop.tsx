@@ -31,6 +31,7 @@ import { CONSTRAINS, CONSTRAIN_TIPS, authoredConstrainOf } from '../lib/walkCons
 import { opacityPercent, stepOpacity } from '../lib/opacityStep'
 import { AnimEditor } from './AnimEditor'
 import { GlowRows } from './GlowRows'
+import { FacingRow } from './FacingRow'
 import { stepDivision } from './divisions'
 import { IMPORT_ACCEPT, IMPORT_FORMATS_LABEL } from 'sno-core/importFile'
 import { readCredit } from 'sno-core/feed'
@@ -912,6 +913,9 @@ export function Workshop(): JSX.Element | null {
               <Switch id="ws-eye" className="ui-switch--ok" checked={showEye} onCheckedChange={(v) => w().setShowEye(v)} />
             </Field>
           </div>
+          {/* How it turns as it moves when worn as an avatar (DECK-0003
+              §1.18): PATH, the default, or UPRIGHT. */}
+          <FacingRow shard={shard} />
           {/* Publishing: what this app does with an object instead of hiding it
               at a place. The key itself lives in the menu, so this stays about
               the object: where it stands with the relays, and the ways out of
