@@ -30,13 +30,14 @@ export const pool = new SimplePool()
 export const READ_DEADLINE_MS = 6000
 
 /* --------------------------------------------------------------------------
- * NIP-42, because one of the default relays refuses to be read without it
+ * NIP-42, because a relay may refuse to be read without it
  *
- * cyberspace.nostr1.com answers an unauthenticated REQ with
+ * cyberspace.nostr1.com (a default until 2026-11-22, and still on the list of
+ * anyone who adds it back) answers an unauthenticated REQ with
  * `CLOSED: auth-required: you must auth`. The pool's read path does not retry
- * that, so the subscription simply ends and the query comes back empty: the
- * relay was in the default set and contributing nothing to any read, silently,
- * which is the worst way for a relay to fail.
+ * that, so the subscription simply ends and the query comes back empty: such
+ * a relay contributes nothing to any read, silently, which is the worst way
+ * for a relay to fail.
  *
  * This is ONOSENDAI's implementation (src/lib/relay.ts), which has been in
  * production against that same relay. Both clients talk to the same relay and

@@ -20,7 +20,8 @@ import { create } from 'zustand'
  * relay.onosendai.tech is the cyberspace relay since 2026-11-05: the owner's
  * own relay, holding everything copied from cyberspace.nostr1.com, so it goes
  * first. cyberspace.nostr1.com, where the objects this format was written for
- * first lived, stays second for about two weeks after the switch. The others
+ * first lived, is being retired (the owner, 2026-11-22) and is no longer a
+ * default (RETIRED_DEFAULTS takes it out of a saved list once). The others
  * are general relays, and they are what makes somebody's first published
  * object findable by people who have never heard of any of this.
  *
@@ -32,7 +33,6 @@ import { create } from 'zustand'
  */
 export const DEFAULT_RELAYS = [
   'wss://relay.onosendai.tech',
-  'wss://cyberspace.nostr1.com',
   'wss://relay.damus.io',
   'wss://relay.primal.net',
   'wss://nos.lol',
@@ -58,6 +58,33 @@ export function addLaterDefaults(list: string[]): string[] {
     try { offered = localStorage.getItem(flag) !== null } catch { /* private mode */ }
     if (offered) continue
     if (!out.includes(url)) out = [url, ...out]
+    try { localStorage.setItem(flag, '1') } catch { /* private mode */ }
+  }
+  return out
+}
+
+/**
+ * Defaults that are defaults no more. A saved list is the whole list, so a
+ * returning visitor would keep publishing to one forever. Each is taken out of
+ * a saved list once, and a flag records it, so adding it back afterwards
+ * sticks like adding any relay.
+ *
+ * cyberspace.nostr1.com: being retired (the owner, 2026-11-22: "it's time to
+ * deprecate cyberspace.nostr1"). Everything it holds of kind 33331 is on
+ * relay.onosendai.tech, so nothing is lost from the feed.
+ */
+const RETIRED_DEFAULTS: readonly { url: string; flag: string }[] = [
+  { url: 'wss://cyberspace.nostr1.com', flag: 'snocrash:relays:dropped:cyberspace.nostr1.com' },
+]
+
+/** The list with each retired default taken out once; the same array when nothing changed. */
+export function dropRetiredDefaults(list: string[]): string[] {
+  let out = list
+  for (const { url, flag } of RETIRED_DEFAULTS) {
+    let dropped = false
+    try { dropped = localStorage.getItem(flag) !== null } catch { /* private mode */ }
+    if (dropped) continue
+    if (out.includes(url)) out = out.filter((r) => r !== url)
     try { localStorage.setItem(flag, '1') } catch { /* private mode */ }
   }
   return out
@@ -99,10 +126,14 @@ function save(relays: string[]): void {
   try { localStorage.setItem(STORAGE, JSON.stringify(relays)) } catch { /* private mode */ }
 }
 
-/** The saved list (or the defaults), with any later default offered once and the result saved if it changed. */
+/**
+ * The saved list (or the defaults), with any later default offered once and
+ * any retired default taken out once, saved if it changed. Never empty.
+ */
 export function load(): string[] {
   const saved = loadSaved()
-  const relays = addLaterDefaults(saved)
+  const kept = dropRetiredDefaults(addLaterDefaults(saved))
+  const relays = kept.length ? kept : [...DEFAULT_RELAYS]
   if (relays !== saved) save(relays)
   return relays
 }

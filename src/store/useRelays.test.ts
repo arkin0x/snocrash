@@ -82,34 +82,51 @@ describe('the list', () => {
 
 describe('the canonical relay switch (2026-11-05)', () => {
   const OLD_SAVED = ['wss://cyberspace.nostr1.com', 'wss://relay.damus.io', 'wss://mine.example.com']
+  /** What is left of it once nostr1, a default no more, is taken out. */
+  const OLD_KEPT = ['wss://relay.damus.io', 'wss://mine.example.com']
 
   beforeEach(() => stubStorage())
 
-  it('puts wss://relay.onosendai.tech first and keeps nostr1 second in the defaults', () => {
-    expect(DEFAULT_RELAYS.slice(0, 2)).toEqual(['wss://relay.onosendai.tech', 'wss://cyberspace.nostr1.com'])
+  it('puts wss://relay.onosendai.tech first in the defaults, and nostr1 is not one any more (retired 2026-11-22)', () => {
+    expect(DEFAULT_RELAYS[0]).toBe('wss://relay.onosendai.tech')
+    expect(DEFAULT_RELAYS).not.toContain('wss://cyberspace.nostr1.com')
   })
 
   it('gives a new arrival the defaults', () => {
     expect(load()).toEqual(DEFAULT_RELAYS)
   })
 
-  it('puts the new relay at the front of a list saved before the switch, and saves that', () => {
+  it('puts the new relay at the front of a list saved before the switch, takes nostr1 out, and saves that', () => {
     localStorage.setItem('snocrash:relays', JSON.stringify(OLD_SAVED))
-    expect(load()).toEqual(['wss://relay.onosendai.tech', ...OLD_SAVED])
-    expect(JSON.parse(localStorage.getItem('snocrash:relays')!)).toEqual(['wss://relay.onosendai.tech', ...OLD_SAVED])
+    expect(load()).toEqual(['wss://relay.onosendai.tech', ...OLD_KEPT])
+    expect(JSON.parse(localStorage.getItem('snocrash:relays')!)).toEqual(['wss://relay.onosendai.tech', ...OLD_KEPT])
   })
 
   it('offers it once: removing it afterwards sticks across a reload', () => {
     localStorage.setItem('snocrash:relays', JSON.stringify(OLD_SAVED))
     useRelays.setState({ relays: load() })
     useRelays.getState().remove('wss://relay.onosendai.tech')
-    expect(load()).toEqual(OLD_SAVED)
+    expect(load()).toEqual(OLD_KEPT)
+  })
+
+  it('takes nostr1 out of a saved list once: adding it back afterwards sticks across a reload', () => {
+    localStorage.setItem('snocrash:relays', JSON.stringify(['wss://relay.onosendai.tech', 'wss://cyberspace.nostr1.com', 'wss://mine.example.com']))
+    expect(load()).toEqual(['wss://relay.onosendai.tech', 'wss://mine.example.com'])
+    useRelays.setState({ relays: load() })
+    useRelays.getState().add('wss://cyberspace.nostr1.com')
+    expect(load()).toEqual(['wss://relay.onosendai.tech', 'wss://mine.example.com', 'wss://cyberspace.nostr1.com'])
   })
 
   it('removing it from the defaults sticks too', () => {
     useRelays.setState({ relays: load() })
     useRelays.getState().remove('wss://relay.onosendai.tech')
     expect(load()).toEqual(DEFAULT_RELAYS.filter((r) => r !== 'wss://relay.onosendai.tech'))
+  })
+
+  it('a saved list of nostr1 alone becomes the defaults, never an empty list', () => {
+    localStorage.setItem('snocrash:relays', JSON.stringify(['wss://cyberspace.nostr1.com']))
+    localStorage.setItem('snocrash:relays:offered:relay.onosendai.tech', '1')
+    expect(load()).toEqual(DEFAULT_RELAYS)
   })
 
   it('leaves a saved list that already has it alone', () => {
