@@ -49,6 +49,7 @@ import { withAnim } from 'sno-core/anim'
 import { drawnFace, withFace, type FaceMode } from 'sno-core/face'
 import { withGlow, withPointSize, type Glow } from 'sno-core/glow'
 import { GLOW_START } from '../lib/glowRows'
+import { stepExtent as nextExtent } from '../ui/gridSize'
 import { authoredConstrainOf, withConstrain, type Constrain } from '../lib/walkConstrain'
 import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
 import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
@@ -485,7 +486,7 @@ export interface WorkshopState {
   stepUnit: (by: 1 | -1) => void
   /** The build grid's half-width for the current shard, never below what its vertices need. */
   setExtent: (extent: number) => void
-  /** One step of grid up or down, on the shard an edit lands on (the − and + buttons). */
+  /** One step of grid up or down, on the shard an edit lands on (the − and + buttons): ones to 64, then sixteenths of each doubling, to MAX_EXTENT (4,096). */
   stepExtent: (by: 1 | -1) => void
   setTool: (tool: Tool) => void
   setLevel: (level: number) => void
@@ -862,7 +863,20 @@ function facesFor(pts: P3[]): Tris | null {
   return out
 }
 
+/** A GRID SIZE step this soon after the last one joins its undo step: a held button repeats well inside it. */
+const EXTENT_RUN_GAP_MS = 1000
+
 export const useWorkshop = create<WorkshopState>((set, get) => {
+  /**
+   * The last change of GRID SIZE (extentTo): the shard as it left it, how
+   * long the undo history was then, and when. A step joins it only while all
+   * three still hold, so a reopened workshop, another shard, an undo, any
+   * other edit or a press after a pause starts a step of its own. Ported from
+   * ONOSENDAI (review of its #555): holding + from 64 to 4,096 is 96 steps,
+   * more than HISTORY, and one undo entry each would wipe the whole history.
+   */
+  let extentRun: { shard: ShardModel; past: number; at: number } | null = null
+
   /**
    * Apply an edit to the current shard, remember what it was, stamp it, persist.
    *
@@ -973,8 +987,22 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
    */
   const extentTo = (to: (cur: ShardModel) => number): void => {
     const fit = (cur: ShardModel): number => Math.max(Math.max(MIN_EXTENT, neededExtent(cur)), Math.min(MAX_EXTENT, Math.round(to(cur))))
-    if (!edit((cur) => { const e = fit(cur); return e === cur.extent ? null : { ...cur, extent: e } })) return
-    const e = get().current()?.extent ?? GRID_HALF
+    // One held button is one undo step (extentRun). Any other edit leaves the
+    // shard a different object, an undo shortens the history, and opening
+    // the workshop clears it, so each of those starts a new step.
+    const now = Date.now()
+    const run = extentRun
+    const s = get().current()
+    if (s && run && !get().viewing && run.shard === s && run.past === get().past.length && run.past > 0 && now - run.at < EXTENT_RUN_GAP_MS) {
+      const next = fit(s)
+      if (next === s.extent) return
+      const list = get().shards.map((x) => (x === s ? { ...x, extent: next, updatedAt: Date.now() } : x))
+      set({ shards: list, future: [] })
+      save(list)
+    } else if (!edit((cur) => { const e = fit(cur); return e === cur.extent ? null : { ...cur, extent: e } })) return
+    const after = get().current()
+    extentRun = after ? { shard: after, past: get().past.length, at: now } : null
+    const e = after?.extent ?? GRID_HALF
     set({ level: Math.max(-e * TICKS_PER_UNIT, Math.min(e * TICKS_PER_UNIT, get().level)) })
   }
 
@@ -1230,7 +1258,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, invert: false, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
     setInvert: (on) => set({ invert: on }),
     setExtent: (extent) => extentTo(() => extent),
-    stepExtent: (by) => extentTo((cur) => cur.extent + by),
+    // Ones to 64, then sixteenths of each doubling (ui/gridSize.ts).
+    stepExtent: (by) => extentTo((cur) => nextExtent(cur.extent, by)),
     setPlane: (plane) => set({ plane, aim: null }),
     setLevel: (level) => {
       const e = (get().current()?.extent ?? GRID_HALF) * TICKS_PER_UNIT

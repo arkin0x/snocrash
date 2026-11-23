@@ -39,7 +39,8 @@ import { useNostr } from '../store/useNostr'
 import { ACCENT, BG, WARN } from '../lib/palette'
 import { glowTexture } from '../lib/glow'
 import { GRID_HALF, TICKS_PER_UNIT, centroid, pointKey, rgbToHex, ticksOf, toRender } from 'sno-core/shards'
-import { drawnDivision } from './divisions'
+import { BenchGrid } from './benchGrid'
+import { BASE_FAR, BASE_NEAR, clipPlanes, gridSphere, nextMaxDistance, reachFor, reachRadius } from './benchReach'
 import { benchAxes, benchPose, nudgeFor, orbitOffset, planeAfter, sameAxes, setOrbitSink, useBenchView, type NudgeName } from './benchAxes'
 import { landing, preview, type WorkPlane } from 'sno-core/stamps'
 import { ShardMesh, faceOfHit } from '../scene/ShardMesh'
@@ -49,15 +50,6 @@ import { nextSelection, useWorkshop, type Tool } from '../store/useWorkshop'
 import { Hold, noteGesture, tapSlop } from './deadZone'
 import { HandleDots, dotCapacity } from './handleDots'
 import { EYE_LABEL_OPACITY, EYE_LABEL_PX, eyeLabel, eyeMark, eyeMarkShown } from './eyeMark'
-
-/** The unit grid's line colour when a unit is not divided. */
-const UNIT_LINE = '#1d3547'
-/**
- * When a unit is divided the unit lines step up toward the axis lines'
- * light blue, and the division lines take the unit lines' old colour, so
- * the unit grid stays the unit grid however fine the snap.
- */
-const UNIT_LINE_DIVIDED = '#166c86'
 
 type P3 = [number, number, number]
 
@@ -178,10 +170,13 @@ function Grid(): JSX.Element {
   const level = useWorkshop((s) => s.level)
   const plane = useWorkshop((s) => s.plane)
   const division = useWorkshop((s) => s.division)
-  const drawn = drawnDivision(division)
   const extent = useWorkshop((s) => s.current()?.extent ?? GRID_HALF)
   const tool = useWorkshop((s) => s.tool)
   const places = tool === 'add' || tool === 'stamp'
+  // One quad and a shader, whatever the division and the extent (benchGrid.ts).
+  const grid = useMemo(() => new BenchGrid(), [])
+  useEffect(() => () => grid.dispose(), [grid])
+  useLayoutEffect(() => { grid.set(extent, division) }, [grid, extent, division])
 
   const onClick = (e: ThreeEvent<MouseEvent>): void => {
     if (e.delta > tapSlop()) return
@@ -212,11 +207,8 @@ function Grid(): JSX.Element {
   const rotation: P3 = plane === 0 ? [0, 0, -Math.PI / 2] : plane === 2 ? [Math.PI / 2, 0, 0] : [0, 0, 0]
   return (
     <group position={position} rotation={rotation}>
-      {/* The visible lattice. One cell per unit, so what you tap is what you get. */}
-      <gridHelper key={`u${extent}-${division > 1 ? 1 : 0}`} args={[extent * 2, extent * 2, ACCENT, division > 1 ? UNIT_LINE_DIVIDED : UNIT_LINE]} />
-      {/* The snap grid between the unit lines when a unit is divided, in the unit lines' plain colour. */}
-      {/* Past twelve lines a unit the snap is drawn at a divisor of itself (divisions.ts). */}
-      {drawn > 1 && <gridHelper key={`d${extent}-${drawn}`} args={[extent * 2, extent * 2 * drawn, UNIT_LINE, UNIT_LINE]} position={[0, -0.002, 0]} />}
+      {/* The visible lattice: a line for every unit and every division of one, so what you tap is what you get. */}
+      <primitive object={grid.mesh} />
       {/*
         The surface taps land on, in the placing tools only. In select and face
         mode it carries no handler at all, so the raycaster ignores it: a raised
@@ -851,6 +843,38 @@ function PathMarks({ show }: { show: boolean }): JSX.Element | null {
   )
 }
 
+/**
+ * The orbit's reach and the camera's depth for the grid on the bench
+ * (benchReach.ts). GRID SIZE runs to 4,096 units (DECK-0003 §1.8), so each
+ * frame sets how far the controls may pull back to see the whole grid from
+ * where they aim, pulls the far plane out past it, and the near plane out
+ * with the distance. A small grid keeps the 60 and the planes the bench
+ * always had.
+ */
+function Reach(): null {
+  const extent = useWorkshop((s) => s.current()?.extent ?? GRID_HALF)
+  const plane = useWorkshop((s) => s.plane)
+  const level = useWorkshop((s) => s.level)
+  const camera = useThree((s) => s.camera) as PerspectiveCamera
+  const controls = useThree((s) => s.controls) as unknown as { target: Vector3; maxDistance: number } | null
+  const sphere = useMemo(() => gridSphere(extent, plane, U(level)), [extent, plane, level])
+  useFrame((state) => {
+    if (!controls) return
+    const distance = camera.position.distanceTo(controls.target)
+    const r = reachRadius(sphere, controls.target)
+    const aspect = state.size.height > 0 ? state.size.width / state.size.height : 1
+    controls.maxDistance = nextMaxDistance(reachFor(r, camera.fov, aspect), distance)
+    const { near, far } = clipPlanes(distance, r)
+    // Only on a real change: a still bench must not rebuild its projection every frame.
+    if (Math.abs(near - camera.near) > camera.near * 0.05 || Math.abs(far - camera.far) > camera.far * 0.05) {
+      camera.near = near
+      camera.far = far
+      camera.updateProjectionMatrix()
+    }
+  })
+  return null
+}
+
 function BenchImpl(): JSX.Element {
   const shard = useWorkshop((s) => s.current())
   const tool = useWorkshop((s) => s.tool)
@@ -893,7 +917,7 @@ function BenchImpl(): JSX.Element {
 
   return (
     <Canvas
-      camera={{ fov: 50, position: [10, 9, 12], near: 0.05, far: 200 }}
+      camera={{ fov: 50, position: [10, 9, 12], near: BASE_NEAR, far: BASE_FAR }}
       dpr={[1, 2]}
       gl={{ antialias: true }}
       style={{ background: BG }}
@@ -912,8 +936,10 @@ function BenchImpl(): JSX.Element {
           2026-10-10). Two fingers, or the right button, pan the view in the
           screen plane; pinch or the wheel dollies, in to 0.6 of a gibson so a
           fifth-gibson step fills a good share of a phone's screen. These are
-          the controls' own bindings. */}
-      <OrbitControls makeDefault enablePan screenSpacePanning panSpeed={0.9} enableRotate={tool !== 'select'} minDistance={0.6} maxDistance={60} dampingFactor={0.12} />
+          the controls' own bindings. How far out it may go is Reach's: no
+          prop here, or every re-render of the bench would put it back. */}
+      <OrbitControls makeDefault enablePan screenSpacePanning panSpeed={0.9} enableRotate={tool !== 'select'} minDistance={0.6} dampingFactor={0.12} />
+      <Reach />
       <OrbitHold />
       <Marquee />
       <Aim />

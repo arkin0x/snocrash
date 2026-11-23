@@ -77,12 +77,30 @@ describe('the unit and grid − and + step the shard the edit lands on (1)', () 
     expect(w().current()!.extent).toBe(13)
     useWorkshop.setState({ past: [] })
     // Down to the floor the points allow, and no further, with no step stored past it.
+    // The whole held run is one undo step (useWorkshop extentRun).
     for (let i = 0; i < 40; i++) w().stepExtent(-1)
     const floor = w().current()!.extent
-    const steps = w().past.length
+    expect(w().past).toHaveLength(1)
     w().stepExtent(-1)
     expect(w().current()!.extent).toBe(floor)
-    expect(w().past).toHaveLength(steps)
+    expect(w().past).toHaveLength(1)
+    w().undo()
+    expect(w().current()!.extent).toBe(13)
+  })
+
+  it('past 64 a step of grid lands on sixteenths of each doubling, to 4,096 (DECK-0003 §1.8)', () => {
+    ownOpened({ ...SQUARE, extent: 64 })
+    w().stepExtent(1)
+    expect(w().current()!.extent).toBe(68)
+    w().setExtent(128)
+    w().stepExtent(1)
+    expect(w().current()!.extent).toBe(136)
+    w().stepExtent(-1)
+    w().stepExtent(-1)
+    expect(w().current()!.extent).toBe(124)
+    w().setExtent(4096)
+    w().stepExtent(1)
+    expect(w().current()!.extent).toBe(4096)
   })
 
   it("on someone else's object, a step adopts it once; a step that changes nothing adopts nothing", () => {

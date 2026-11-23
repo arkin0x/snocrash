@@ -20,7 +20,7 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { newShard, vertexAt, type ShardModel } from 'sno-core/shards'
+import { newShard, ticksOf, vertexAt, type ShardModel } from 'sno-core/shards'
 
 const LOCAL_KEY = 'onosendai:shards'
 const MOVED_KEY = 'snocrash:shards:moved'
@@ -641,3 +641,29 @@ describe('two tabs', () => {
     expect(c.ws.useWorkshop.getState().shards.some((s) => s.id === z)).toBe(true)
   })
 })
+
+describe('a shard past 64 units, for a stale tab on an older sno-core (olderReaders.ts)', () => {
+  /** sno-core 0.1.33's normalizeStored test, verbatim. */
+  const olderReadsAsTicks = (m: ShardModel): boolean => m.vertices.some((v) => v.t === undefined && v.p.some((c) => Math.abs(c) > 64))
+
+  it('is stored with t on the far vertex only, reads back to the same ticks, and the model in memory is untouched', async () => {
+    const { ws } = await boot()
+    const t = ws.useWorkshop.getState()
+    const id = t.create('far')
+    t.setExtent(4096)
+    t.addVertex([100 * 120, 0, 0])
+    t.addVertex([3 * 120, 0, 0])
+    expect(await ws.useWorkshop.getState().saveNow()).toBe(true)
+    const mine = ws.useWorkshop.getState().current()!
+    expect(mine.vertices.map((v) => v.t)).toEqual([undefined, undefined])
+    const row = (await records()).find((r) => r.id === id)!
+    const stored = JSON.parse(row.json) as ShardModel
+    expect(olderReadsAsTicks(stored)).toBe(false)
+    expect(stored.vertices[0].t).toEqual([0, 0, 0])
+    expect(stored.vertices[1].t).toBeUndefined()
+    const again = await boot()
+    const back = again.ws.useWorkshop.getState().shards.find((s) => s.id === id)!
+    expect(back.vertices.map(ticksOf)).toEqual([[12000, 0, 0], [360, 0, 0]])
+  })
+})
+

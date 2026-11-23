@@ -44,8 +44,15 @@ describe('POINT SIZE', () => {
 
   it('never writes a malformed value', () => {
     w().setPointSize(48)
-    w().setPointSize(99999)
+    w().setPointSize(491521)
     expect(cur()).not.toHaveProperty('extra')
+  })
+
+  it('writes a size past the old 64-unit bound, up to the 4,096-unit one (DECK-0003 §1.8)', () => {
+    w().setPointSize(99999)
+    expect(cur().extra).toEqual({ pointsize: 99999 })
+    w().setPointSize(491520)
+    expect(cur().extra).toEqual({ pointsize: 491520 })
   })
 
   it('makes one drag one undo step', () => {

@@ -31,6 +31,7 @@
  * first, and sorts by distance within one):
  *
  *   0     opaque shard faces, lines and ghosts (depth decides, as always)
+ *   0.5   the bench's grid (benchGrid GRID_ORDER): blended, no depth written
  *   1     see-through faces (TRANSLUCENT_ORDER); on the bench, the inside
  *         of a see-through lit face
  *   1.5   on the bench, the front of a see-through lit face, over its inside

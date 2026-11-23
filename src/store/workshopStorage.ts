@@ -42,6 +42,7 @@
  */
 
 import { GRID_HALF, neededExtent, normalizeStored, type ShardModel } from 'sno-core/shards'
+import { forOlderReaders } from './olderReaders'
 import {
   commit, databaseExists, fingerprint, localEntries, mergeLocal, newGen, noteReconciled, restoreInto, openWorkshopDb, readAll, readMigrated, readSome, verifyAndMark,
   type MigratedMeta, type ShardRecord,
@@ -188,7 +189,8 @@ function writeLocal(list: readonly ShardModel[]): boolean {
   // list there is the backup, and nothing writes it again.
   if (mode !== 'local') return false
   try {
-    localStorage.setItem(LOCAL_KEY, JSON.stringify(list))
+    // A shard past 64 units is stored so an older tab reads it the same (olderReaders.ts).
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(list.map(forOlderReaders)))
     if (failure) report(null, null)
     return true
   } catch {
@@ -305,7 +307,7 @@ async function checkStillThere(d: IDBDatabase): Promise<boolean> {
 }
 
 function recordOf(id: string, m: ShardModel): ShardRecord {
-  return { id, seq: seqFor(id), updatedAt: typeof m.updatedAt === 'number' && Number.isFinite(m.updatedAt) ? m.updatedAt : 0, json: JSON.stringify(m) }
+  return { id, seq: seqFor(id), updatedAt: typeof m.updatedAt === 'number' && Number.isFinite(m.updatedAt) ? m.updatedAt : 0, json: JSON.stringify(forOlderReaders(m)) }
 }
 
 async function commitPending(): Promise<boolean> {

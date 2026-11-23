@@ -15,10 +15,10 @@ import { GLOW_REACH, readGlow, readPointSize, suggestGlowStyle, type Glow, type 
 /** The steps of POINT SIZE and RADIUS: a twentieth of a unit. */
 export const SIZE_STEP = 6
 
-/** POINT SIZE's slider reaches 4 units across; − and + go on to the 64-unit bound. */
+/** POINT SIZE's slider reaches 4 units across; − and + go on to the position bound (GLOW_REACH, 4,096 units). */
 export const POINT_SLIDER_MAX = 4 * TICKS_PER_UNIT
 
-/** RADIUS's slider reaches 8 units; − and + go on to the 64-unit bound. */
+/** RADIUS's slider reaches 8 units; − and + go on to the position bound (GLOW_REACH, 4,096 units). */
 export const RADIUS_SLIDER_MAX = 8 * TICKS_PER_UNIT
 
 /** GLOW STRENGTH's − and + step in fives, as OPACITY's do; the slider moves by one. */
@@ -57,13 +57,28 @@ export function sizeLabel(ticks: number | undefined): string {
   return ticks === undefined ? 'AUTO' : unitsLabel(ticks)
 }
 
+/** Up to here, 64 units, − and + step in twentieths of a unit, as they always have. */
+export const FINE_STEPS_UP_TO = 64 * TICKS_PER_UNIT
+
 /**
- * One step of a tick distance in `dir`, between `min` and the 64-unit bound.
- * A value off the steps goes to the next step in the direction asked, as the
+ * Past 64 units the steps double to the bound: 64, 128 ... 2,048 units, then
+ * GLOW_REACH (4,096 units since 2026-11-23, DECK-0003 §1.8), as ONOSENDAI's
+ * ladders do. In twentieths that would be 80,000 presses; this way one press
+ * never jumps from 64 units to 4,096 either.
+ */
+export const PAST_64 = [7680, 15360, 30720, 61440, 122880, 245760, GLOW_REACH] as const
+
+/**
+ * One step of a tick distance in `dir`, between `min` and the position bound
+ * (GLOW_REACH): twentieths of a unit up to 64 units, doubling past that. A
+ * value off the steps goes to the next step in the direction asked, as the
  * OPACITY stepper does.
  */
 export function stepTicks(current: number, dir: -1 | 1, min: number): number {
-  const next = dir > 0 ? Math.floor(current / SIZE_STEP) * SIZE_STEP + SIZE_STEP : Math.ceil(current / SIZE_STEP) * SIZE_STEP - SIZE_STEP
+  let next: number
+  if (dir > 0 && current >= FINE_STEPS_UP_TO) next = PAST_64.find((x) => x > current) ?? GLOW_REACH
+  else if (dir < 0 && current > FINE_STEPS_UP_TO) next = [...PAST_64].reverse().find((x) => x < current) ?? FINE_STEPS_UP_TO
+  else next = dir > 0 ? Math.floor(current / SIZE_STEP) * SIZE_STEP + SIZE_STEP : Math.ceil(current / SIZE_STEP) * SIZE_STEP - SIZE_STEP
   return Math.min(GLOW_REACH, Math.max(min, next))
 }
 
