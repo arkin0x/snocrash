@@ -209,7 +209,9 @@ describe('workshop', () => {
     w().setExtent(3)
     expect(w().current()!.extent).toBe(5)        // the point at x=5 holds it
     w().setExtent(999)
-    expect(w().current()!.extent).toBe(64)
+    expect(w().current()!.extent).toBe(999)       // past the old 64-unit bound (DECK-0003 §1.8, 2026-11-23)
+    w().setExtent(99999)
+    expect(w().current()!.extent).toBe(4096)      // held at MAX_EXTENT
     w().setLevel(50 * T); expect(w().level).toBe(50 * T)
     w().setExtent(6)
     expect(w().level).toBe(6 * T)                // the level follows the grid down

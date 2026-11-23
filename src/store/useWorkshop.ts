@@ -49,6 +49,7 @@ import { withAnim } from 'sno-core/anim'
 import { drawnFace, withFace, type FaceMode } from 'sno-core/face'
 import { withGlow, withPointSize, type Glow } from 'sno-core/glow'
 import { GLOW_START } from '../lib/glowRows'
+import { stepExtent as nextExtent } from '../ui/gridSize'
 import { authoredConstrainOf, withConstrain, type Constrain } from '../lib/walkConstrain'
 import { addPart, quarterTurnPart, removeParts } from 'sno-core/parts'
 import { FLOOR, MAX_SIZE, MIN_SIZE, stamp, type Facing, type StampKind, type WorkPlane } from 'sno-core/stamps'
@@ -485,7 +486,7 @@ export interface WorkshopState {
   stepUnit: (by: 1 | -1) => void
   /** The build grid's half-width for the current shard, never below what its vertices need. */
   setExtent: (extent: number) => void
-  /** One step of grid up or down, on the shard an edit lands on (the − and + buttons). */
+  /** One step of grid up or down, on the shard an edit lands on (the − and + buttons): ones to 64, then sixteenths of each doubling, to MAX_EXTENT (4,096). */
   stepExtent: (by: 1 | -1) => void
   setTool: (tool: Tool) => void
   setLevel: (level: number) => void
@@ -1230,7 +1231,8 @@ export const useWorkshop = create<WorkshopState>((set, get) => {
     setTool: (tool) => set({ tool, facePick: [], selectedFace: null, aim: null, invert: false, ...(tool === 'face' ? { selection: [], partSel: [] } : {}) }),
     setInvert: (on) => set({ invert: on }),
     setExtent: (extent) => extentTo(() => extent),
-    stepExtent: (by) => extentTo((cur) => cur.extent + by),
+    // Ones to 64, then sixteenths of each doubling (ui/gridSize.ts).
+    stepExtent: (by) => extentTo((cur) => nextExtent(cur.extent, by)),
     setPlane: (plane) => set({ plane, aim: null }),
     setLevel: (level) => {
       const e = (get().current()?.extent ?? GRID_HALF) * TICKS_PER_UNIT

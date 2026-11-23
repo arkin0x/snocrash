@@ -101,6 +101,8 @@ describe('sizes', () => {
     expect(ticksToModel(120)).toBe(1)
     expect(ticksToModel(48)).toBeCloseTo(0.4)
     expect(haloLook({ style: 'light', radius: 7680, strength: 100 })).toEqual({ radius: 64, strength: 1, light: 1 })
+    // The farthest a radius reaches, the 4,096-unit position bound (DECK-0003 §1.8).
+    expect(haloLook({ style: 'light', radius: 491520, strength: 100 }).radius).toBe(4096)
   })
 
   it('reads the model-view scale in the shaders, so a scaled object keeps its proportions', () => {

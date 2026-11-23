@@ -1,11 +1,11 @@
 /**
  * Grid divisions down to a single tick (arkinox, 2026-10-15): every one is
- * exact in 120ths, the stepper walks them in order, the bench draws a
- * readable divisor of the finest, and switching never moves a vertex.
+ * exact in 120ths, the stepper walks them in order, and switching never
+ * moves a vertex. How the bench draws them is benchGrid.test.ts.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { DIVISIONS, TICKS_PER_UNIT, ticksOf } from 'sno-core/shards'
-import { DRAWN_DIVISION_MAX, drawnDivision, stepDivision } from './divisions'
+import { stepDivision } from './divisions'
 import { useWorkshop } from '../store/useWorkshop'
 
 const w = () => useWorkshop.getState()
@@ -38,19 +38,6 @@ describe('the stepper', () => {
     const seen: number[] = [d]
     for (let i = 1; i < DIVISIONS.length; i++) { d = stepDivision(d, 1); seen.push(d) }
     expect(seen).toEqual([...DIVISIONS])
-  })
-})
-
-describe('the drawn grid', () => {
-  it('draws the snap itself up to twelve a unit, then a divisor of it that is no finer', () => {
-    for (const d of DIVISIONS) {
-      const drawn = drawnDivision(d)
-      expect(drawn).toBeLessThanOrEqual(DRAWN_DIVISION_MAX)
-      expect(d % drawn).toBe(0)
-      if (d <= DRAWN_DIVISION_MAX) expect(drawn).toBe(d)
-    }
-    expect(drawnDivision(120)).toBe(12)
-    expect(drawnDivision(40)).toBe(10)
   })
 })
 

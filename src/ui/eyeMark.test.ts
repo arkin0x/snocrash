@@ -50,7 +50,11 @@ describe('eyeMark', () => {
   })
 
   it('a malformed eye is AUTO', () => {
-    for (const eye of [[0, 1.5, 0], [0, 0], 'up', null, [0, 99999, 0]]) expect(eyeMark(tall({ eye })).word).toBe('AUTO')
+    for (const eye of [[0, 1.5, 0], [0, 0], 'up', null, [0, 491521, 0]]) expect(eyeMark(tall({ eye })).word).toBe('AUTO')
+  })
+
+  it('an eye past the old 64-unit bound and within the 4,096-unit one is CHOSEN (DECK-0003 §1.8)', () => {
+    for (const eye of [[0, 7681, 0], [0, 99999, 0], [-491520, 0, 491520]]) expect(eyeMark(tall({ eye })).word).toBe('CHOSEN')
   })
 
   it('draws no label where there is no document', () => {

@@ -2,7 +2,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { newShard, type ShardModel } from 'sno-core/shards'
-import { AUTO_POINT_TICKS, clampTicks, glowRowState, meanColor, sizeLabel, stepPointSize, stepStrength, stepTicks, suggestedStyle } from './glowRows'
+import { GLOW_REACH } from 'sno-core/glow'
+import { AUTO_POINT_TICKS, FINE_STEPS_UP_TO, PAST_64, clampTicks, glowRowState, meanColor, sizeLabel, stepPointSize, stepStrength, stepTicks, suggestedStyle } from './glowRows'
 
 const base = (over: Partial<ShardModel> = {}): ShardModel => ({ ...newShard('Forest'), ...over })
 
@@ -27,7 +28,27 @@ describe('the steps', () => {
     expect(stepPointSize(undefined, -1)).toBe(AUTO_POINT_TICKS - 6)
     expect(stepPointSize(6, -1)).toBe(0)
     expect(stepPointSize(0, -1)).toBe(0)
-    expect(stepPointSize(7680, 1)).toBe(7680)
+    expect(stepPointSize(GLOW_REACH, 1)).toBe(GLOW_REACH)
+  })
+
+  it('steps in twentieths to 64 units, then doubles to the 4,096-unit bound, so no press jumps from 64 units to 4,096', () => {
+    expect(GLOW_REACH).toBe(491520)
+    expect(FINE_STEPS_UP_TO).toBe(7680)
+    expect(stepTicks(7674, 1, 0)).toBe(7680)
+    expect(stepTicks(7680, -1, 0)).toBe(7674)
+    // Up from 64 units, one press each: 128, 256 ... 2,048 units, then the bound.
+    const up: number[] = []
+    for (let v = 7680; v < GLOW_REACH;) { v = stepTicks(v, 1, 0); up.push(v) }
+    expect(up).toEqual([15360, 30720, 61440, 122880, 245760, 491520])
+    expect([...PAST_64]).toEqual([7680, ...up])
+    // And back down the same stops to 64 units, then twentieths again.
+    const down: number[] = []
+    for (let v = GLOW_REACH; v > 7680;) { v = stepTicks(v, -1, 0); down.push(v) }
+    expect(down).toEqual([245760, 122880, 61440, 30720, 15360, 7680])
+    // A value between stops goes to the next stop in the direction asked.
+    expect(stepTicks(10000, 1, 1)).toBe(15360)
+    expect(stepTicks(10000, -1, 1)).toBe(7680)
+    expect(stepTicks(GLOW_REACH, 1, 1)).toBe(GLOW_REACH)
   })
 
   it('takes a size off the steps to the next step in the direction asked', () => {
@@ -48,7 +69,8 @@ describe('the steps', () => {
     expect(clampTicks(47.6, 0)).toBe(48)
     expect(clampTicks(-5, 0)).toBe(0)
     expect(clampTicks(0, 1)).toBe(1)
-    expect(clampTicks(99999, 1)).toBe(7680)
+    expect(clampTicks(99999, 1)).toBe(99999)
+    expect(clampTicks(491521, 1)).toBe(GLOW_REACH)
     expect(clampTicks(Number.NaN, 0)).toBeUndefined()
   })
 })
