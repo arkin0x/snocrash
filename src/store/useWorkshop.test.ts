@@ -5,7 +5,7 @@
  * the clipboard.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { TICKS_PER_UNIT as T, hexToRgb, newShard, ticksOf, vertexAt, type ShardModel } from 'sno-core/shards'
 import { DEFAULT_PALETTE, settleSelection, tapSelection, useWorkshop } from './useWorkshop'
 import { BUILT_IN, hexAt, snapHex } from 'sno-core/snoPalette'
@@ -1066,5 +1066,87 @@ describe('stacked by a move is not welded', () => {
     w().moveSelected(1, -w().step())
     w().undo(); w().undo(); w().undo()
     expect(at()).toEqual(start)
+  })
+})
+
+describe('GRID SIZE held down (ported from ONOSENDAI, review of its #555)', () => {
+  beforeEach(() => {
+    useWorkshop.setState({ shards: [], currentId: null, viewing: null, selection: [], partSel: [], facePick: [], past: [], future: [] })
+    w().create('t')
+  })
+
+  it('is one undo step, however many stops it runs through', () => {
+    const start = w().current()!.extent
+    for (let e = start + 1; e < start + 200; e++) w().setExtent(e)
+    expect(w().current()!.extent).toBe(start + 199)
+    expect(w().past).toHaveLength(1)
+    w().undo()
+    expect(w().current()!.extent).toBe(start)
+  })
+
+  it('is one undo step held from 64 to 4,096 on the stepper, 96 presses, more than the history holds', () => {
+    w().setExtent(64)
+    w().addVertex([0, 0, 0])
+    for (let i = 0; i < 96; i++) w().stepExtent(1)
+    expect(w().current()!.extent).toBe(4096)
+    expect(w().past).toHaveLength(3)
+    w().undo()
+    expect(w().current()!.extent).toBe(64)
+    w().undo()
+    expect(w().current()!.vertices).toHaveLength(0)
+  })
+
+  it('starts a step of its own after the workshop reopens, so UNDO can take it back', () => {
+    const start = w().current()!.extent
+    w().setExtent(start + 1)
+    w().openWorkshop()
+    w().setExtent(start + 2)
+    expect(w().past).toHaveLength(1)
+    w().undo()
+    expect(w().current()!.extent).toBe(start + 1)
+  })
+
+  it('starts a step of its own after an undo', () => {
+    const start = w().current()!.extent
+    w().addVertex([0, 0, 0])
+    w().setExtent(start + 1)
+    w().undo()
+    w().setExtent(start + 3)
+    w().undo()
+    expect(w().current()!.extent).toBe(start)
+  })
+
+  it('starts a step of its own after a pause, so separate presses are separate steps', () => {
+    const start = w().current()!.extent
+    const t = Date.now()
+    const clock = vi.spyOn(Date, 'now')
+    try {
+      clock.mockReturnValue(t)
+      w().setExtent(start + 1)
+      clock.mockReturnValue(t + 500)
+      w().setExtent(start + 2)
+      expect(w().past).toHaveLength(1)
+      clock.mockReturnValue(t + 5000)
+      w().setExtent(start + 3)
+      expect(w().past).toHaveLength(2)
+    } finally { clock.mockRestore() }
+  })
+
+  it('does not push what came before it out of the history', () => {
+    w().addVertex([0, 0, 0])
+    for (let e = 20; e < 300; e++) w().setExtent(e)
+    expect(w().past).toHaveLength(2)
+    w().undo()
+    w().undo()
+    expect(w().current()!.vertices).toHaveLength(0)
+  })
+
+  it('an edit between two holds makes two steps', () => {
+    w().setExtent(20); w().setExtent(21)
+    w().addVertex([0, 0, 0])
+    w().setExtent(30); w().setExtent(31)
+    expect(w().past).toHaveLength(3)
+    w().undo()
+    expect(w().current()!.extent).toBe(21)
   })
 })

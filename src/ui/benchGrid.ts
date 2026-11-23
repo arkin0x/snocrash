@@ -15,9 +15,10 @@
  * So the lines are not geometry now. One quad covers the grid and its
  * fragment shader works out, for each pixel, how near the nearest line is, in
  * pixels. The cost is four vertices and one draw call at every division and
- * every extent. Nothing runs per frame on the CPU: changing the division is
- * one number, changing the extent rewrites four corners, and the screen-space
- * derivatives make the camera the GPU's business. Every division is drawn as
+ * every extent. Changing the division is one number, changing the extent
+ * rewrites four corners, and the screen-space derivatives make the camera the
+ * GPU's business. The one CPU work per drawn frame is follow(): a few
+ * arithmetic operations, and a uniform set only when the camera crosses a unit. Every division is drawn as
  * itself, at the place the snap lands (the arithmetic is the same: a whole
  * number of 1/division from the origin).
  *
@@ -35,7 +36,7 @@
  * any grid seen at the distances it always was, nothing changes. Still one
  * quad: the lines are arithmetic, never geometry, whatever the size.
  */
-import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, ShaderMaterial } from 'three'
+import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, ShaderMaterial, Vector2, Vector3 } from 'three'
 import { ACCENT } from '../lib/palette'
 
 /** The unit grid's line colour when a unit is not divided. */
@@ -66,9 +67,13 @@ const QUAD_PAD = 1
 export const GRID_ORDER = 0.5
 
 const VERTEX = /* glsl */ `
+uniform vec2 uOrigin;
 varying vec2 vGrid;
+varying vec2 vLocal;
 void main() {
   vGrid = position.xz;
+  // From a whole unit near the camera: small numbers, so the fine lines keep their precision on a 4,096 grid.
+  vLocal = position.xz - uOrigin;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `
@@ -80,6 +85,7 @@ uniform vec3 uDivisionColor;
 uniform vec3 uUnitColor;
 uniform vec3 uCentreColor;
 varying vec2 vGrid;
+varying vec2 vLocal;
 
 // Half a line's width plus half a pixel: a one pixel line, box filtered.
 const float REACH = 1.0;
@@ -121,11 +127,12 @@ void main() {
   float inside = min(clamp(REACH - past.x, 0.0, 1.0), clamp(REACH - past.y, 0.0, 1.0));
 
   vec3 color = uDivisionColor;
-  float alpha = lines(vGrid, uDivision);
+  // The division and the unit from vLocal: uOrigin is a whole unit, so their lines fall where vGrid's would.
+  float alpha = lines(vLocal, uDivision);
 
-  float a = lines(vGrid, 1.0);
+  float a = lines(vLocal, 1.0);
   // Coarser lines, every 8, 64, 512 and 4,096 units, each only where the one finer no longer resolves.
-  float finer = resolves(vGrid, 1.0);
+  float finer = resolves(vLocal, 1.0);
   float cells = 1.0;
   for (int k = 0; k < 4; k++) {
     cells /= 8.0;
@@ -150,6 +157,7 @@ void main() {
 export class BenchGrid {
   readonly mesh: Mesh<BufferGeometry, ShaderMaterial>
   private extent = 0
+  private readonly at = new Vector3()
 
   constructor() {
     const geometry = new BufferGeometry()
@@ -161,6 +169,7 @@ export class BenchGrid {
       uniforms: {
         uDivision: { value: 1 },
         uExtent: { value: 0 },
+        uOrigin: { value: new Vector2() },
         uDivisionColor: { value: new Color(UNIT_LINE) },
         uUnitColor: { value: new Color(UNIT_LINE) },
         uCentreColor: { value: new Color(ACCENT) },
@@ -181,6 +190,8 @@ export class BenchGrid {
     this.mesh.renderOrder = GRID_ORDER
     // Nothing to tap here: the bench's tap plane is its own mesh (Bench.tsx Grid).
     this.mesh.raycast = () => {}
+    // Only when the grid is drawn, and only arithmetic: no allocation.
+    this.mesh.onBeforeRender = (_r, _s, camera) => this.follow(camera.position)
   }
 
   /**
@@ -200,6 +211,24 @@ export class BenchGrid {
     p.setXYZ(0, -r, 0, -r); p.setXYZ(1, r, 0, -r); p.setXYZ(2, -r, 0, r); p.setXYZ(3, r, 0, r)
     p.needsUpdate = true
     g.computeBoundingSphere()
+  }
+
+  /**
+   * Keep uOrigin on the whole unit nearest the camera, in the grid's own frame.
+   * Far out on a 4,096 grid a 32-bit float holds a 1/120 line to 1/32 of its
+   * spacing, and its screen rate steps in blocks, so the finest lines broke
+   * into dashes near the far corner (ONOSENDAI, review of its #555). Measured
+   * from here they are small numbers again. A whole unit keeps every unit and
+   * division line where it was, since uOrigin times any division is a whole
+   * number. The coarse families, the edge and the centre lines still read the
+   * absolute position.
+   */
+  follow(cameraWorld: Vector3): void {
+    this.at.copy(cameraWorld)
+    this.mesh.worldToLocal(this.at)
+    const o = this.mesh.material.uniforms.uOrigin.value as Vector2
+    const x = Math.round(this.at.x), z = Math.round(this.at.z)
+    if (o.x !== x || o.y !== z) o.set(x, z)
   }
 
   dispose(): void {
